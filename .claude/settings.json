@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node scripts/test_undo.mjs)",
+      "Bash(rm -f scripts/test_undo.mjs)",
+      "Bash(xargs grep -o \"group-open\\\\\\\\\\\\\\\\:rotate-90[^}]*}\")",
+      "Bash(node -e ' *)",
+      "Bash(python -c ' *)",
+      "PowerShell(Move-Item \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\pinjol\" \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\loans\")"
+    ]
+  }
+}

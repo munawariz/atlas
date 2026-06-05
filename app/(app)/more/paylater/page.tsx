@@ -1,0 +1,104 @@
+import Link from "next/link";
+import { getPaylaterItems, getPaylaterPayments, getWallets } from "@/lib/data";
+import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
+import MonthSwitcher from "@/components/MonthSwitcher";
+import { addPaylater, deletePaylater } from "../actions";
+import PaylaterToggle from "./PaylaterToggle";
+
+export const dynamic = "force-dynamic";
+
+const span = (a: string, b: string) => {
+  const [ay, am] = a.slice(0, 7).split("-").map(Number);
+  const [by, bm] = b.slice(0, 7).split("-").map(Number);
+  return by * 12 + bm - (ay * 12 + am) + 1;
+};
+
+export default async function PaylaterPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
+  const sp = await searchParams;
+  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+  const ym = monthKey.slice(0, 7);
+
+  const [items, paid, wallets] = await Promise.all([getPaylaterItems(), getPaylaterPayments(), getWallets()]);
+  const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
+  const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
+
+  const active = items.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
+  const owed = active.filter((p) => !isPaid(p));
+  const dueTotal = owed.reduce((a, p) => a + p.monthly_amount, 0);
+  const paidTotal = active.filter(isPaid).reduce((a, p) => a + p.monthly_amount, 0);
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="flex items-center justify-between">
+        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
+        <h1 className="font-display text-xl font-medium tracking-tight text-paper">My Paylater</h1>
+        <span className="w-12" />
+      </div>
+
+      <MonthSwitcher monthKey={monthKey} basePath="/more/paylater" />
+
+      <div className="card p-4">
+        <div className="text-sm text-paper-dim">
+          {active.length} due in {formatMonth(monthKey)} ·{" "}
+          <span className="font-display text-sand">{formatRupiah(dueTotal)}</span> owed
+        </div>
+        <div className="mt-1 text-xs text-paper-faint">
+          <span className="text-green">{formatRupiah(paidTotal)}</span> already paid this month · {items.length} items total
+        </div>
+      </div>
+
+      <form action={addPaylater} className="card space-y-2 p-4">
+        <input name="item" placeholder="Item name" className="field" />
+        <input name="monthly_amount" inputMode="numeric" placeholder="Monthly Rp" className="field" />
+        <div className="flex gap-2">
+          <label className="flex-1 text-xs text-paper-dim">
+            First month
+            <input type="month" name="first_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
+          </label>
+          <label className="flex-1 text-xs text-paper-dim">
+            Last month
+            <input type="month" name="last_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
+          </label>
+        </div>
+        <input name="note" placeholder="Note (optional)" className="field" />
+        <button className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">Add item</button>
+      </form>
+
+      {active.length === 0 ? (
+        <p className="pt-6 text-center text-sm text-paper-faint">Nothing due in {formatMonth(monthKey)}.</p>
+      ) : (
+        <div className="space-y-2">
+          {active.map((p) => {
+            const paid = isPaid(p);
+            const months = span(p.first_month_date, p.last_month_date);
+            const monthsLeft = span(monthKey, p.last_month_date); // this month through the last
+            return (
+              <div key={p.id} className="card flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-paper">{p.item}</div>
+                  <div className="text-xs text-paper-dim">
+                    {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
+                    {p.note ? ` · ${p.note}` : ""}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <PaylaterToggle
+                    itemId={p.id}
+                    item={p.item}
+                    month={monthKey}
+                    amount={p.monthly_amount}
+                    paid={paid}
+                    wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
+                  />
+                  <form action={deletePaylater.bind(null, p.id)}>
+                    <button className="text-xs text-clay active:opacity-70">Delete</button>
+                  </form>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Match-Analyzer — cool navy stats-terminal theme
+   ============================================================ */
+@theme {
+  /* surfaces — deep navy / slate */
+  --color-ink: #0b0e14;
+  --color-ink-2: #11151d;
+  --color-ink-3: #161c27;
+  --color-line: #232c3a;
+
+  /* text — cool */
+  --color-paper: #e6edf3;
+  --color-paper-dim: #8a939e;
+  --color-paper-faint: #586069;
+
+  /* accents — terminal/gaming palette */
+  --color-green: #3fb950;
+  --color-red: #f85149;
+  --color-amber: #e3b341;
+  --color-blue: #58a6ff;
+  --color-purple: #a371f7;
+  --color-teal: #39d3c6;
+
+  /* primary action = green; legacy aliases keep older utilities working */
+  --color-gold: #3fb950;
+  --color-gold-soft: #56d364;
+  --color-jade: #3fb950; /* income  */
+  --color-clay: #f85149; /* expense */
+  --color-sky: #58a6ff; /* saving  */
+  --color-plum: #a371f7; /* invest  */
+  --color-sand: #e3b341; /* transfer*/
+
+  --font-display: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: var(--color-paper);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+::selection {
+  background: var(--color-green);
+  color: var(--color-ink);
+}
+
+/* ---- atmosphere: subtle cool glow + faint grain --------------- */
+.bg-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 70% at 50% -12%, rgba(63, 185, 80, 0.07), transparent 55%),
+    radial-gradient(90% 50% at 102% 2%, rgba(88, 166, 255, 0.05), transparent 55%),
+    radial-gradient(80% 50% at -6% 8%, rgba(163, 113, 247, 0.04), transparent 55%);
+}
+
+.bg-grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 170px 170px;
+}
+
+/* ---- reusable pieces ------------------------------------------ */
+@layer components {
+  .label {
+    @apply font-display text-[10px] font-medium uppercase tracking-[0.16em] text-paper-dim;
+  }
+  .card {
+    @apply rounded-xl border border-line/70 bg-ink-2;
+  }
+  .field {
+    @apply w-full rounded-lg border border-line/80 bg-ink-3 px-4 py-3 text-paper outline-none placeholder:text-paper-faint focus:border-green/60;
+  }
+}
+
+.hr-dash {
+  border: 0;
+  border-top: 1px dashed color-mix(in oklab, var(--color-line) 90%, transparent);
+}
+
+/* collapsible <details> — hide the default disclosure triangle */
+summary {
+  list-style: none;
+  cursor: pointer;
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+details[open] > summary .chevron {
+  transform: rotate(90deg);
+}
+
+/* ---- motion --------------------------------------------------- */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.reveal {
+  animation: reveal 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.stagger > * {
+  animation: reveal 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0.03s; }
+.stagger > *:nth-child(2) { animation-delay: 0.08s; }
+.stagger > *:nth-child(3) { animation-delay: 0.13s; }
+.stagger > *:nth-child(4) { animation-delay: 0.18s; }
+.stagger > *:nth-child(5) { animation-delay: 0.23s; }
+.stagger > *:nth-child(6) { animation-delay: 0.28s; }
+.stagger > *:nth-child(7) { animation-delay: 0.33s; }
+.stagger > *:nth-child(8) { animation-delay: 0.38s; }
+.stagger > *:nth-child(9) { animation-delay: 0.43s; }
+.stagger > *:nth-child(10) { animation-delay: 0.48s; }
+
+@keyframes pop {
+  0% { opacity: 0; transform: translateY(10px) scale(0.96); }
+  60% { transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+.pop {
+  animation: pop 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .stagger > *,
+  .pop {
+    animation: none;
+  }
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
