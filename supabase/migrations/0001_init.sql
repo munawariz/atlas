@@ -3,7 +3,11 @@
 -- so all `amount` values are non-negative.
 
 create type category_kind as enum ('income', 'expense', 'saving', 'investment');
-create type txn_type as enum ('expense', 'income', 'saving', 'investment', 'transfer');
+create type txn_type as enum ('expense', 'income', 'saving', 'investment', 'transfer', 'withdrawal');
+-- 'withdrawal' = "Ambil Tabungan": move money from a saving/investment bucket back into a
+-- wallet (dest_wallet_id = wallet, category_id = the bucket). Added idempotently for
+-- databases created before this type existed.
+alter type txn_type add value if not exists 'withdrawal';
 
 create table if not exists wallets (
   id          bigint generated always as identity primary key,
@@ -58,15 +62,30 @@ create table if not exists budgets (
   unique (category_id, month)
 );
 
+-- Recurring monthly budgets: `amount` applies to every month from `effective_from`
+-- onward, unless a per-month `budgets` row overrides it, or a later rule (greater
+-- effective_from) supersedes it. Lets a budget be set once for all months going forward.
+create table if not exists recurring_budgets (
+  id             bigint generated always as identity primary key,
+  category_id    bigint not null references categories(id) on delete cascade,
+  amount         bigint not null default 0,
+  effective_from date   not null,             -- first month this amount applies (first-of-month)
+  unique (category_id, effective_from)
+);
+
 -- Cicilan Paylater — installment purchases, paid over a span of months (any year).
+-- category_id (nullable) lets an installment be budgeted/booked under a custom expense
+-- category instead of the default "Cicilan Paylater".
 create table if not exists paylater_items (
   id                bigint generated always as identity primary key,
   item              text   not null,
   monthly_amount    bigint not null default 0,
   first_month_date  date   not null,
   last_month_date   date   not null,
+  category_id       bigint references categories(id) on delete set null,
   note              text
 );
+alter table paylater_items add column if not exists category_id bigint references categories(id) on delete set null;
 
 -- Migrate older 1..12 month-index columns (2026 only) to real dates. Runs once.
 do $$
@@ -180,6 +199,28 @@ begin
 end
 $$;
 
+-- Stock trades — ticker-level buys/sells (Indonesian lots; 1 lot = 100 shares). Each
+-- non-opening trade also books a transactions row (buy = investment from the wallet,
+-- sell = withdrawal into it, both category "Stock") so wallet balances + the Stock
+-- investment bucket stay consistent. `opening` rows describe pre-existing holdings and
+-- book no money movement.
+create table if not exists stock_trades (
+  id          bigint generated always as identity primary key,
+  ticker      text    not null,
+  side        text    not null check (side in ('buy', 'sell')),
+  lots        integer not null check (lots > 0),
+  idr         bigint  not null,                 -- money spent (buy) / received (sell)
+  occurred_on date    not null,
+  opening     boolean not null default false,   -- pre-existing holding, no wallet movement
+  wallet_id   bigint references wallets(id) on delete set null,
+  txn_id      bigint references transactions(id) on delete set null,  -- buy=investment, sell=cost-basis withdrawal
+  pl_txn_id   bigint references transactions(id) on delete set null,  -- realized P/L on a sell (Trading income / Cut Loss expense)
+  realized_pl bigint                                                  -- proceeds − cost basis (sells only)
+);
+create index if not exists idx_stock_trades_ticker on stock_trades (ticker);
+alter table stock_trades add column if not exists pl_txn_id bigint references transactions(id) on delete set null;
+alter table stock_trades add column if not exists realized_pl bigint;
+
 -- ============================================================================
 -- Materialized monthly balances: one row per (month, wallet) holding that month's
 -- NET change. A trigger keeps it in sync on every transaction change, so the Stats
@@ -208,7 +249,7 @@ create or replace function ft_row_to_delta(r transactions, sgn int)
 returns void language plpgsql as $$
 declare m date := date_trunc('month', r.occurred_on)::date;
 begin
-  if r.type = 'income' then
+  if r.type in ('income', 'withdrawal') then  -- both credit the destination wallet
     if r.dest_wallet_id is not null then perform ft_apply_delta(m, r.dest_wallet_id, sgn * r.amount); end if;
   elsif r.type = 'transfer' then
     if r.source_wallet_id is not null then perform ft_apply_delta(m, r.source_wallet_id, -sgn * r.amount); end if;
@@ -244,7 +285,7 @@ truncate monthly_wallet_delta;
 insert into monthly_wallet_delta (month, wallet_id, delta)
 select date_trunc('month', occurred_on)::date as m, wid, sum(amt)
 from (
-  select occurred_on, dest_wallet_id   as wid,  amount as amt from transactions where type = 'income'   and dest_wallet_id   is not null
+  select occurred_on, dest_wallet_id   as wid,  amount as amt from transactions where type in ('income','withdrawal') and dest_wallet_id   is not null
   union all
   select occurred_on, source_wallet_id as wid, -amount as amt from transactions where type in ('expense','saving','investment') and source_wallet_id is not null
   union all
@@ -253,3 +294,7 @@ from (
   select occurred_on, dest_wallet_id   as wid,  amount as amt from transactions where type = 'transfer' and dest_wallet_id   is not null
 ) s
 group by date_trunc('month', occurred_on)::date, wid;
+
+-- "Ambil Tabungan" is now the 'withdrawal' transaction type, not an income category.
+-- Archive the old income category so it's hidden from pickers (history still resolves it).
+update categories set archived = true where kind = 'income' and name = 'Ambil Tabungan';

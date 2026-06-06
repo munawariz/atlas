@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getLoanPayments, getLoans, getWallets } from "@/lib/data";
 import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
 import { addLoan, deleteLoan } from "../actions";
+import SubmitButton from "@/components/SubmitButton";
+import { TrashIcon } from "@/components/icons";
 import PaymentGrid, { type Cell } from "./PaymentGrid";
 
 export const dynamic = "force-dynamic";
@@ -84,7 +86,9 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
             <input name="months" inputMode="numeric" placeholder="e.g. 6" className="field mt-1" />
           </label>
         </div>
-        <button className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">Add person</button>
+        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
+          Add person
+        </SubmitButton>
       </form>
 
       <div className="space-y-3">
@@ -110,7 +114,12 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                     </div>
                   </div>
                   <form action={deleteLoan.bind(null, l.id)}>
-                    <button className="ml-3 shrink-0 text-xs text-clay active:opacity-70">Delete</button>
+                    <SubmitButton
+                      label="Delete"
+                      className="ml-3 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-clay active:bg-clay/10"
+                    >
+                      <TrashIcon className="h-[18px] w-[18px]" />
+                    </SubmitButton>
                   </form>
                 </div>
 

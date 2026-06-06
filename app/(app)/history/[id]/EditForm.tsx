@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import type { Category, Transaction, Wallet } from "@/lib/types";
 import TxnFields from "@/components/TxnFields";
+import SubmitButton from "@/components/SubmitButton";
+import { TrashIcon } from "@/components/icons";
 import { deleteTransaction, updateTransaction, type EditState } from "../actions";
 
 export default function EditForm({
@@ -52,11 +54,14 @@ export default function EditForm({
         onSubmit={(e) => {
           if (!confirm("Delete this transaction?")) e.preventDefault();
         }}
-        className="mt-3"
+        className="mt-3 flex justify-end"
       >
-        <button type="submit" className="w-full rounded-2xl border border-clay/40 py-3 text-clay transition-colors active:bg-clay/10">
-          Delete
-        </button>
+        <SubmitButton
+          label="Delete transaction"
+          className="grid h-11 w-11 place-items-center rounded-2xl border border-clay/40 text-clay active:bg-clay/10"
+        >
+          <TrashIcon className="h-5 w-5" />
+        </SubmitButton>
       </form>
     </div>
   );

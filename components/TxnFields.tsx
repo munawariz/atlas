@@ -10,6 +10,7 @@ const ACCENT: Record<TxnType, string> = {
   saving: "bg-sky text-ink",
   investment: "bg-plum text-ink",
   transfer: "bg-sand text-ink",
+  withdrawal: "bg-sky text-ink",
 };
 
 export interface TxnInitial {
@@ -83,10 +84,17 @@ export default function TxnFields({
   }, [persist, type, sourceWalletId, destWalletId]);
 
   const kind = TYPE_TO_CATEGORY_KIND[type];
-  const cats = useMemo(() => (kind ? categories.filter((c) => c.kind === kind) : []), [categories, kind]);
+  // Withdrawal ("Ambil Tabungan") draws from any saving OR investment bucket.
+  const cats = useMemo(() => {
+    if (type === "withdrawal") return categories.filter((c) => c.kind === "saving" || c.kind === "investment");
+    return kind ? categories.filter((c) => c.kind === kind) : [];
+  }, [categories, kind, type]);
+  const showCategory = kind !== null || type === "withdrawal";
+  const usesDestWallet = type === "income" || type === "withdrawal";
 
   const grouped = amount ? formatNumber(parseInt(amount, 10)) : "";
-  const walletLabel = type === "expense" ? "Paid from" : type === "income" ? "Received in" : "From wallet";
+  const walletLabel =
+    type === "expense" ? "Paid from" : usesDestWallet ? "Received in" : "From wallet";
 
   // Shrink the hero amount as it gets longer so big numbers never crop.
   const amtLen = grouped.length || 1;
@@ -136,9 +144,11 @@ export default function TxnFields({
       </div>
 
       {/* Category */}
-      {kind && (
+      {showCategory && (
         <div>
-          <div className="label mb-2.5">{type === "saving" || type === "investment" ? "Goes to" : "Category"}</div>
+          <div className="label mb-2.5">
+            {type === "withdrawal" ? "Take from" : type === "saving" || type === "investment" ? "Goes to" : "Category"}
+          </div>
           <div className="flex flex-wrap gap-2">
             {cats.map((c) => (
               <Chip key={c.id} label={c.name} selected={categoryId === c.id} onClick={() => setCategoryId(c.id)} />
@@ -156,8 +166,8 @@ export default function TxnFields({
               <Chip
                 key={w.id}
                 label={w.name}
-                selected={(type === "income" ? destWalletId : sourceWalletId) === w.id}
-                onClick={() => (type === "income" ? setDestWalletId(w.id) : setSourceWalletId(w.id))}
+                selected={(usesDestWallet ? destWalletId : sourceWalletId) === w.id}
+                onClick={() => (usesDestWallet ? setDestWalletId(w.id) : setSourceWalletId(w.id))}
               />
             ))}
           </div>
@@ -185,7 +195,9 @@ export default function TxnFields({
 
       {/* Description */}
       <div>
-        <div className="label mb-2.5">{type === "saving" || type === "investment" ? "Note" : "Description"}</div>
+        <div className="label mb-2.5">
+          {type === "saving" || type === "investment" || type === "withdrawal" ? "Note" : "Description"}
+        </div>
         <input
           name="description"
           value={description}

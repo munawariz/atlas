@@ -1,5 +1,6 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { monthName } from "@/lib/format";
 
@@ -13,6 +14,7 @@ export default function MonthSwitcher({
   params?: Record<string, string>;
 }) {
   const router = useRouter();
+  const [pending, startTransition] = useTransition();
   const [y, m] = monthKey.split("-").map(Number);
 
   const go = (delta: number) => {
@@ -26,27 +28,29 @@ export default function MonthSwitcher({
       ny += 1;
     }
     const qs = new URLSearchParams({ ...params, m: `${ny}-${String(nm).padStart(2, "0")}-01` });
-    router.push(`${basePath}?${qs.toString()}`);
+    startTransition(() => router.push(`${basePath}?${qs.toString()}`));
   };
 
   return (
-    <div className="flex items-center justify-between">
+    <div className={`flex items-center justify-between transition-opacity ${pending ? "opacity-50" : ""}`}>
       <button
         type="button"
         onClick={() => go(-1)}
-        className="flex h-10 w-10 items-center justify-center rounded-full border border-line/60 bg-ink-2 text-paper-dim transition-transform active:scale-95"
+        disabled={pending}
+        className="flex h-10 w-10 items-center justify-center rounded-full border border-line/60 bg-ink-2 text-paper-dim transition-transform active:scale-95 disabled:active:scale-100"
         aria-label="Previous month"
       >
         ‹
       </button>
       <div className="text-center">
         <div className="font-display text-xl font-medium tracking-tight text-paper">{monthName(m)}</div>
-        <div className="label -mt-0.5">{y}</div>
+        <div className="label -mt-0.5">{pending ? "…" : y}</div>
       </div>
       <button
         type="button"
         onClick={() => go(1)}
-        className="flex h-10 w-10 items-center justify-center rounded-full border border-line/60 bg-ink-2 text-paper-dim transition-transform active:scale-95"
+        disabled={pending}
+        className="flex h-10 w-10 items-center justify-center rounded-full border border-line/60 bg-ink-2 text-paper-dim transition-transform active:scale-95 disabled:active:scale-100"
         aria-label="Next month"
       >
         ›

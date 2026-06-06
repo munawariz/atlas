@@ -6,7 +6,24 @@
       "Bash(xargs grep -o \"group-open\\\\\\\\\\\\\\\\:rotate-90[^}]*}\")",
       "Bash(node -e ' *)",
       "Bash(python -c ' *)",
-      "PowerShell(Move-Item \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\pinjol\" \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\loans\")"
+      "PowerShell(Move-Item \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\pinjol\" \"D:\\\\Projects\\\\finance-tracker\\\\app\\\\\\(app\\)\\\\more\\\\loans\")",
+      "Bash(grep -v \"//\")",
+      "Bash(node scripts/_latency.mjs)",
+      "Bash(grep -rn \">Edit<\\\\|>Delete<\\\\|>Edit \\\\|Delete</\\\\|Edit</\\\\|>Archive\\\\|>Restore\\\\|>Remove<\\\\|Delete\\\\\"\\\\|Edit\\\\\"\" app components)",
+      "Bash(grep -n \"Edit\\\\|Done\\\\|>.*<\\\\/button>\\\\|button\" \"app/\\(app\\)/more/loans/PaymentGrid.tsx\")",
+      "Bash(node scripts/_chartcheck.mjs)",
+      "Bash(node scripts/_savecheck.mjs)",
+      "Bash(node scripts/_ambilcheck.mjs)",
+      "Bash(python scripts/_ambilapply.py)",
+      "Bash(node scripts/_savecheck2.mjs)",
+      "Bash(python scripts/_seedopening.py)",
+      "Bash(node scripts/_savecheck3.mjs)",
+      "Bash(python scripts/_seedstocks.py)",
+      "Bash(node scripts/_stockprices.mjs)",
+      "Bash(python scripts/_selltest.py)",
+      "Bash(gh repo *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://api.github.com/repos/munawariz/finance-tracker)",
+      "Bash(git add *)"
     ]
   }
 }

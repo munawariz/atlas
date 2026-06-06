@@ -30,11 +30,13 @@ export function parseTransactionForm(formData: FormData): { row?: TxnRow; error?
 
   if ((type === "expense" || type === "income") && !category_id) return { error: "Choose a category." };
   if ((type === "saving" || type === "investment") && !category_id) return { error: "Choose where it's going." };
+  if (type === "withdrawal" && !category_id) return { error: "Choose which savings to withdraw from." };
   if (type === "expense" && !source_wallet_id) return { error: "Choose the wallet you paid from." };
-  if (type === "income" && !dest_wallet_id) return { error: "Choose the wallet it went into." };
+  if ((type === "income" || type === "withdrawal") && !dest_wallet_id) return { error: "Choose the wallet it went into." };
   if (type === "transfer" && (!source_wallet_id || !dest_wallet_id)) return { error: "Choose both From and To wallets." };
   if (type === "transfer" && source_wallet_id === dest_wallet_id) return { error: "From and To must differ." };
 
+  const usesDestWallet = type === "transfer" || type === "income" || type === "withdrawal";
   return {
     row: {
       occurred_on,
@@ -42,8 +44,8 @@ export function parseTransactionForm(formData: FormData): { row?: TxnRow; error?
       amount,
       description,
       category_id: type === "transfer" ? null : category_id,
-      source_wallet_id: type === "income" ? null : source_wallet_id,
-      dest_wallet_id: type === "transfer" || type === "income" ? dest_wallet_id : null,
+      source_wallet_id: type === "income" || type === "withdrawal" ? null : source_wallet_id,
+      dest_wallet_id: usesDestWallet ? dest_wallet_id : null,
     },
   };
 }

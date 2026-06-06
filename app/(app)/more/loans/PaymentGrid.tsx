@@ -8,6 +8,7 @@ import {
   uncollectLoanPayment,
   unscheduleMonth,
 } from "../actions";
+import { CheckIcon, PencilIcon } from "@/components/icons";
 
 export type Cell = { month: string; state: "paid" | "unpaid" };
 
@@ -90,14 +91,18 @@ export default function PaymentGrid({
         <button
           type="button"
           onClick={() => setEditing((e) => !e)}
-          className="font-display text-[10px] uppercase tracking-wider text-paper-dim active:text-paper"
+          aria-label={editing ? "Done editing months" : "Edit months"}
+          title={editing ? "Done" : "Edit months"}
+          className={`grid h-8 w-8 place-items-center rounded-lg active:bg-ink-3 ${
+            editing ? "text-green" : "text-paper-dim active:text-paper"
+          }`}
         >
-          {editing ? "Done" : "Edit months"}
+          {editing ? <CheckIcon className="h-[18px] w-[18px]" /> : <PencilIcon className="h-[18px] w-[18px]" />}
         </button>
       </div>
 
       {schedule.length === 0 && !editing ? (
-        <p className="mt-2 text-xs text-paper-faint">No promised months — tap “Edit months” to add.</p>
+        <p className="mt-2 text-xs text-paper-faint">No promised months — tap the pencil to add.</p>
       ) : (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {schedule.map((c) => {

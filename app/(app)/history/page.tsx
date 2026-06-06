@@ -13,6 +13,7 @@ const SIGN: Record<TxnType, { color: string; prefix: string }> = {
   saving: { color: "text-sky", prefix: "→" },
   investment: { color: "text-plum", prefix: "→" },
   transfer: { color: "text-paper-dim", prefix: "" },
+  withdrawal: { color: "text-sky", prefix: "←" },
 };
 
 function meta(t: Transaction, cats: Map<number, { name: string }>, ws: Map<number, string>): string {
@@ -20,6 +21,7 @@ function meta(t: Transaction, cats: Map<number, { name: string }>, ws: Map<numbe
   const src = t.source_wallet_id ? ws.get(t.source_wallet_id) : undefined;
   const dst = t.dest_wallet_id ? ws.get(t.dest_wallet_id) : undefined;
   if (t.type === "transfer") return `${src ?? "?"} → ${dst ?? "?"}`;
+  if (t.type === "withdrawal") return `${cat ?? "?"} → ${dst ?? "?"}`;
   if (t.type === "income") return [cat, dst].filter(Boolean).join(" · ");
   return [cat, src].filter(Boolean).join(" · ");
 }

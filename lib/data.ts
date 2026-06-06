@@ -1,7 +1,7 @@
 import "server-only";
 import { supabaseServer } from "./supabaseServer";
 import type {
-  Budget,
+  EffectiveBudget,
   Category,
   CategoryKind,
   Loan,
@@ -167,10 +167,32 @@ export async function getTransaction(id: number): Promise<Transaction | null> {
   return (data as Transaction) ?? null;
 }
 
-export async function getBudgetsForMonth(monthKey: string): Promise<Budget[]> {
-  const { data, error } = await supabaseServer().from("budgets").select("*").eq("month", monthKey);
-  if (error) throw error;
-  return (data ?? []) as Budget[];
+// Resolve each category's budget for the month: a per-month override (in `budgets`)
+// wins; otherwise the recurring rule with the greatest effective_from <= the month.
+export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBudget[]> {
+  const sb = supabaseServer();
+  const [ov, rec] = await Promise.all([
+    sb.from("budgets").select("category_id, amount").eq("month", monthKey),
+    sb
+      .from("recurring_budgets")
+      .select("category_id, amount, effective_from")
+      .lte("effective_from", monthKey)
+      .order("effective_from", { ascending: true }),
+  ]);
+  if (ov.error) throw ov.error;
+  if (rec.error && rec.error.code !== "42P01") throw rec.error; // tolerate table not migrated yet
+
+  const recByCat = new Map<number, number>();
+  for (const r of rec.data ?? []) recByCat.set(r.category_id, r.amount); // ascending => greatest effective_from wins
+  const ovByCat = new Map<number, number>();
+  for (const o of ov.data ?? []) ovByCat.set(o.category_id, o.amount);
+
+  const ids = new Set<number>([...recByCat.keys(), ...ovByCat.keys()]);
+  return [...ids].map((category_id) => ({
+    category_id,
+    amount: ovByCat.has(category_id) ? ovByCat.get(category_id)! : recByCat.get(category_id)!,
+    recurring: !ovByCat.has(category_id),
+  }));
 }
 
 export async function getWalletBalances(monthKey: string): Promise<WalletBalance[]> {
@@ -215,4 +237,140 @@ export async function getLoanPayments(): Promise<LoanPayment[]> {
   const { data, error } = await supabaseServer().from("loan_payments").select("*");
   if (error) throw error;
   return (data ?? []) as LoanPayment[];
+}
+
+// ---- Charts ----
+export interface ChartData {
+  months: string[]; // months with flows, ascending "YYYY-MM-01"
+  flows: { month: string; income: number; expense: number; saving: number; investment: number }[];
+  catTotals: { month: string; categoryId: number; kind: TxnType; total: number }[]; // categoryId 0 = uncategorized
+  networth: { month: string; total: number }[]; // opening baseline + each subsequent month-end
+}
+
+/**
+ * One pass over the whole ledger for the Charts page: per-month income/expense/
+ * saving/investment, per-(month, category) totals for drilldown, and the month-end
+ * net-worth series (opening balance + cumulative monthly deltas). Transfers are excluded.
+ */
+export async function getChartData(): Promise<ChartData> {
+  const sb = supabaseServer();
+
+  // Paginate — PostgREST caps each response at 1000 rows.
+  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null };
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("transactions")
+      .select("occurred_on, type, amount, category_id")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    const batch = (data ?? []) as Row[];
+    rows.push(...batch);
+    if (batch.length < 1000) break;
+  }
+
+  // Map each category to its kind so "withdrawal" rows can net against the bucket's
+  // saving/investment flow rather than being counted on their own.
+  const { data: catRows } = await sb.from("categories").select("id, kind");
+  const catKind = new Map<number, CategoryKind>();
+  for (const c of (catRows ?? []) as { id: number; kind: CategoryKind }[]) catKind.set(c.id, c.kind);
+
+  const monthOf = (d: string) => `${d.slice(0, 7)}-01`;
+  const flowMap = new Map<string, ChartData["flows"][number]>();
+  const catMap = new Map<string, ChartData["catTotals"][number]>();
+  const addCat = (m: string, cid: number, kind: TxnType, delta: number) => {
+    const key = `${m}|${cid}|${kind}`;
+    const c = catMap.get(key) ?? { month: m, categoryId: cid, kind, total: 0 };
+    c.total += delta;
+    catMap.set(key, c);
+  };
+  for (const r of rows) {
+    if (r.type === "transfer") continue;
+    const m = monthOf(r.occurred_on);
+    const f = flowMap.get(m) ?? { month: m, income: 0, expense: 0, saving: 0, investment: 0 };
+
+    if (r.type === "withdrawal") {
+      const k = r.category_id ? catKind.get(r.category_id) : null;
+      if ((k === "saving" || k === "investment") && r.category_id) {
+        f[k] -= r.amount; // money left the bucket
+        flowMap.set(m, f);
+        addCat(m, r.category_id, k, -r.amount);
+      }
+      continue;
+    }
+
+    f[r.type as "income" | "expense" | "saving" | "investment"] += r.amount;
+    flowMap.set(m, f);
+    addCat(m, r.category_id ?? 0, r.type, r.amount);
+  }
+  const months = [...flowMap.keys()].sort();
+  const flows = months.map((m) => flowMap.get(m)!);
+  const catTotals = [...catMap.values()];
+
+  // Net-worth series from opening + cumulative monthly_wallet_delta (drift-proof).
+  const opening = await getOpeningBalances();
+  const openingTotal = [...opening.values()].reduce((a, b) => a + b, 0);
+  const { data: deltas, error: dErr } = await sb.from("monthly_wallet_delta").select("month, delta");
+  if (dErr) throw dErr;
+  const deltaByMonth = new Map<string, number>();
+  for (const d of (deltas ?? []) as { month: string; delta: number }[]) {
+    deltaByMonth.set(d.month, (deltaByMonth.get(d.month) ?? 0) + d.delta);
+  }
+  const deltaMonths = [...deltaByMonth.keys()].filter((m) => m !== OPENING_MONTH).sort();
+  let running = openingTotal;
+  const networth = [{ month: OPENING_MONTH, total: openingTotal }];
+  for (const m of deltaMonths) {
+    running += deltaByMonth.get(m)!;
+    networth.push({ month: m, total: running });
+  }
+
+  return { months, flows, catTotals, networth };
+}
+
+// ---- Savings & investment balances ----
+export interface SavingsBucket {
+  categoryId: number;
+  name: string;
+  kind: "saving" | "investment";
+  contributed: number; // total moved in (saving / investment)
+  withdrawn: number; // total moved out (Ambil Tabungan withdrawals)
+  balance: number; // contributed − withdrawn
+}
+
+/** Cumulative balance held in each saving/investment bucket across all time. */
+export async function getSavingsBuckets(): Promise<SavingsBucket[]> {
+  const sb = supabaseServer();
+  // Active buckets only — this excludes the archived "Forex Yen" category, whose holding
+  // is tracked separately in the Forex module (counting it here would double it).
+  const cats = await getCategories(false);
+  const buckets = new Map<number, SavingsBucket>();
+  for (const c of cats) {
+    if (c.kind === "saving" || c.kind === "investment") {
+      buckets.set(c.id, { categoryId: c.id, name: c.name, kind: c.kind, contributed: 0, withdrawn: 0, balance: 0 });
+    }
+  }
+
+  // Paginate the relevant transactions (PostgREST caps each response at 1000 rows).
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("transactions")
+      .select("type, amount, category_id")
+      .in("type", ["saving", "investment", "withdrawal"])
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    const batch = (data ?? []) as { type: string; amount: number; category_id: number | null }[];
+    for (const r of batch) {
+      if (!r.category_id) continue; // null-category (e.g. legacy forex) is not a bucket
+      const b = buckets.get(r.category_id);
+      if (!b) continue;
+      if (r.type === "withdrawal") b.withdrawn += r.amount;
+      else b.contributed += r.amount;
+    }
+    if (batch.length < 1000) break;
+  }
+
+  for (const b of buckets.values()) b.balance = b.contributed - b.withdrawn;
+  return [...buckets.values()];
 }

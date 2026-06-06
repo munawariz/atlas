@@ -15,6 +15,8 @@ import ForexToggleValue from "@/components/ForexToggleValue";
 import { formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
+import Link from "next/link";
+import { ChartIcon } from "@/components/icons";
 
 export const dynamic = "force-dynamic";
 
@@ -70,20 +72,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .sort((a, b) => b.amt - a.amt);
   const maxSpend = spendRows[0]?.amt ?? 1;
 
-  // How much went to savings & investments this month (category-tagged only, so the
-  // null-category forex moves are excluded — forex is its own module).
-  const savingTotal = sum(txns.filter((t) => t.type === "saving" && t.category_id));
-  const investTotal = sum(txns.filter((t) => t.type === "investment" && t.category_id));
+  // Net flow into each saving/investment bucket this month: contributions minus
+  // "Ambil Tabungan" withdrawals (which draw from the same buckets). Category-tagged
+  // only, so the null-category forex moves are excluded — forex is its own module.
   const siByCat = new Map<number, number>();
   for (const t of txns) {
-    if ((t.type === "saving" || t.type === "investment") && t.category_id) {
+    if (!t.category_id) continue;
+    if (t.type === "saving" || t.type === "investment") {
       siByCat.set(t.category_id, (siByCat.get(t.category_id) ?? 0) + t.amount);
+    } else if (t.type === "withdrawal") {
+      siByCat.set(t.category_id, (siByCat.get(t.category_id) ?? 0) - t.amount);
     }
   }
   const savInvRows = [...siByCat.entries()]
     .map(([id, amt]) => ({ name: cats.get(id)?.name ?? "—", kind: cats.get(id)?.kind, amt }))
+    .filter((r) => r.amt !== 0)
     .sort((a, b) => b.amt - a.amt);
-  const maxSavInv = savInvRows[0]?.amt ?? 1;
+  const savingTotal = savInvRows.filter((r) => r.kind === "saving").reduce((a, r) => a + r.amt, 0);
+  const investTotal = savInvRows.filter((r) => r.kind === "investment").reduce((a, r) => a + r.amt, 0);
+  const maxSavInv = savInvRows.reduce((m, r) => Math.max(m, Math.abs(r.amt)), 0) || 1;
 
   // Individual "Other" expenses, listed under the Other row (it's a catch-all).
   const otherCat = [...cats.values()].find((c) => c.kind === "expense" && c.name === "Other");
@@ -102,13 +109,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  const paylaterExpected = paylater
-    .filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date)
-    .reduce((s, p) => s + p.monthly_amount, 0);
+  // Each active installment contributes its monthly amount to its category's budget
+  // (default Cicilan Paylater). Custom categories get it ADDED on top of the user budget.
+  const instByCat = new Map<number, number>();
+  for (const p of paylater) {
+    if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
+    const catId = p.category_id ?? cicilanCat?.id;
+    if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
+  }
 
   const budgetByCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
   if (hutangCat) budgetByCat.set(hutangCat.id, loanExpected); // override with auto value
-  if (cicilanCat) budgetByCat.set(cicilanCat.id, paylaterExpected);
+  for (const [catId, amt] of instByCat) {
+    if (catId === cicilanCat?.id) budgetByCat.set(catId, amt); // Cicilan Paylater = installments only
+    else budgetByCat.set(catId, (budgetByCat.get(catId) ?? 0) + amt); // custom: add on top of user budget
+  }
 
   const budgetRows = [...budgetByCat.entries()]
     .map(([catId, amount]) => {
@@ -158,6 +173,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       {/* Networth hero */}
       <div className="card relative overflow-hidden p-6">
         <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-[radial-gradient(circle,rgba(63,185,80,0.18),transparent_70%)]" />
+        <Link
+          href="/charts"
+          className="absolute right-3 top-3 flex items-center gap-1 rounded-full border border-line/60 bg-ink-2/70 px-2.5 py-1 text-[11px] font-medium text-paper-dim active:text-paper"
+        >
+          <ChartIcon className="h-3.5 w-3.5" /> Charts
+        </Link>
         <div className="label">Networth · {monthName(m)}</div>
         <div className="mt-1.5 font-display font-medium leading-none tabular-nums text-paper text-[clamp(1.9rem,8.5vw,2.6rem)]">
           {formatRupiah(netWorthNow)}
@@ -290,10 +311,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </section>
       )}
 
-      {/* Saved & invested */}
-      {(savingTotal > 0 || investTotal > 0) && (
+      {/* Saved & invested (net of Ambil Tabungan withdrawals) */}
+      {savInvRows.length > 0 && (
         <section>
-          <h2 className="label mb-2.5 text-amber">Saved &amp; invested</h2>
+          <div className="mb-2.5 flex items-center justify-between">
+            <h2 className="label text-amber">Saved &amp; invested · net</h2>
+            <Link href="/savings" className="text-[11px] text-paper-dim active:text-paper">Balances ›</Link>
+          </div>
           <div className="mb-2.5 grid grid-cols-2 gap-2.5">
             <div className="card p-3.5 text-center">
               <div className="label">Saved</div>
@@ -310,9 +334,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                 <div key={r.name}>
                   <div className="mb-1.5 flex justify-between text-xs">
                     <span className="text-paper">{r.name}</span>
-                    <span className="tabular-nums text-paper-dim">{formatRupiahShort(r.amt)}</span>
+                    <span className={`tabular-nums ${r.amt < 0 ? "text-amber" : "text-paper-dim"}`}>
+                      {formatRupiahShort(r.amt)}
+                    </span>
                   </div>
-                  <Bar pct={(r.amt / maxSavInv) * 100} color={r.kind === "saving" ? "bg-sky/85" : "bg-plum/85"} />
+                  <Bar pct={(Math.abs(r.amt) / maxSavInv) * 100} color={r.kind === "saving" ? "bg-sky/85" : "bg-plum/85"} />
                 </div>
               ))}
             </div>

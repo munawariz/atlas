@@ -30,6 +30,9 @@ on conflict (kind, name) do nothing;
 -- (kept archived so existing history still resolves its name).
 update categories set archived = true where kind = 'investment' and name = 'Forex Yen';
 
+-- "Ambil Tabungan" is now the 'withdrawal' transaction type, not an income category.
+update categories set archived = true where kind = 'income' and name = 'Ambil Tabungan';
+
 -- Forex holding (kept on conflict so your edited balance isn't overwritten on re-seed).
 insert into forex_accounts (name, currency, units) values ('Forex Yen', 'JPY', 60051.51)
 on conflict (name) do nothing;

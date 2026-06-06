@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCategories } from "@/lib/data";
 import type { CategoryKind } from "@/lib/types";
+import SubmitButton from "@/components/SubmitButton";
 import { addCategory, toggleCategoryArchived } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +30,9 @@ export default async function CategoriesPage() {
           ))}
         </select>
         <input name="name" placeholder="New category" className="field flex-1" />
-        <button className="rounded-2xl bg-gold px-4 font-semibold text-ink">Add</button>
+        <SubmitButton pendingText="…" className="rounded-2xl bg-gold px-4 font-semibold text-ink">
+          Add
+        </SubmitButton>
       </form>
 
       {KINDS.map((k) => {
@@ -43,7 +46,9 @@ export default async function CategoriesPage() {
                 <div key={c.id} className={`flex items-center justify-between px-4 py-2.5 ${i > 0 ? "hr-dash border-t" : ""}`}>
                   <span className={`text-sm ${c.archived ? "text-paper-faint line-through" : "text-paper"}`}>{c.name}</span>
                   <form action={toggleCategoryArchived.bind(null, c.id)}>
-                    <button className="text-xs text-paper-dim active:text-paper">{c.archived ? "Restore" : "Archive"}</button>
+                    <SubmitButton className="text-xs text-paper-dim active:text-paper">
+                      {c.archived ? "Restore" : "Archive"}
+                    </SubmitButton>
                   </form>
                 </div>
               ))}

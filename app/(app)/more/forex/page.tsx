@@ -3,6 +3,7 @@ import { getWallets, walletMap } from "@/lib/data";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
 import { formatMonth, formatRupiah } from "@/lib/format";
 import { setForexUnits } from "../actions";
+import SubmitButton from "@/components/SubmitButton";
 import ForexConvert from "./ForexConvert";
 
 export const dynamic = "force-dynamic";
@@ -58,7 +59,12 @@ export default async function ForexPage() {
                 className="w-28 rounded-lg border border-line/70 bg-ink-3 px-2 py-1.5 text-right text-sm tabular-nums text-paper outline-none focus:border-green/60"
               />
               <span className="text-xs text-paper-dim">{a.currency}</span>
-              <button className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25">Save</button>
+              <SubmitButton
+                pendingText="…"
+                className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
+              >
+                Save
+              </SubmitButton>
             </form>
           </div>
         );

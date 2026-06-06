@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatNumber } from "@/lib/format";
+import SubmitButton from "@/components/SubmitButton";
 import { convertForex } from "../actions";
 
 export default function ForexConvert({
@@ -74,7 +75,9 @@ export default function ForexConvert({
         )}
       </p>
 
-      <button className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">Convert</button>
+      <SubmitButton pendingText="Converting…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
+        Convert
+      </SubmitButton>
     </form>
   );
 }

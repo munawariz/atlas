@@ -2,7 +2,10 @@ import Link from "next/link";
 import { logout } from "./actions";
 
 const LINKS = [
+  { href: "/charts", label: "Charts", desc: "Trends & drilldown into your money" },
   { href: "/balances", label: "Starting balances", desc: "Opening balance per wallet → live networth" },
+  { href: "/savings", label: "Savings", desc: "Balance in each saving & investment bucket" },
+  { href: "/stocks", label: "Stocks", desc: "Per-ticker portfolio, live value & avg cost" },
   { href: "/more/forex", label: "Forex", desc: "Foreign currency holdings (live rate)" },
   { href: "/more/budgets", label: "Budgets", desc: "Set monthly targets" },
   { href: "/more/paylater", label: "My Paylater", desc: "Installment items" },

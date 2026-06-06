@@ -1,9 +1,12 @@
 import Link from "next/link";
-import { getPaylaterItems, getPaylaterPayments, getWallets } from "@/lib/data";
+import { getCategoriesByKind, getPaylaterItems, getPaylaterPayments, getWallets } from "@/lib/data";
 import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
+import SubmitButton from "@/components/SubmitButton";
+import { TrashIcon } from "@/components/icons";
 import { addPaylater, deletePaylater } from "../actions";
 import PaylaterToggle from "./PaylaterToggle";
+import PaylaterEdit from "./PaylaterEdit";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +21,15 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const ym = monthKey.slice(0, 7);
 
-  const [items, paid, wallets] = await Promise.all([getPaylaterItems(), getPaylaterPayments(), getWallets()]);
+  const [items, paid, wallets, expenseCats] = await Promise.all([
+    getPaylaterItems(),
+    getPaylaterPayments(),
+    getWallets(),
+    getCategoriesByKind("expense"),
+  ]);
+  const catName = new Map(expenseCats.map((c) => [c.id, c.name]));
+  // Categories a user can pick for an installment (the default is Cicilan Paylater).
+  const pickCats = expenseCats.filter((c) => c.name !== "Cicilan Paylater").map((c) => ({ id: c.id, name: c.name }));
   const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
   const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
 
@@ -60,8 +71,19 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
             <input type="month" name="last_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
           </label>
         </div>
+        <label className="block text-xs text-paper-dim">
+          Count in budget as
+          <select name="category_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
+            <option value="" className="bg-ink-2">Cicilan Paylater (default)</option>
+            {pickCats.map((c) => (
+              <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
+            ))}
+          </select>
+        </label>
         <input name="note" placeholder="Note (optional)" className="field" />
-        <button className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">Add item</button>
+        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
+          Add item
+        </SubmitButton>
       </form>
 
       {active.length === 0 ? (
@@ -75,7 +97,14 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
             return (
               <div key={p.id} className="card flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-paper">{p.item}</div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-sm font-medium text-paper">{p.item}</span>
+                    {p.category_id && catName.get(p.category_id) && catName.get(p.category_id) !== "Cicilan Paylater" && (
+                      <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
+                        {catName.get(p.category_id)}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-paper-dim">
                     {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
                     {p.note ? ` · ${p.note}` : ""}
@@ -90,8 +119,23 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
                     paid={paid}
                     wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
                   />
+                  <PaylaterEdit
+                    id={p.id}
+                    item={p.item}
+                    monthlyAmount={p.monthly_amount}
+                    firstMonth={p.first_month_date}
+                    lastMonth={p.last_month_date}
+                    categoryId={p.category_id}
+                    note={p.note}
+                    categories={pickCats}
+                  />
                   <form action={deletePaylater.bind(null, p.id)}>
-                    <button className="text-xs text-clay active:opacity-70">Delete</button>
+                    <SubmitButton
+                      label="Delete"
+                      className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
+                    >
+                      <TrashIcon className="h-[18px] w-[18px]" />
+                    </SubmitButton>
                   </form>
                 </div>
               </div>

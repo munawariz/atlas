@@ -27,6 +27,12 @@ function units(v: FormDataEntryValue | null): number {
   return parseFloat(String(v ?? "").replace(/[^0-9.]/g, "")) || 0;
 }
 
+// Optional positive integer (e.g. a selected category id); "" / invalid -> null.
+function optInt(v: FormDataEntryValue | null): number | null {
+  const n = parseInt(String(v ?? ""), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 
 export async function logout() {
   (await cookies()).delete(SESSION_COOKIE);
@@ -68,12 +74,34 @@ export async function toggleCategoryArchived(id: number) {
 }
 
 // ---- Budgets ----
+// scope: "month" = this month only (a per-month override); "forward" = this month and
+// every month after (a recurring rule, clearing later rules/overrides); "all" = every
+// month (a single recurring rule from the beginning, clearing all rules/overrides).
 export async function setBudget(formData: FormData) {
   const category_id = parseInt(String(formData.get("category_id") ?? ""), 10);
   const month = String(formData.get("month") ?? "");
+  const scope = String(formData.get("scope") ?? "month");
   const amount = digits(formData.get("amount"));
   if (!category_id || !/^\d{4}-\d{2}-01$/.test(month)) return;
-  await supabaseServer().from("budgets").upsert({ category_id, month, amount }, { onConflict: "category_id,month" });
+  const sb = supabaseServer();
+
+  if (scope === "all") {
+    // One recurring rule from the dawn of time; wipe every override and other rule.
+    await sb.from("recurring_budgets").delete().eq("category_id", category_id);
+    await sb.from("budgets").delete().eq("category_id", category_id);
+    await sb.from("recurring_budgets").insert({ category_id, amount, effective_from: "1900-01-01" });
+  } else if (scope === "forward") {
+    // Authoritative from this month on: drop later rules + overrides, set the rule here.
+    await sb.from("recurring_budgets").delete().eq("category_id", category_id).gt("effective_from", month);
+    await sb.from("budgets").delete().eq("category_id", category_id).gte("month", month);
+    await sb
+      .from("recurring_budgets")
+      .upsert({ category_id, amount, effective_from: month }, { onConflict: "category_id,effective_from" });
+  } else {
+    // This month only — a per-month override on top of any recurring rule.
+    await sb.from("budgets").upsert({ category_id, month, amount }, { onConflict: "category_id,month" });
+  }
+
   revalidatePath("/more/budgets");
   revalidatePath("/dashboard");
 }
@@ -89,8 +117,32 @@ export async function addPaylater(formData: FormData) {
     monthly_amount: digits(formData.get("monthly_amount")),
     first_month_date: first,
     last_month_date: last < first ? first : last,
+    category_id: optInt(formData.get("category_id")),
     note: String(formData.get("note") ?? "").trim() || null,
   });
+  revalidatePath("/more/paylater");
+  revalidatePath("/dashboard");
+}
+
+export async function editPaylater(formData: FormData) {
+  const id = parseInt(String(formData.get("id") ?? ""), 10);
+  const item = String(formData.get("item") ?? "").trim();
+  const first = monthDate(formData.get("first_month"));
+  const last = monthDate(formData.get("last_month"));
+  if (!id || !item || !first || !last) return;
+  await supabaseServer()
+    .from("paylater_items")
+    .update({
+      item,
+      monthly_amount: digits(formData.get("monthly_amount")),
+      first_month_date: first,
+      last_month_date: last < first ? first : last,
+      category_id: optInt(formData.get("category_id")),
+      note: String(formData.get("note") ?? "").trim() || null,
+    })
+    .eq("id", id);
+  // Note: already-booked paid months keep their original expense (historical record);
+  // editing only changes the item's details going forward.
   revalidatePath("/more/paylater");
   revalidatePath("/dashboard");
 }
@@ -106,18 +158,27 @@ export async function deletePaylater(id: number) {
 export async function payPaylaterMonth(itemId: number, month: string, walletId: number, dateISO: string) {
   const sb = supabaseServer();
   const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
-  const { data: item } = await sb.from("paylater_items").select("item, monthly_amount").eq("id", itemId).maybeSingle();
+  const { data: item } = await sb
+    .from("paylater_items")
+    .select("item, monthly_amount, category_id")
+    .eq("id", itemId)
+    .maybeSingle();
   if (!item || !walletId) return;
 
-  let { data: cat } = await sb
-    .from("categories")
-    .select("id")
-    .eq("kind", "expense")
-    .eq("name", "Cicilan Paylater")
-    .maybeSingle();
-  if (!cat) {
-    const ins = await sb.from("categories").insert({ kind: "expense", name: "Cicilan Paylater" }).select("id").single();
-    cat = ins.data;
+  // Book the expense under the item's custom category, or default to "Cicilan Paylater".
+  let categoryId = item.category_id as number | null;
+  if (!categoryId) {
+    let { data: cat } = await sb
+      .from("categories")
+      .select("id")
+      .eq("kind", "expense")
+      .eq("name", "Cicilan Paylater")
+      .maybeSingle();
+    if (!cat) {
+      const ins = await sb.from("categories").insert({ kind: "expense", name: "Cicilan Paylater" }).select("id").single();
+      cat = ins.data;
+    }
+    categoryId = cat?.id ?? null;
   }
   const txn = await sb
     .from("transactions")
@@ -126,7 +187,7 @@ export async function payPaylaterMonth(itemId: number, month: string, walletId: 
       type: "expense",
       amount: item.monthly_amount,
       description: item.item,
-      category_id: cat?.id ?? null,
+      category_id: categoryId,
       source_wallet_id: walletId,
     })
     .select("id")
