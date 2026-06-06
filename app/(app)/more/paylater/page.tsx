@@ -7,8 +7,24 @@ import { TrashIcon } from "@/components/icons";
 import { addPaylater, deletePaylater } from "../actions";
 import PaylaterToggle from "./PaylaterToggle";
 import PaylaterEdit from "./PaylaterEdit";
+import PaylaterMonths from "./PaylaterMonths";
 
 export const dynamic = "force-dynamic";
+
+// Every first-of-month from `first` to `last`, inclusive.
+const monthsBetween = (first: string, last: string) => {
+  const out: string[] = [];
+  let [y, m] = first.slice(0, 7).split("-").map(Number);
+  const [ly, lm] = last.slice(0, 7).split("-").map(Number);
+  while (y < ly || (y === ly && m <= lm)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}-01`);
+    if (++m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+  return out;
+};
 
 const span = (a: string, b: string) => {
   const [ay, am] = a.slice(0, 7).split("-").map(Number);
@@ -36,17 +52,22 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const hasExpense = (p: (typeof items)[number]) => paidWithTxn.has(`${p.id}:${monthKey}`);
 
   const active = items.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
-  // Sort by: (1) expense category, (2) months left owed (most first), (3) shorter total
-  // installment first — so a 6-month/1-left ranks above a 12-month/1-left.
+  // Sort by: (0) one-month "1/1" installments first (top priority), then (1) expense
+  // category, (2) months left owed (most first), (3) shorter total installment — so a
+  // 6-month/1-left ranks above a 12-month/1-left.
   const catLabel = (p: (typeof items)[number]) =>
     p.category_id ? catName.get(p.category_id) ?? "Cicilan Paylater" : "Cicilan Paylater";
+  const totalMonths = (p: (typeof items)[number]) => span(p.first_month_date, p.last_month_date);
   active.sort((a, b) => {
+    const oneA = totalMonths(a) === 1;
+    const oneB = totalMonths(b) === 1;
+    if (oneA !== oneB) return oneA ? -1 : 1;
     const byCat = catLabel(a).localeCompare(catLabel(b));
     if (byCat !== 0) return byCat;
     const leftA = span(monthKey, a.last_month_date);
     const leftB = span(monthKey, b.last_month_date);
     if (leftA !== leftB) return leftB - leftA; // most months still owed first
-    return span(a.first_month_date, a.last_month_date) - span(b.first_month_date, b.last_month_date);
+    return totalMonths(a) - totalMonths(b);
   });
   const owed = active.filter((p) => !isPaid(p));
   const dueTotal = owed.reduce((a, p) => a + p.monthly_amount, 0);
@@ -108,23 +129,28 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
             const paid = isPaid(p);
             const months = span(p.first_month_date, p.last_month_date);
             const monthsLeft = span(monthKey, p.last_month_date); // this month through the last
+            const monthList = monthsBetween(p.first_month_date, p.last_month_date).map((m) => ({
+              month: m,
+              paid: paidSet.has(`${p.id}:${m}`),
+            }));
             return (
-              <div key={p.id} className="card flex items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate text-sm font-medium text-paper">{p.item}</span>
-                    {p.category_id && catName.get(p.category_id) && catName.get(p.category_id) !== "Cicilan Paylater" && (
-                      <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
-                        {catName.get(p.category_id)}
-                      </span>
-                    )}
+              <div key={p.id} className="card px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium text-paper">{p.item}</span>
+                      {p.category_id && catName.get(p.category_id) && catName.get(p.category_id) !== "Cicilan Paylater" && (
+                        <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
+                          {catName.get(p.category_id)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-paper-dim">
+                      {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
+                      {p.note ? ` · ${p.note}` : ""}
+                    </div>
                   </div>
-                  <div className="text-xs text-paper-dim">
-                    {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
-                    {p.note ? ` · ${p.note}` : ""}
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                   <PaylaterToggle
                     itemId={p.id}
                     item={p.item}
@@ -152,7 +178,9 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
                       <TrashIcon className="h-[18px] w-[18px]" />
                     </SubmitButton>
                   </form>
+                  </div>
                 </div>
+                <PaylaterMonths months={monthList} current={monthKey} />
               </div>
             );
           })}
