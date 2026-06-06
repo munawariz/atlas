@@ -6,6 +6,7 @@ const LINKS = [
   { href: "/balances", label: "Starting balances", desc: "Opening balance per wallet → live networth" },
   { href: "/savings", label: "Savings", desc: "Balance in each saving & investment bucket" },
   { href: "/stocks", label: "Stocks", desc: "Per-ticker portfolio, live value & avg cost" },
+  { href: "/bonds", label: "Bonds", desc: "Bond buys/sells & coupon income" },
   { href: "/more/forex", label: "Forex", desc: "Foreign currency holdings (live rate)" },
   { href: "/more/budgets", label: "Budgets", desc: "Set monthly targets" },
   { href: "/more/paylater", label: "My Paylater", desc: "Installment items" },

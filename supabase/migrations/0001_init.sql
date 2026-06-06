@@ -221,6 +221,22 @@ create index if not exists idx_stock_trades_ticker on stock_trades (ticker);
 alter table stock_trades add column if not exists pl_txn_id bigint references transactions(id) on delete set null;
 alter table stock_trades add column if not exists realized_pl bigint;
 
+-- Bond trades — buys/sells move principal in/out of the "Bonds" investment bucket
+-- (buy = investment from a wallet, sell = withdrawal into it); coupons are interest
+-- income booked under "Kupon". Each row books a matching transactions row.
+create table if not exists bond_trades (
+  id          bigint generated always as identity primary key,
+  name        text    not null,                 -- series, e.g. ORI024 / SR019 / FR
+  side        text    not null check (side in ('buy', 'sell', 'coupon')),
+  units       numeric not null default 0,       -- bond units (buy/sell; 0 for coupons)
+  idr         bigint  not null,                 -- money spent (buy) / received (sell, coupon)
+  occurred_on date    not null,
+  wallet_id   bigint references wallets(id) on delete set null,
+  txn_id      bigint references transactions(id) on delete set null
+);
+create index if not exists idx_bond_trades_name on bond_trades (name);
+alter table bond_trades add column if not exists units numeric not null default 0;
+
 -- ============================================================================
 -- Materialized monthly balances: one row per (month, wallet) holding that month's
 -- NET change. A trigger keeps it in sync on every transaction change, so the Stats
