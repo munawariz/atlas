@@ -6,9 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "import": "python scripts/import_xlsx.py",
-    "import:dry": "python scripts/import_xlsx.py --dry-run",
-    "migrate": "python scripts/import_xlsx.py --migrate-only"
+    "migrate": "node scripts/migrate.mjs supabase/migrations/0001_init.sql",
+    "seed": "node scripts/migrate.mjs supabase/seed.sql"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",
@@ -23,6 +22,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "pg": "^8.21.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -35,7 +35,9 @@
       "Bash(sed -E 's/=\\\\[.{0,8}.*/= \\(len-check below\\)/')",
       "Bash(awk -F= '/^[A-Z]/{print $1\": \"length\\($2\\)\" chars after =\"}' .example.env)",
       "Bash(grep -iE \"\\\\.env\\\\.local$|\\\\.env$|dontopen|source-data|current-stocks|favicon|icons/\")",
-      "Bash(grep -iE \"\\\\.env\\\\.local$|dontopen|source-data\")"
+      "Bash(grep -iE \"\\\\.env\\\\.local$|dontopen|source-data\")",
+      "Bash(git remote *)",
+      "Bash(node -e \"console.log\\('pg', require\\('pg/package.json'\\).version\\)\")"
     ]
   }
 }

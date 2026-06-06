@@ -32,7 +32,7 @@ At [supabase.com](https://supabase.com), create a project, then collect (Project
 Settings):
 - **API → Project URL** → `SUPABASE_URL`
 - **API → service_role key** (secret) → `SUPABASE_SERVICE_ROLE_KEY`
-- **Database → Connection string → URI** → `DATABASE_URL` (only used by the migrate/import scripts)
+- **Database → Connection string → URI** → `DATABASE_URL` (only used by the migrate/seed scripts)
 
 ### 2. Environment variables
 ```bash
@@ -45,18 +45,19 @@ password), `COOKIE_SECRET` (the value above), and `DATABASE_URL`.
 
 ### 3. Create the schema + starter data
 ```bash
-python -m pip install "psycopg[binary]" openpyxl
 npm install
-npm run migrate      # applies supabase/migrations/0001_init.sql + supabase/seed.sql
+npm run migrate   # create all tables (idempotent — safe to re-run any time)
+npm run seed      # add boilerplate wallets + categories (run ONCE, fresh DB only)
 ```
-`npm run migrate` is **idempotent and data-safe** — run it again any time you pull schema
-changes. It creates all tables and seeds a small boilerplate (a few categories + wallets;
-**Stock** & **Bonds** categories are required by those modules). Customize everything
-in-app afterwards under **More → Categories / Wallets / Settings**.
+- `npm run migrate` applies `supabase/migrations/0001_init.sql` (schema only). It never
+  touches your data — re-run it whenever you pull schema changes.
+- `npm run seed` applies `supabase/seed.sql` — a small starter set of wallets/categories.
+  The **Stock** & **Bonds** categories are required by the Stocks/Bonds modules; everything
+  else is just an example you can rename, add to, or remove under **More → Categories /
+  Wallets / Settings**. Skip this if you'd rather start empty.
 
-> `npm run import` is the original owner's one-time importer for their private
-> `Financial Tracker 2026.xlsx`; a fresh clone does **not** need it — `npm run migrate`
-> is enough. You can also run the SQL files by hand in the Supabase SQL editor.
+> Both scripts just run the `.sql` files via Node (`scripts/migrate.mjs`, using
+> `DATABASE_URL`). You can equally paste those two files into the Supabase SQL editor.
 
 ### 4. Run it
 ```bash
@@ -74,7 +75,7 @@ defaults (created on first use).
 1. Push to GitHub.
 2. Import at [vercel.com/new](https://vercel.com/new).
 3. Add env vars: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `APP_PASSWORD`,
-   `COOKIE_SECRET` (`DATABASE_URL` is only needed locally for migrate/import).
+   `COOKIE_SECRET` (`DATABASE_URL` is only needed locally for migrate/seed).
 4. Deploy, open the URL on your phone, **Add to Home Screen**.
 
 ## Data model
@@ -94,5 +95,5 @@ lib/            auth, supabaseServer, data, stocks, bonds, forex, settings, snap
 components/     TxnFields, BottomNav, MonthSwitcher, SubmitButton, icons, ...
 proxy.ts        route protection (Next 16 "proxy" = middleware)
 supabase/       schema migration + boilerplate seed
-scripts/        import_xlsx.py  (owner's history importer / migrate runner)
+scripts/        migrate.mjs  (runs the .sql files via DATABASE_URL)
 ```
