@@ -37,7 +37,8 @@
       "Bash(grep -iE \"\\\\.env\\\\.local$|\\\\.env$|dontopen|source-data|current-stocks|favicon|icons/\")",
       "Bash(grep -iE \"\\\\.env\\\\.local$|dontopen|source-data\")",
       "Bash(git remote *)",
-      "Bash(node -e \"console.log\\('pg', require\\('pg/package.json'\\).version\\)\")"
+      "Bash(node -e \"console.log\\('pg', require\\('pg/package.json'\\).version\\)\")",
+      "Bash(grep -iE \"\\\\.env\\\\.local$|dontopen|source-data|current-stocks\")"
     ]
   }
 }

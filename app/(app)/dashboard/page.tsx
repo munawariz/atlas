@@ -18,6 +18,7 @@ import MonthSwitcher from "@/components/MonthSwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
 import Link from "next/link";
 import { ChartIcon } from "@/components/icons";
+import PrivacyToggle from "@/components/PrivacyToggle";
 
 export const dynamic = "force-dynamic";
 
@@ -169,26 +170,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
 
   return (
-    <div className="stagger space-y-5 pt-4">
+    <div className="privacy-scope stagger space-y-5 pt-4">
       <RefreshOnFocus />
       <MonthSwitcher monthKey={monthKey} />
 
       {/* Networth hero */}
       <div className="card relative overflow-hidden p-6">
         <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-[radial-gradient(circle,rgba(63,185,80,0.18),transparent_70%)]" />
-        <Link
-          href="/charts"
-          className="absolute right-3 top-3 flex items-center gap-1 rounded-full border border-line/60 bg-ink-2/70 px-2.5 py-1 text-[11px] font-medium text-paper-dim active:text-paper"
-        >
-          <ChartIcon className="h-3.5 w-3.5" /> Charts
-        </Link>
+        <div className="absolute right-3 top-3 flex items-center gap-1.5">
+          <PrivacyToggle />
+          <Link
+            href="/charts"
+            className="flex items-center gap-1 rounded-full border border-line/60 bg-ink-2/70 px-2.5 py-1 text-[11px] font-medium text-paper-dim active:text-paper"
+          >
+            <ChartIcon className="h-3.5 w-3.5" /> Charts
+          </Link>
+        </div>
         <div className="label">Networth · {monthName(m)}</div>
-        <div className="mt-1.5 font-display font-medium leading-none tabular-nums text-paper text-[clamp(1.9rem,8.5vw,2.6rem)]">
+        <div className="priv-left mt-1.5 font-display font-medium leading-none tabular-nums text-paper text-[clamp(1.9rem,8.5vw,2.6rem)]">
           {formatRupiah(netWorthNow)}
         </div>
         {netWorthPrev !== 0 && (
           <div className={`mt-2 text-sm font-medium ${netWorthDelta >= 0 ? "text-jade" : "text-clay"}`}>
-            {netWorthDelta >= 0 ? "▲" : "▼"} {formatRupiahShort(Math.abs(netWorthDelta))}
+            <span className="priv-left tabular-nums">
+              {netWorthDelta >= 0 ? "▲" : "▼"} {formatRupiahShort(Math.abs(netWorthDelta))}
+            </span>
             <span className="text-paper-faint"> vs last month</span>
           </div>
         )}
@@ -243,7 +249,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                 <path d={s.icon} />
               </svg>
             </span>
-            <div className={`font-display text-[13px] font-bold leading-tight tabular-nums ${s.color}`}>
+            <div className={`priv-center font-display text-[13px] font-bold leading-tight tabular-nums ${s.color}`}>
               {formatRupiah(s.val)}
             </div>
             <div className="label mt-1">{s.label}</div>
@@ -324,11 +330,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <div className="mb-2.5 grid grid-cols-2 gap-2.5">
             <div className="card p-3.5 text-center">
               <div className="label">Saved</div>
-              <div className="mt-1 font-display text-base font-bold tabular-nums text-sky">{formatRupiah(savingTotal)}</div>
+              <div className="priv-center mt-1 font-display text-base font-bold tabular-nums text-sky">{formatRupiah(savingTotal)}</div>
             </div>
             <div className="card p-3.5 text-center">
               <div className="label">Invested</div>
-              <div className="mt-1 font-display text-base font-bold tabular-nums text-plum">{formatRupiah(investTotal)}</div>
+              <div className="priv-center mt-1 font-display text-base font-bold tabular-nums text-plum">{formatRupiah(investTotal)}</div>
             </div>
           </div>
           {savInvRows.length > 0 && (
@@ -353,13 +359,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       <div className="grid grid-cols-2 gap-2.5">
         <div className="card p-4">
           <div className="label">Paylater due</div>
-          <div className="mt-1.5 font-display text-base font-bold tabular-nums text-sand">{formatRupiah(paylaterDueTotal)}</div>
+          <div className="priv-left mt-1.5 font-display text-base font-bold tabular-nums text-sand">{formatRupiah(paylaterDueTotal)}</div>
           <div className="mt-0.5 text-xs text-paper-faint">{paylaterDue.length} item(s) this month</div>
         </div>
         <div className="card p-4">
           <div className="label">Loan to collect</div>
-          <div className="mt-1.5 font-display text-base font-bold tabular-nums text-green">{formatRupiah(loanOutstanding)}</div>
-          <div className="mt-0.5 text-xs text-paper-faint">{formatRupiah(loanDue)} this month</div>
+          <div className="priv-left mt-1.5 font-display text-base font-bold tabular-nums text-green">{formatRupiah(loanOutstanding)}</div>
+          <div className="mt-0.5 text-xs text-paper-faint">
+            <span className="priv-left tabular-nums">{formatRupiah(loanDue)}</span> this month
+          </div>
         </div>
       </div>
 

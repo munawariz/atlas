@@ -171,3 +171,32 @@ input[type="number"]::-webkit-inner-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+/* Privacy mode — eye toggle masks amounts inside the stats page (`.privacy-scope`)
+   with a FIXED run of dots (hides both the value and its length). The real value is made
+   transparent — so the element keeps its original size and the container NEVER changes
+   height — and the dots are overlaid via an absolute ::after (out of flow, so no size
+   impact). The dots inherit the amount's font-size, and per-layout alignment classes
+   (priv-left / priv-center) match each container; the default is right-aligned for the
+   justify-between rows. CSS-only → applies before paint (no flash) and toggles instantly. */
+.amounts-hidden .privacy-scope .tabular-nums {
+  color: transparent;
+  position: relative;
+  user-select: none;
+}
+.amounts-hidden .privacy-scope .tabular-nums::after {
+  content: "••••";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  letter-spacing: 0.12em;
+  color: var(--color-paper-dim, #8a939e);
+}
+.amounts-hidden .privacy-scope .priv-left::after {
+  justify-content: flex-start;
+}
+.amounts-hidden .privacy-scope .priv-center::after {
+  justify-content: center;
+}

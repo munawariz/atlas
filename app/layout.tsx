@@ -41,8 +41,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable} h-full antialiased`}>
+    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col font-sans">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem('ft_hide_amounts')==='1')document.documentElement.classList.add('amounts-hidden')}catch(e){}`,
+          }}
+        />
         <div className="bg-atmosphere" aria-hidden />
         <div className="bg-grain" aria-hidden />
         {children}
