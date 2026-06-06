@@ -3,6 +3,7 @@ import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylat
 import { formatNumber, formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
+import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { setBudget } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -17,41 +18,41 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const kind = KINDS.some((k) => k.value === sp.kind) ? (sp.kind as string) : "expense";
-  const [cats, budgets, loans, payments, paylater] = await Promise.all([
+  const [cats, budgets, loans, payments, paylater, settings] = await Promise.all([
     getCategories(),
     getBudgetsForMonth(monthKey),
     getLoans(),
     getLoanPayments(),
     getPaylaterItems(),
+    getSettings(),
   ]);
   const byCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
   const recurringSet = new Set(budgets.filter((b) => b.recurring).map((b) => b.category_id));
   const rows = cats.filter((c) => c.kind === kind);
 
-  // Auto budgets for the selected month: "Hutang" income = total expected to collect
-  // from Loans; "Cicilan Paylater" expense = installments active this month that use
-  // the default category. Installments with a custom category instead add to it.
+  // Auto budgets for the selected month: the configured loan-income category = total
+  // expected to collect from Loans; the configured paylater-expense category =
+  // installments active this month using the default category. Custom ones add on top.
   const loanById = new Map(loans.map((l) => [l.id, l]));
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  const cicilanCat = cats.find((c) => c.kind === "expense" && c.name === "Cicilan Paylater");
+  const hutangCatId = mappedCategoryId(settings, cats, "cat_loan", "Hutang", "income");
+  const cicilanCatId = mappedCategoryId(settings, cats, "cat_paylater", "Cicilan Paylater", "expense");
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
     if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.category_id ?? cicilanCat?.id;
+    const catId = p.category_id ?? cicilanCatId;
     if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
   }
   const instFor = (id: number) => instByCat.get(id) ?? 0;
-  const isAuto = (name: string, kind: string) =>
-    (kind === "income" && name === "Hutang") || (kind === "expense" && name === "Cicilan Paylater");
-  const autoValue = (name: string) =>
-    name === "Cicilan Paylater" ? (cicilanCat ? instFor(cicilanCat.id) : 0) : loanExpected;
+  const isAuto = (id: number) => id === hutangCatId || id === cicilanCatId;
+  const autoValue = (id: number) => (id === cicilanCatId ? instFor(cicilanCatId ?? -1) : loanExpected);
 
   // Expected cashflow from the PLAN (budgets): income in, minus expense + saving out.
   // Effective budget = auto value, else the user budget plus any installment additions.
   const effBudget = (c: { id: number; name: string; kind: string }) =>
-    isAuto(c.name, c.kind) ? autoValue(c.name) : (byCat.get(c.id) ?? 0) + instFor(c.id);
+    isAuto(c.id) ? autoValue(c.id) : (byCat.get(c.id) ?? 0) + instFor(c.id);
   let plannedIncome = 0;
   let plannedExpense = 0;
   let plannedSaving = 0;
@@ -113,7 +114,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
           <p className="py-6 text-center text-sm text-paper-faint">No {kind} categories.</p>
         ) : (
           rows.map((c) =>
-          isAuto(c.name, c.kind) ? (
+          isAuto(c.id) ? (
             <div key={c.id} className="card flex items-center justify-between gap-3 px-4 py-2.5">
               <span className="shrink-0 text-sm font-medium text-paper">
                 {c.name}
@@ -122,7 +123,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
                 </span>
               </span>
               <span className="font-display text-sm font-medium tabular-nums text-paper">
-                {formatRupiah(autoValue(c.name))}
+                {formatRupiah(autoValue(c.id))}
               </span>
             </div>
           ) : (

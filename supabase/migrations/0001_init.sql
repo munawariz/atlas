@@ -73,6 +73,13 @@ create table if not exists recurring_budgets (
   unique (category_id, effective_from)
 );
 
+-- Key/value app settings. Lets a self-hosting clone map auto-transaction categories &
+-- default wallets to their own setup instead of hardcoded names (see lib/settings.ts).
+create table if not exists app_settings (
+  key   text primary key,
+  value text
+);
+
 -- Cicilan Paylater — installment purchases, paid over a span of months (any year).
 -- category_id (nullable) lets an installment be budgeted/booked under a custom expense
 -- category instead of the default "Cicilan Paylater".

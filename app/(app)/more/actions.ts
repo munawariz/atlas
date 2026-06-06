@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { SESSION_COOKIE } from "@/lib/auth";
+import { SETTING_KEYS, resolveCategoryId } from "@/lib/settings";
 import type { CategoryKind } from "@/lib/types";
 
 function digits(v: FormDataEntryValue | null): number {
@@ -174,21 +175,9 @@ export async function payPaylaterMonth(
   if (!skipTxn) {
     if (!walletId) return;
     const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
-    // Book the expense under the item's custom category, or default to "Cicilan Paylater".
+    // Book the expense under the item's custom category, or the configured paylater category.
     let categoryId = item.category_id as number | null;
-    if (!categoryId) {
-      let { data: cat } = await sb
-        .from("categories")
-        .select("id")
-        .eq("kind", "expense")
-        .eq("name", "Cicilan Paylater")
-        .maybeSingle();
-      if (!cat) {
-        const ins = await sb.from("categories").insert({ kind: "expense", name: "Cicilan Paylater" }).select("id").single();
-        cat = ins.data;
-      }
-      categoryId = cat?.id ?? null;
-    }
+    if (!categoryId) categoryId = await resolveCategoryId("cat_paylater", "Cicilan Paylater", "expense");
     const txn = await sb
       .from("transactions")
       .insert({
@@ -424,16 +413,7 @@ export async function collectLoanPayment(
   // 2) book the collected amount as Hutang income and link it to the cell (unless skipped)
   const { data: loan } = await sb.from("loans").select("person, installment").eq("id", loanId).maybeSingle();
   if (!skipTxn && loan && walletId) {
-    let { data: cat } = await sb
-      .from("categories")
-      .select("id")
-      .eq("kind", "income")
-      .eq("name", "Hutang")
-      .maybeSingle();
-    if (!cat) {
-      const ins = await sb.from("categories").insert({ kind: "income", name: "Hutang" }).select("id").single();
-      cat = ins.data;
-    }
+    const catId = await resolveCategoryId("cat_loan", "Hutang", "income");
     const txn = await sb
       .from("transactions")
       .insert({
@@ -441,7 +421,7 @@ export async function collectLoanPayment(
         type: "income",
         amount: loan.installment,
         description: loan.person,
-        category_id: cat?.id ?? null,
+        category_id: catId,
         dest_wallet_id: walletId,
       })
       .select("id")
@@ -454,4 +434,15 @@ export async function collectLoanPayment(
   revalidatePath("/more/loans");
   revalidatePath("/dashboard");
   revalidatePath("/history");
+}
+
+// ---- Settings ----
+export async function saveSettings(formData: FormData) {
+  const sb = supabaseServer();
+  const rows = SETTING_KEYS.map((k) => ({ key: k, value: String(formData.get(k) ?? "").trim() })).filter((r) => r.value);
+  if (rows.length) await sb.from("app_settings").upsert(rows, { onConflict: "key" });
+  revalidatePath("/more/settings");
+  revalidatePath("/dashboard");
+  revalidatePath("/stocks");
+  revalidatePath("/bonds");
 }

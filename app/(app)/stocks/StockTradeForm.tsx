@@ -4,15 +4,19 @@ import { useActionState, useEffect, useState } from "react";
 import { formatNumber, todayISO } from "@/lib/format";
 import { addStockTrade, type StockState } from "./actions";
 
-export default function StockTradeForm({ wallets }: { wallets: { id: number; name: string }[] }) {
+export default function StockTradeForm({
+  wallets,
+  defaultWalletId,
+}: {
+  wallets: { id: number; name: string }[];
+  defaultWalletId: number | null;
+}) {
   const [state, formAction, pending] = useActionState<StockState, FormData>(addStockTrade, {});
   const [side, setSide] = useState<"buy" | "sell">("buy");
   const [ticker, setTicker] = useState("");
   const [lots, setLots] = useState("");
   const [idr, setIdr] = useState("");
   const [toast, setToast] = useState<string | null>(null);
-
-  const defaultWallet = wallets.find((w) => /stockbit/i.test(w.name)) ?? wallets[0];
 
   useEffect(() => {
     if (state.ok && state.nonce) {
@@ -86,7 +90,7 @@ export default function StockTradeForm({ wallets }: { wallets: { id: number; nam
       <div className="flex gap-2">
         <label className="flex-1 text-xs text-paper-dim">
           {side === "buy" ? "Pay from" : "Receive in"}
-          <select name="wallet_id" defaultValue={defaultWallet?.id} className="field mt-1 [color-scheme:dark]">
+          <select name="wallet_id" defaultValue={defaultWalletId ?? wallets[0]?.id} className="field mt-1 [color-scheme:dark]">
             {wallets.map((w) => (
               <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
             ))}

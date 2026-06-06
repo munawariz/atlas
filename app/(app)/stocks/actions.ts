@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
+import { resolveCategoryId } from "@/lib/settings";
 
 function digits(v: FormDataEntryValue | null): number {
   return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
@@ -25,16 +26,6 @@ function revalidate() {
   revalidatePath("/history");
 }
 
-// Look up a category by (kind, name), creating it if missing.
-async function categoryId(sb: ReturnType<typeof supabaseServer>, kind: string, name: string): Promise<number | null> {
-  let { data } = await sb.from("categories").select("id").eq("kind", kind).eq("name", name).maybeSingle();
-  if (!data) {
-    const ins = await sb.from("categories").insert({ kind, name }).select("id").single();
-    data = ins.data;
-  }
-  return data?.id ?? null;
-}
-
 export async function addStockTrade(_prev: StockState, formData: FormData): Promise<StockState> {
   const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase();
   const side = String(formData.get("side") ?? "buy") === "sell" ? "sell" : "buy";
@@ -50,7 +41,7 @@ export async function addStockTrade(_prev: StockState, formData: FormData): Prom
   if (!walletId) return { error: "Choose a wallet." };
 
   const sb = supabaseServer();
-  const stockCat = await categoryId(sb, "investment", "Stock");
+  const stockCat = await resolveCategoryId("cat_stock", "Stock", "investment");
 
   let txnId: number | null = null;
   let plTxnId: number | null = null;
@@ -109,7 +100,7 @@ export async function addStockTrade(_prev: StockState, formData: FormData): Prom
     }
 
     if (realizedPl > 0) {
-      const tradingCat = await categoryId(sb, "income", "Trading");
+      const tradingCat = await resolveCategoryId("cat_stock_profit", "Trading", "income");
       const { data: ptxn, error } = await sb
         .from("transactions")
         .insert({
@@ -127,7 +118,7 @@ export async function addStockTrade(_prev: StockState, formData: FormData): Prom
       plTxnId = ptxn?.id ?? null;
       savedLabel = `Sold ${ticker} · profit`;
     } else if (realizedPl < 0) {
-      const cutCat = await categoryId(sb, "expense", "Cut Loss");
+      const cutCat = await resolveCategoryId("cat_stock_loss", "Cut Loss", "expense");
       const { data: ptxn, error } = await sb
         .from("transactions")
         .insert({

@@ -76,7 +76,7 @@ export default async function SavingsPage() {
               </div>
             </div>
             <p className="mt-3 text-[11px] text-paper-faint">
-              Held outside wallet net worth. Balance = everything saved/invested minus Ambil Tabungan withdrawals.
+              Held outside wallet net worth. Balance = everything saved/invested minus withdrawals.
             </p>
           </div>
 

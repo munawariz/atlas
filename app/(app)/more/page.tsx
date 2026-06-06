@@ -13,6 +13,7 @@ const LINKS = [
   { href: "/more/loans", label: "Loans", desc: "Money people owe you each month" },
   { href: "/more/wallets", label: "Wallets", desc: "Add / archive wallets" },
   { href: "/more/categories", label: "Categories", desc: "Add / archive categories" },
+  { href: "/more/settings", label: "Settings", desc: "Map auto-transaction categories & default wallets" },
 ];
 
 export default function MorePage() {
@@ -60,7 +61,7 @@ export default function MorePage() {
         </button>
       </form>
 
-      <p className="pt-1 text-center font-display text-sm italic text-paper-faint">Finance Tracker · 2026</p>
+      <p className="pt-1 text-center font-display text-sm italic text-paper-faint">Atlas</p>
     </div>
   );
 }

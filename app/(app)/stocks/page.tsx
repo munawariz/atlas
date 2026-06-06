@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
 import { getStockPortfolio, getStockTrades } from "@/lib/stocks";
+import { getSettings, mappedWalletId } from "@/lib/settings";
 import { formatRupiah, formatRupiahShort, formatDateShort } from "@/lib/format";
 import SubmitButton from "@/components/SubmitButton";
 import { TrashIcon } from "@/components/icons";
@@ -12,7 +13,14 @@ export const dynamic = "force-dynamic";
 const pct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 
 export default async function StocksPage() {
-  const [portfolio, wallets, trades] = await Promise.all([getStockPortfolio(), getWallets(), getStockTrades()]);
+  const [portfolio, wallets, trades, settings] = await Promise.all([
+    getStockPortfolio(),
+    getWallets(),
+    getStockTrades(),
+    getSettings(),
+  ]);
+  const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
+  const defaultWalletId = mappedWalletId(settings, walletOpts, "wallet_stock", "stockbit");
   const { holdings, totalCost, pricedValue, pricedCost, totalPL, missing } = portfolio;
   const plPct = pricedCost ? (totalPL / pricedCost) * 100 : 0;
   const up = totalPL >= 0;
@@ -53,7 +61,7 @@ export default async function StocksPage() {
         )}
       </div>
 
-      <StockTradeForm wallets={wallets.map((w) => ({ id: w.id, name: w.name }))} />
+      <StockTradeForm wallets={walletOpts} defaultWalletId={defaultWalletId} />
 
       {/* Holdings */}
       {holdings.length === 0 ? (

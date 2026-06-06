@@ -13,11 +13,9 @@ export default function LoginPage() {
           <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl border border-green/30 bg-green/10 shadow-[0_8px_30px_-10px_rgba(63,185,80,0.45)]">
             <span className="font-display text-3xl font-bold text-green">◆</span>
           </div>
-          <p className="label mb-2.5 text-green">Personal Finance · 2026</p>
-          <h1 className="font-display text-3xl font-bold uppercase leading-tight tracking-tight text-paper">
-            Finance
-            <br />
-            Tracker
+          <p className="label mb-2.5 text-green">Personal finance</p>
+          <h1 className="font-display text-4xl font-bold uppercase leading-tight tracking-[0.1em] text-paper">
+            Atlas
           </h1>
         </div>
 

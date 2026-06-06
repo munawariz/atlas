@@ -1,38 +1,18 @@
--- Seed reference data (wallets + categories) from the Setup sheet.
--- Idempotent: safe to run repeatedly. Budgets and historical data are loaded
--- separately by scripts/import_xlsx.py.
+-- Atlas — boilerplate reference data (wallets + a starter category set).
+-- Idempotent: safe to run repeatedly (`on conflict do nothing`). Customize everything
+-- in-app after install (More → Categories / Wallets / Settings).
 
 insert into wallets (name, sort_order) values
-  ('Cash', 1), ('Koin', 2), ('Bank Jago', 3), ('Bank BCA', 4), ('Blu', 5),
-  ('Shopeepay', 6), ('Gopay', 7), ('Stockbit', 8), ('TempStockbit', 9)
+  ('Cash', 1), ('Bank', 2), ('E-Wallet', 3), ('Broker', 4)
 on conflict (name) do nothing;
 
+-- Starter categories. "Stock" & "Bonds" (investment) MUST exist — the Stocks/Bonds
+-- modules depend on them. The other auto-transaction categories (paylater installment,
+-- loan collection, stock profit/loss, bond coupon) are created on first use and can be
+-- remapped in More → Settings — see lib/settings.ts.
 insert into categories (kind, name, sort_order) values
-  -- income
-  ('income', 'Gaji', 1), ('income', 'Freelance', 2), ('income', 'Hutang', 3),
-  ('income', 'Surprise', 4), ('income', 'Trading', 5), ('income', 'Ambil Tabungan', 6),
-  -- expense
-  ('expense', 'Food', 1), ('expense', 'Listrik', 2), ('expense', 'Jajan', 3),
-  ('expense', 'Kopi', 4), ('expense', 'Susu', 5), ('expense', 'Internet', 6),
-  ('expense', 'Akomodasi', 7), ('expense', 'Entertainment', 8), ('expense', 'Traktir', 9),
-  ('expense', 'Transportation', 10), ('expense', 'Bayar Hutang', 11), ('expense', 'Biaya Admin', 12),
-  ('expense', 'Fitness', 13), ('expense', 'Groceries', 14), ('expense', 'Other', 15),
-  ('expense', 'Minjemin', 16), ('expense', 'Fashion', 17), ('expense', 'Liburan', 18),
-  ('expense', 'Cut Loss', 19), ('expense', 'Cicilan Paylater', 20),
-  -- saving
-  ('saving', 'Dana Darurat', 1), ('saving', 'Dana Pensiun', 2), ('saving', 'Jepang', 3),
-  ('saving', 'Rumah', 4),
-  -- investment
+  ('income', 'Salary', 1), ('income', 'Freelance', 2),
+  ('expense', 'Food', 1), ('expense', 'Entertainment', 2), ('expense', 'Other', 3),
+  ('saving', 'Trip To Japan', 1),
   ('investment', 'Stock', 1), ('investment', 'Bonds', 2)
 on conflict (kind, name) do nothing;
-
--- Forex is now its own module — hide the old "Forex Yen" investment category from pickers
--- (kept archived so existing history still resolves its name).
-update categories set archived = true where kind = 'investment' and name = 'Forex Yen';
-
--- "Ambil Tabungan" is now the 'withdrawal' transaction type, not an income category.
-update categories set archived = true where kind = 'income' and name = 'Ambil Tabungan';
-
--- Forex holding (kept on conflict so your edited balance isn't overwritten on re-seed).
-insert into forex_accounts (name, currency, units) values ('Forex Yen', 'JPY', 60051.51)
-on conflict (name) do nothing;

@@ -126,5 +126,5 @@ export const TXN_TYPES: { value: TxnType; label: string }[] = [
   { value: "saving", label: "Saving" },
   { value: "investment", label: "Invest" },
   { value: "transfer", label: "Transfer" },
-  { value: "withdrawal", label: "Ambil Tabungan" },
+  { value: "withdrawal", label: "Withdraw" },
 ];

@@ -16,13 +16,13 @@ const sans = Hanken_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: "Finance Tracker 2026",
-  description: "A warm, tactile journal for fast expense tracking",
+  title: "Atlas",
+  description: "Atlas — a fast, mobile-first personal finance tracker",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Ledger",
+    title: "Atlas",
   },
   icons: {
     icon: "/icons/icon-192.png",

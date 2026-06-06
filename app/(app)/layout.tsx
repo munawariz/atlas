@@ -10,8 +10,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="flex h-6 w-6 items-center justify-center rounded-md bg-green/15 font-display text-[13px] font-bold text-green">
               ◆
             </span>
-            <span className="font-display text-[12px] font-bold uppercase tracking-[0.18em] text-paper">
-              Finance<span className="text-paper-faint">Tracker</span>
+            <span className="font-display text-[12px] font-bold uppercase tracking-[0.28em] text-paper">
+              Atlas
             </span>
           </Link>
           <Link

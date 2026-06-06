@@ -27,7 +27,14 @@
       "Bash(git check-ignore *)",
       "Bash(git push *)",
       "Bash(python scripts/_bondtest.py)",
-      "Bash(node -e \"const E=require\\('exceljs'\\); console.log\\('exceljs', require\\('exceljs/package.json'\\).version\\)\")"
+      "Bash(node -e \"const E=require\\('exceljs'\\); console.log\\('exceljs', require\\('exceljs/package.json'\\).version\\)\")",
+      "Bash(awk '{print $5, $NF}')",
+      "Bash(grep -ivE \"label:|placeholder|desc:|//|memory\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" --max-time 3 http://localhost:3000/login)",
+      "Bash(grep -vE \"memory|//|/\\\\*\")",
+      "Bash(sed -E 's/=\\\\[.{0,8}.*/= \\(len-check below\\)/')",
+      "Bash(awk -F= '/^[A-Z]/{print $1\": \"length\\($2\\)\" chars after =\"}' .example.env)",
+      "Bash(grep -iE \"\\\\.env\\\\.local$|\\\\.env$|dontopen|source-data|current-stocks|favicon|icons/\")"
     ]
   }
 }

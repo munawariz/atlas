@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
+import { resolveCategoryId } from "@/lib/settings";
 
 function digits(v: FormDataEntryValue | null): number {
   return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
@@ -12,14 +13,6 @@ function optInt(v: FormDataEntryValue | null): number | null {
 }
 function numUnits(v: FormDataEntryValue | null): number {
   return parseFloat(String(v ?? "").replace(/[^0-9.]/g, "")) || 0;
-}
-async function categoryId(sb: ReturnType<typeof supabaseServer>, kind: string, name: string): Promise<number | null> {
-  let { data } = await sb.from("categories").select("id").eq("kind", kind).eq("name", name).maybeSingle();
-  if (!data) {
-    const ins = await sb.from("categories").insert({ kind, name }).select("id").single();
-    data = ins.data;
-  }
-  return data?.id ?? null;
 }
 
 export interface BondState {
@@ -58,11 +51,11 @@ export async function addBondTrade(_prev: BondState, formData: FormData): Promis
   let txnId: number | null = null;
   let row: Record<string, unknown>;
   if (side === "buy") {
-    row = { type: "investment", amount: idr, description: `Beli ${name}`, category_id: await categoryId(sb, "investment", "Bonds"), source_wallet_id: walletId, dest_wallet_id: null };
+    row = { type: "investment", amount: idr, description: `Beli ${name}`, category_id: await resolveCategoryId("cat_bond", "Bonds", "investment"), source_wallet_id: walletId, dest_wallet_id: null };
   } else if (side === "sell") {
-    row = { type: "withdrawal", amount: idr, description: `Jual ${name}`, category_id: await categoryId(sb, "investment", "Bonds"), source_wallet_id: null, dest_wallet_id: walletId };
+    row = { type: "withdrawal", amount: idr, description: `Jual ${name}`, category_id: await resolveCategoryId("cat_bond", "Bonds", "investment"), source_wallet_id: null, dest_wallet_id: walletId };
   } else {
-    row = { type: "income", amount: idr, description: `Kupon ${name}`, category_id: await categoryId(sb, "income", "Kupon"), source_wallet_id: null, dest_wallet_id: walletId };
+    row = { type: "income", amount: idr, description: `Kupon ${name}`, category_id: await resolveCategoryId("cat_bond_coupon", "Kupon", "income"), source_wallet_id: null, dest_wallet_id: walletId };
   }
   const { data: txn, error: txnErr } = await sb
     .from("transactions")

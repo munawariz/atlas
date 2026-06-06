@@ -11,6 +11,7 @@ import {
   prevMonthKey,
 } from "@/lib/data";
 import { forexUnitsAt, getForexAccounts, getForexRate } from "@/lib/forex";
+import { getSettings, mappedCategoryId } from "@/lib/settings";
 import ForexToggleValue from "@/components/ForexToggleValue";
 import { formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
@@ -33,7 +34,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, cats, wallets, paylater, paylaterPaid, loans, payments, derivedNow, derivedPrev, forexAccounts, forexUnits] =
+  const [txns, budgets, cats, wallets, paylater, paylaterPaid, loans, payments, derivedNow, derivedPrev, forexAccounts, forexUnits, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
@@ -47,6 +48,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       deriveWalletBalances(prevMonthKey(monthKey)),
       getForexAccounts(),
       forexUnitsAt(monthKey),
+      getSettings(),
     ]);
   const fxCurrencies = [...new Set(forexAccounts.map((a) => a.currency))];
   const fxRates = new Map<string, number>();
@@ -73,7 +75,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const maxSpend = spendRows[0]?.amt ?? 1;
 
   // Net flow into each saving/investment bucket this month: contributions minus
-  // "Ambil Tabungan" withdrawals (which draw from the same buckets). Category-tagged
+  // Withdrawals (which draw from the same buckets). Category-tagged
   // only, so the null-category forex moves are excluded — forex is its own module.
   const siByCat = new Map<number, number>();
   for (const t of txns) {
@@ -101,27 +103,28 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         .sort((a, b) => b.amt - a.amt)
     : [];
 
-  // Auto budgets: "Hutang" income = total expected to collect from Loans this month;
-  // "Cicilan Paylater" expense = total installments active this month.
+  // Auto budgets: the configured loan-income category = total expected to collect this
+  // month; the configured paylater-expense category = total installments active this month.
+  const catList = [...cats.values()];
   const loanById = new Map(loans.map((l) => [l.id, l]));
-  const hutangCat = [...cats.values()].find((c) => c.kind === "income" && c.name === "Hutang");
-  const cicilanCat = [...cats.values()].find((c) => c.kind === "expense" && c.name === "Cicilan Paylater");
+  const hutangCatId = mappedCategoryId(settings, catList, "cat_loan", "Hutang", "income");
+  const cicilanCatId = mappedCategoryId(settings, catList, "cat_paylater", "Cicilan Paylater", "expense");
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
   // Each active installment contributes its monthly amount to its category's budget
-  // (default Cicilan Paylater). Custom categories get it ADDED on top of the user budget.
+  // (default paylater category). Custom categories get it ADDED on top of the user budget.
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
     if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.category_id ?? cicilanCat?.id;
+    const catId = p.category_id ?? cicilanCatId;
     if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
   }
 
   const budgetByCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
-  if (hutangCat) budgetByCat.set(hutangCat.id, loanExpected); // override with auto value
+  if (hutangCatId) budgetByCat.set(hutangCatId, loanExpected); // override with auto value
   for (const [catId, amt] of instByCat) {
-    if (catId === cicilanCat?.id) budgetByCat.set(catId, amt); // Cicilan Paylater = installments only
+    if (catId === cicilanCatId) budgetByCat.set(catId, amt); // paylater category = installments only
     else budgetByCat.set(catId, (budgetByCat.get(catId) ?? 0) + amt); // custom: add on top of user budget
   }
 
@@ -135,7 +138,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         budget: amount,
         actual,
         pct: amount ? (actual / amount) * 100 : 0,
-        auto: catId === hutangCat?.id || catId === cicilanCat?.id,
+        auto: catId === hutangCatId || catId === cicilanCatId,
       };
     })
     .filter((x): x is NonNullable<typeof x> => x !== null && x.budget > 0)
@@ -311,7 +314,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </section>
       )}
 
-      {/* Saved & invested (net of Ambil Tabungan withdrawals) */}
+      {/* Saved & invested (net of withdrawals) */}
       {savInvRows.length > 0 && (
         <section>
           <div className="mb-2.5 flex items-center justify-between">

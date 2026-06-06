@@ -84,7 +84,7 @@ export default function TxnFields({
   }, [persist, type, sourceWalletId, destWalletId]);
 
   const kind = TYPE_TO_CATEGORY_KIND[type];
-  // Withdrawal ("Ambil Tabungan") draws from any saving OR investment bucket.
+  // Withdrawal draws from any saving OR investment bucket.
   const cats = useMemo(() => {
     if (type === "withdrawal") return categories.filter((c) => c.kind === "saving" || c.kind === "investment");
     return kind ? categories.filter((c) => c.kind === kind) : [];

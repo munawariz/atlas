@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getCategoriesByKind, getPaylaterItems, getPaylaterPayments, getWallets } from "@/lib/data";
+import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -37,15 +38,19 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const ym = monthKey.slice(0, 7);
 
-  const [items, paid, wallets, expenseCats] = await Promise.all([
+  const [items, paid, wallets, expenseCats, settings] = await Promise.all([
     getPaylaterItems(),
     getPaylaterPayments(),
     getWallets(),
     getCategoriesByKind("expense"),
+    getSettings(),
   ]);
   const catName = new Map(expenseCats.map((c) => [c.id, c.name]));
-  // Categories a user can pick for an installment (the default is Cicilan Paylater).
-  const pickCats = expenseCats.filter((c) => c.name !== "Cicilan Paylater").map((c) => ({ id: c.id, name: c.name }));
+  // The default installment category (configurable; defaults to "Cicilan Paylater").
+  const defaultCatId = mappedCategoryId(settings, expenseCats, "cat_paylater", "Cicilan Paylater", "expense");
+  const defaultCatName = expenseCats.find((c) => c.id === defaultCatId)?.name ?? "Cicilan Paylater";
+  // Categories a user can pick for an installment (excluding the default).
+  const pickCats = expenseCats.filter((c) => c.id !== defaultCatId).map((c) => ({ id: c.id, name: c.name }));
   const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
   const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
   const paidWithTxn = new Set(paid.filter((p) => p.expense_txn_id != null).map((p) => `${p.item_id}:${p.month}`));
@@ -56,7 +61,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   // category, (2) months left owed (most first), (3) shorter total installment — so a
   // 6-month/1-left ranks above a 12-month/1-left.
   const catLabel = (p: (typeof items)[number]) =>
-    p.category_id ? catName.get(p.category_id) ?? "Cicilan Paylater" : "Cicilan Paylater";
+    p.category_id ? catName.get(p.category_id) ?? defaultCatName : defaultCatName;
   const totalMonths = (p: (typeof items)[number]) => span(p.first_month_date, p.last_month_date);
   active.sort((a, b) => {
     const oneA = totalMonths(a) === 1;
@@ -109,7 +114,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
         <label className="block text-xs text-paper-dim">
           Count in budget as
           <select name="category_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
-            <option value="" className="bg-ink-2">Cicilan Paylater (default)</option>
+            <option value="" className="bg-ink-2">{defaultCatName} (default)</option>
             {pickCats.map((c) => (
               <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
             ))}
@@ -139,7 +144,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-sm font-medium text-paper">{p.item}</span>
-                      {p.category_id && catName.get(p.category_id) && catName.get(p.category_id) !== "Cicilan Paylater" && (
+                      {p.category_id && p.category_id !== defaultCatId && catName.get(p.category_id) && (
                         <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
                           {catName.get(p.category_id)}
                         </span>

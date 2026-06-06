@@ -27,7 +27,7 @@ export async function GET(request: Request) {
 
   const s = await gatherSnapshot(year);
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Finance Tracker";
+  wb.creator = "Atlas";
 
   // ---- Summary ----
   const sum = wb.addWorksheet("Summary");

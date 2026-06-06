@@ -335,7 +335,7 @@ export interface SavingsBucket {
   name: string;
   kind: "saving" | "investment";
   contributed: number; // total moved in (saving / investment)
-  withdrawn: number; // total moved out (Ambil Tabungan withdrawals)
+  withdrawn: number; // total moved out (withdrawals)
   balance: number; // contributed − withdrawn
 }
 

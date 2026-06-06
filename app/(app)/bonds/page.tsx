@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
 import { getBondPortfolio, getBondTrades } from "@/lib/bonds";
+import { getSettings, mappedWalletId } from "@/lib/settings";
 import { formatRupiah, formatRupiahShort, formatDateShort } from "@/lib/format";
 import SubmitButton from "@/components/SubmitButton";
 import { TrashIcon } from "@/components/icons";
@@ -18,11 +19,14 @@ const SIDE = {
 const fmtUnits = (n: number) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(n);
 
 export default async function BondsPage() {
-  const [{ holdings, totalInvested, totalCoupons }, wallets, trades] = await Promise.all([
+  const [{ holdings, totalInvested, totalCoupons }, wallets, trades, settings] = await Promise.all([
     getBondPortfolio(),
     getWallets(),
     getBondTrades(),
+    getSettings(),
   ]);
+  const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
+  const defaultWalletId = mappedWalletId(settings, walletOpts, "wallet_bond", "");
 
   return (
     <div className="space-y-4 pt-4">
@@ -43,7 +47,7 @@ export default async function BondsPage() {
         </div>
       </div>
 
-      <BondTradeForm wallets={wallets.map((w) => ({ id: w.id, name: w.name }))} />
+      <BondTradeForm wallets={walletOpts} defaultWalletId={defaultWalletId} />
 
       {/* Holdings */}
       {holdings.length === 0 ? (

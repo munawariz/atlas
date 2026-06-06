@@ -11,7 +11,13 @@ const SIDES: { value: Side; label: string; color: string }[] = [
   { value: "coupon", label: "Coupon", color: "bg-green text-ink" },
 ];
 
-export default function BondTradeForm({ wallets }: { wallets: { id: number; name: string }[] }) {
+export default function BondTradeForm({
+  wallets,
+  defaultWalletId,
+}: {
+  wallets: { id: number; name: string }[];
+  defaultWalletId: number | null;
+}) {
   const [state, formAction, pending] = useActionState<BondState, FormData>(addBondTrade, {});
   const [side, setSide] = useState<Side>("buy");
   const [name, setName] = useState("");
@@ -89,7 +95,7 @@ export default function BondTradeForm({ wallets }: { wallets: { id: number; name
         </label>
         <label className="flex-1 text-xs text-paper-dim">
           {side === "buy" ? "Pay from" : "Receive in"}
-          <select name="wallet_id" defaultValue={wallets[0]?.id} className="field mt-1 [color-scheme:dark]">
+          <select name="wallet_id" defaultValue={defaultWalletId ?? wallets[0]?.id} className="field mt-1 [color-scheme:dark]">
             {wallets.map((w) => (
               <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
             ))}
