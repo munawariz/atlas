@@ -1,15 +1,22 @@
 import Link from "next/link";
 import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems } from "@/lib/data";
-import { formatNumber, formatRupiah, todayISO } from "@/lib/format";
+import { formatNumber, formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { setBudget } from "../actions";
 
 export const dynamic = "force-dynamic";
 
-export default async function BudgetsPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
+const KINDS = [
+  { value: "expense", label: "Expense" },
+  { value: "income", label: "Income" },
+  { value: "saving", label: "Saving" },
+] as const;
+
+export default async function BudgetsPage({ searchParams }: { searchParams: Promise<{ m?: string; kind?: string }> }) {
   const sp = await searchParams;
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+  const kind = KINDS.some((k) => k.value === sp.kind) ? (sp.kind as string) : "expense";
   const [cats, budgets, loans, payments, paylater] = await Promise.all([
     getCategories(),
     getBudgetsForMonth(monthKey),
@@ -19,7 +26,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   ]);
   const byCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
   const recurringSet = new Set(budgets.filter((b) => b.recurring).map((b) => b.category_id));
-  const rows = cats.filter((c) => c.kind === "income" || c.kind === "expense");
+  const rows = cats.filter((c) => c.kind === kind);
 
   // Auto budgets for the selected month: "Hutang" income = total expected to collect
   // from Loans; "Cicilan Paylater" expense = installments active this month that use
@@ -41,6 +48,21 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   const autoValue = (name: string) =>
     name === "Cicilan Paylater" ? (cicilanCat ? instFor(cicilanCat.id) : 0) : loanExpected;
 
+  // Expected cashflow from the PLAN (budgets): income in, minus expense + saving out.
+  // Effective budget = auto value, else the user budget plus any installment additions.
+  const effBudget = (c: { id: number; name: string; kind: string }) =>
+    isAuto(c.name, c.kind) ? autoValue(c.name) : (byCat.get(c.id) ?? 0) + instFor(c.id);
+  let plannedIncome = 0;
+  let plannedExpense = 0;
+  let plannedSaving = 0;
+  for (const c of cats) {
+    const eff = effBudget(c);
+    if (c.kind === "income") plannedIncome += eff;
+    else if (c.kind === "expense") plannedExpense += eff;
+    else if (c.kind === "saving") plannedSaving += eff;
+  }
+  const cashflow = plannedIncome - plannedExpense - plannedSaving;
+
   return (
     <div className="space-y-4 pt-4">
       <div className="flex items-center justify-between">
@@ -49,10 +71,48 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
         <span className="w-12" />
       </div>
 
-      <MonthSwitcher monthKey={monthKey} basePath="/more/budgets" />
+      <MonthSwitcher monthKey={monthKey} basePath="/more/budgets" params={{ kind }} />
+
+      {/* Planned cashflow for the month (income budget − expense − saving budgets) */}
+      <div className="card p-4">
+        <div className="flex items-center justify-between">
+          <span className="label">Expected cashflow</span>
+          <span className={`font-display text-base font-semibold tabular-nums ${cashflow >= 0 ? "text-green" : "text-red"}`}>
+            {cashflow >= 0 ? "+" : "−"}
+            {formatRupiah(Math.abs(cashflow))}
+          </span>
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-paper-faint">
+          <span>in <span className="text-green">{formatRupiahShort(plannedIncome)}</span></span>
+          <span>spend <span className="text-red">{formatRupiahShort(plannedExpense)}</span></span>
+          {plannedSaving > 0 && <span>save <span className="text-sky">{formatRupiahShort(plannedSaving)}</span></span>}
+        </div>
+        {cashflow < 0 && (
+          <p className="mt-2 rounded-lg bg-red/10 px-2.5 py-1.5 text-xs text-red">
+            ⚠ Heads up — your budget plans {formatRupiah(Math.abs(cashflow))} more going out than coming in this month.
+          </p>
+        )}
+      </div>
+
+      <div className="flex gap-1.5">
+        {KINDS.map((k) => (
+          <Link
+            key={k.value}
+            href={`/more/budgets?m=${monthKey}&kind=${k.value}`}
+            className={`flex-1 rounded-full py-1.5 text-center text-sm font-medium transition-colors ${
+              kind === k.value ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
+            }`}
+          >
+            {k.label}
+          </Link>
+        ))}
+      </div>
 
       <div className="space-y-2">
-        {rows.map((c) =>
+        {rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-paper-faint">No {kind} categories.</p>
+        ) : (
+          rows.map((c) =>
           isAuto(c.name, c.kind) ? (
             <div key={c.id} className="card flex items-center justify-between gap-3 px-4 py-2.5">
               <span className="shrink-0 text-sm font-medium text-paper">
@@ -115,6 +175,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
               </div>
             </form>
           )
+          )
         )}
       </div>
 
@@ -126,13 +187,15 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
         tag means the value comes from a recurring rule.
       </p>
 
-      <p className="px-1 text-xs text-paper-faint">
-        <span className="text-green">Hutang</span> is auto-calculated from{" "}
-        <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month.{" "}
-        <span className="text-red">Cicilan Paylater</span> is auto-calculated from default{" "}
-        <Link href="/more/paylater" className="underline">My Paylater</Link> installments. An installment set to a custom
-        category instead <span className="text-plum">adds</span> to that category's budget here.
-      </p>
+      {kind !== "saving" && (
+        <p className="px-1 text-xs text-paper-faint">
+          <span className="text-green">Hutang</span> is auto-calculated from{" "}
+          <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month.{" "}
+          <span className="text-red">Cicilan Paylater</span> is auto-calculated from default{" "}
+          <Link href="/more/paylater" className="underline">My Paylater</Link> installments. An installment set to a custom
+          category instead <span className="text-plum">adds</span> to that category's budget here.
+        </p>
+      )}
     </div>
   );
 }

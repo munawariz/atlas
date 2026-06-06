@@ -23,7 +23,9 @@
       "Bash(python scripts/_selltest.py)",
       "Bash(gh repo *)",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" https://api.github.com/repos/munawariz/finance-tracker)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git check-ignore *)",
+      "Bash(git push *)"
     ]
   }
 }
