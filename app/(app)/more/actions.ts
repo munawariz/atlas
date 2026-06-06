@@ -283,6 +283,28 @@ export async function setForexUnits(accountId: number, formData: FormData) {
   revalidatePath("/dashboard");
 }
 
+// Add a foreign-currency holding (one account per ISO currency code).
+export async function addForexAccount(formData: FormData) {
+  const sb = supabaseServer();
+  const currency = String(formData.get("currency") ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
+  const nameRaw = String(formData.get("name") ?? "").trim();
+  const startUnits = units(formData.get("units"));
+  if (currency.length < 2) return;
+  const { data: existing } = await sb.from("forex_accounts").select("id").eq("currency", currency).maybeSingle();
+  if (existing) return; // already have this currency
+  await sb.from("forex_accounts").insert({ name: nameRaw || `Forex ${currency}`, currency, units: startUnits });
+  revalidatePath("/more/forex");
+  revalidatePath("/dashboard");
+}
+
+// Remove a forex holding. Cascades its forex_transactions log; the IDR wallet
+// transactions it booked are real history and are left untouched.
+export async function deleteForexAccount(accountId: number) {
+  await supabaseServer().from("forex_accounts").delete().eq("id", accountId);
+  revalidatePath("/more/forex");
+  revalidatePath("/dashboard");
+}
+
 // ---- Loans ----
 export async function addLoan(formData: FormData) {
   const person = String(formData.get("person") ?? "").trim();
@@ -368,8 +390,15 @@ export async function uncollectLoanPayment(loanId: number, periodMonth: string) 
   revalidatePath("/history");
 }
 
-// Mark a month as collected AND book it as Hutang income into the chosen wallet.
-export async function collectLoanPayment(loanId: number, periodMonth: string, walletId: number, dateISO: string) {
+// Mark a month as collected and, unless skipTxn is set, book it as Hutang income into
+// the chosen wallet (skipTxn = "I already received this manually elsewhere").
+export async function collectLoanPayment(
+  loanId: number,
+  periodMonth: string,
+  walletId: number,
+  dateISO: string,
+  skipTxn = false
+) {
   const sb = supabaseServer();
   const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
 
@@ -392,9 +421,9 @@ export async function collectLoanPayment(loanId: number, periodMonth: string, wa
     paymentId = ins.data?.id;
   }
 
-  // 2) book the collected amount as Hutang income and link it to the cell
+  // 2) book the collected amount as Hutang income and link it to the cell (unless skipped)
   const { data: loan } = await sb.from("loans").select("person, installment").eq("id", loanId).maybeSingle();
-  if (loan && walletId) {
+  if (!skipTxn && loan && walletId) {
     let { data: cat } = await sb
       .from("categories")
       .select("id")

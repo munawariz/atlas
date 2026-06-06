@@ -10,7 +10,7 @@ import {
 } from "../actions";
 import { CheckIcon, PencilIcon } from "@/components/icons";
 
-export type Cell = { month: string; state: "paid" | "unpaid" };
+export type Cell = { month: string; state: "paid" | "unpaid"; hasIncome?: boolean };
 
 export default function PaymentGrid({
   loanId,
@@ -28,6 +28,7 @@ export default function PaymentGrid({
   const [editing, setEditing] = useState(false);
   const [modal, setModal] = useState<{ type: "collect" | "uncollect"; month: string } | null>(null);
   const [walletId, setWalletId] = useState<number | null>(wallets[0]?.id ?? null);
+  const [skipTxn, setSkipTxn] = useState(false);
   const [newMonth, setNewMonth] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -39,6 +40,7 @@ export default function PaymentGrid({
       return;
     }
     if (state === "unpaid") {
+      setSkipTxn(false);
       try {
         const last = Number(localStorage.getItem("ft_collect_wallet"));
         setWalletId(last && wallets.some((w) => w.id === last) ? last : wallets[0]?.id ?? null);
@@ -63,11 +65,13 @@ export default function PaymentGrid({
     const month = modal.month;
     startTransition(async () => {
       if (modal.type === "collect") {
-        if (!walletId) return;
-        try {
-          localStorage.setItem("ft_collect_wallet", String(walletId));
-        } catch {}
-        await collectLoanPayment(loanId, month, walletId, todayISO());
+        if (!skipTxn && !walletId) return;
+        if (!skipTxn) {
+          try {
+            localStorage.setItem("ft_collect_wallet", String(walletId));
+          } catch {}
+        }
+        await collectLoanPayment(loanId, month, walletId ?? 0, todayISO(), skipTxn);
       } else {
         await uncollectLoanPayment(loanId, month);
       }
@@ -154,34 +158,58 @@ export default function PaymentGrid({
                 <h3 className="font-display text-lg font-medium text-paper">Collect payment</h3>
                 <p className="mt-1 text-sm text-paper-dim">{person} · {formatMonth(modal.month)}</p>
                 <p className="mt-2 font-display text-2xl font-bold text-green">+ {formatRupiah(installment)}</p>
-                <p className="label mt-4 mb-2">Where did it go?</p>
-                {wallets.length === 0 ? (
-                  <p className="text-xs text-amber">Add a wallet first.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {wallets.map((w) => (
-                      <button
-                        key={w.id}
-                        type="button"
-                        onClick={() => setWalletId(w.id)}
-                        className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                          walletId === w.id ? "bg-green text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
-                        }`}
-                      >
-                        {w.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <p className="mt-3 text-[11px] text-paper-faint">Adds a Hutang income record to that wallet.</p>
+                <div className={skipTxn ? "pointer-events-none opacity-40" : ""}>
+                  <p className="label mt-4 mb-2">Where did it go?</p>
+                  {wallets.length === 0 ? (
+                    <p className="text-xs text-amber">Add a wallet first.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {wallets.map((w) => (
+                        <button
+                          key={w.id}
+                          type="button"
+                          onClick={() => setWalletId(w.id)}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                            walletId === w.id ? "bg-green text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
+                          }`}
+                        >
+                          {w.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <label className="mt-3 flex items-center gap-2 text-xs text-paper-dim">
+                  <input
+                    type="checkbox"
+                    checked={skipTxn}
+                    onChange={(e) => setSkipTxn(e.target.checked)}
+                    className="h-4 w-4 accent-green"
+                  />
+                  Already received elsewhere — don&apos;t create a transaction
+                </label>
+                <p className="mt-2 text-[11px] text-paper-faint">
+                  {skipTxn
+                    ? "Marks it collected only — no income record is created."
+                    : "Adds a Hutang income record to that wallet."}
+                </p>
               </>
             ) : (
               <>
                 <h3 className="font-display text-lg font-medium text-paper">Undo collection?</h3>
                 <p className="mt-1 text-sm text-paper-dim">{person} · {formatMonth(modal.month)}</p>
                 <p className="mt-3 text-sm text-paper">
-                  Marks it <span className="font-semibold text-amber">owed</span> again and deletes the{" "}
-                  <span className="font-semibold">{formatRupiah(installment)}</span> income record.
+                  {schedule.find((c) => c.month === modal.month)?.hasIncome === false ? (
+                    <>
+                      Marks it <span className="font-semibold text-amber">owed</span> again. No income record was created
+                      for this month, so nothing else is removed.
+                    </>
+                  ) : (
+                    <>
+                      Marks it <span className="font-semibold text-amber">owed</span> again and deletes the{" "}
+                      <span className="font-semibold">{formatRupiah(installment)}</span> income record.
+                    </>
+                  )}
                 </p>
               </>
             )}
@@ -197,7 +225,7 @@ export default function PaymentGrid({
               </button>
               <button
                 type="button"
-                disabled={pending || (modal.type === "collect" && !walletId)}
+                disabled={pending || (modal.type === "collect" && !skipTxn && !walletId)}
                 onClick={confirm}
                 className={`flex-1 rounded-xl py-2.5 text-sm font-semibold text-ink disabled:opacity-60 ${
                   modal.type === "collect" ? "bg-green" : "bg-amber"

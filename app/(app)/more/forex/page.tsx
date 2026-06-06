@@ -2,8 +2,9 @@ import Link from "next/link";
 import { getWallets, walletMap } from "@/lib/data";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
 import { formatMonth, formatRupiah } from "@/lib/format";
-import { setForexUnits } from "../actions";
+import { addForexAccount, deleteForexAccount, setForexUnits } from "../actions";
 import SubmitButton from "@/components/SubmitButton";
+import { TrashIcon } from "@/components/icons";
 import ForexConvert from "./ForexConvert";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,7 @@ export default async function ForexPage() {
   const currencies = [...new Set(accounts.map((a) => a.currency))];
   const rates = new Map<string, number>();
   await Promise.all(currencies.map(async (c) => rates.set(c, await getForexRate(c))));
+  const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
 
   // group the log by month (already sorted newest-first)
   const byMonth = new Map<string, typeof txns>();
@@ -39,43 +41,68 @@ export default async function ForexPage() {
       {accounts.map((a) => {
         const rate = rates.get(a.currency) ?? 0;
         return (
-          <div key={a.id} className="card p-4">
-            <div className="flex items-end justify-between">
-              <div className="text-[15px] font-medium text-paper">{a.name}</div>
-              <div className="text-right">
-                <div className="font-display text-2xl font-bold tabular-nums text-sky">
-                  {fmtUnits(a.units)} {a.currency}
+          <div key={a.id} className="space-y-2">
+            <div className="card p-4">
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-[15px] font-medium text-paper">{a.name}</div>
+                  <form action={deleteForexAccount.bind(null, a.id)} className="mt-1">
+                    <SubmitButton label="Remove currency" className="grid h-6 w-6 place-items-center rounded-lg text-clay/70 active:bg-clay/10">
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </SubmitButton>
+                  </form>
                 </div>
-                <div className="text-[11px] text-paper-faint">≈ {formatRupiah(Math.round(a.units * rate))} at live rate · not in networth</div>
+                <div className="text-right">
+                  <div className="font-display text-2xl font-bold tabular-nums text-sky">
+                    {fmtUnits(a.units)} {a.currency}
+                  </div>
+                  <div className="text-[11px] text-paper-faint">≈ {formatRupiah(Math.round(a.units * rate))} at live rate · not in networth</div>
+                </div>
               </div>
+
+              <form action={setForexUnits.bind(null, a.id)} className="mt-3 flex items-center gap-2">
+                <span className="text-xs text-paper-faint">Set balance</span>
+                <input
+                  name="units"
+                  inputMode="decimal"
+                  defaultValue={a.units || ""}
+                  className="w-28 rounded-lg border border-line/70 bg-ink-3 px-2 py-1.5 text-right text-sm tabular-nums text-paper outline-none focus:border-green/60"
+                />
+                <span className="text-xs text-paper-dim">{a.currency}</span>
+                <SubmitButton
+                  pendingText="…"
+                  className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
+                >
+                  Save
+                </SubmitButton>
+              </form>
             </div>
 
-            <form action={setForexUnits.bind(null, a.id)} className="mt-3 flex items-center gap-2">
-              <span className="text-xs text-paper-faint">Set balance</span>
-              <input
-                name="units"
-                inputMode="decimal"
-                defaultValue={a.units || ""}
-                className="w-28 rounded-lg border border-line/70 bg-ink-3 px-2 py-1.5 text-right text-sm tabular-nums text-paper outline-none focus:border-green/60"
-              />
-              <span className="text-xs text-paper-dim">{a.currency}</span>
-              <SubmitButton
-                pendingText="…"
-                className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
-              >
-                Save
-              </SubmitButton>
-            </form>
+            <ForexConvert
+              accountId={a.id}
+              currency={a.currency}
+              wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
+            />
           </div>
         );
       })}
 
-      {accounts[0] && (
-        <ForexConvert
-          accountId={accounts[0].id}
-          currency={accounts[0].currency}
-          wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-        />
+      {/* Add a new foreign currency */}
+      <form action={addForexAccount} className="card space-y-2 p-4">
+        <div className="label mb-1">Add a currency</div>
+        <div className="flex gap-2">
+          <input name="currency" placeholder="ISO code · e.g. USD" maxLength={4} className="field w-32 uppercase" />
+          <input name="name" placeholder="Name (optional)" className="field flex-1" />
+        </div>
+        <input name="units" inputMode="decimal" placeholder="Starting balance (optional)" className="field" />
+        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
+          Add currency
+        </SubmitButton>
+        <p className="text-[11px] text-paper-faint">Live rate is fetched automatically from the ISO code (e.g. USD, EUR, SGD).</p>
+      </form>
+
+      {accounts.length === 0 && (
+        <p className="pt-2 text-center text-sm text-paper-faint">No currencies yet — add one above.</p>
       )}
 
       {txns.length > 0 && (
@@ -90,7 +117,7 @@ export default async function ForexPage() {
                     <div key={t.id} className={`flex items-center justify-between px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
                       <div className="min-w-0">
                         <div className="text-sm font-medium text-paper">
-                          {t.direction === "buy" ? "Buy" : "Sell"} {fmtUnits(t.units)}
+                          {t.direction === "buy" ? "Buy" : "Sell"} {fmtUnits(t.units)} {currencyById.get(t.account_id) ?? ""}
                         </div>
                         <div className="text-xs text-paper-dim">{t.wallet_id ? ws.get(t.wallet_id) : "—"}</div>
                       </div>

@@ -19,7 +19,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
   const forLoan = (loanId: number) =>
     payments.filter((p) => p.loan_id === loanId).sort((a, b) => a.period_month.localeCompare(b.period_month));
   const scheduleOf = (loanId: number): Cell[] =>
-    forLoan(loanId).map((p) => ({ month: p.period_month, state: p.paid ? "paid" : "unpaid" }));
+    forLoan(loanId).map((p) => ({
+      month: p.period_month,
+      state: p.paid ? "paid" : "unpaid",
+      hasIncome: p.income_txn_id != null,
+    }));
   const outstanding = (loanId: number, installment: number) =>
     forLoan(loanId).filter((p) => !p.paid).length * installment;
   const loanStatus = (loanId: number): "finished" | "unfinished" | "empty" => {
