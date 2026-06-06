@@ -26,7 +26,8 @@
       "Bash(git add *)",
       "Bash(git check-ignore *)",
       "Bash(git push *)",
-      "Bash(python scripts/_bondtest.py)"
+      "Bash(python scripts/_bondtest.py)",
+      "Bash(node -e \"const E=require\\('exceljs'\\); console.log\\('exceljs', require\\('exceljs/package.json'\\).version\\)\")"
     ]
   }
 }

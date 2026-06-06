@@ -35,9 +35,10 @@ export interface BondPortfolio {
   totalCoupons: number;
 }
 
-/** Per-bond principal held + coupons received, from the trade log. */
-export async function getBondPortfolio(): Promise<BondPortfolio> {
-  const trades = await getBondTrades();
+/** Per-bond principal held + coupons received, from the trade log (optionally up to `asOf`). */
+export async function getBondPortfolio(asOf?: string): Promise<BondPortfolio> {
+  const all = await getBondTrades();
+  const trades = asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
   const agg = new Map<string, { buy: number; sell: number; coupon: number; buyU: number; sellU: number }>();
   for (const t of trades) {
     const a = agg.get(t.name) ?? { buy: 0, sell: 0, coupon: 0, buyU: 0, sellU: 0 };

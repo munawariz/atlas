@@ -61,9 +61,11 @@ export interface StockPortfolio {
   missing: string[]; // tickers with no live price
 }
 
-/** Build the current portfolio from trades + live prices (1 lot = 100 shares). */
-export async function getStockPortfolio(): Promise<StockPortfolio> {
-  const trades = await getStockTrades();
+/** Build the portfolio from trades + live prices (1 lot = 100 shares). `asOf` scopes to
+ *  trades up to a cutoff date; `livePrices=false` skips the Yahoo lookup (past years). */
+export async function getStockPortfolio(asOf?: string, livePrices = true): Promise<StockPortfolio> {
+  const all = await getStockTrades();
+  const trades = asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
 
   const agg = new Map<string, { buyLots: number; buyIdr: number; sellLots: number; sellIdr: number }>();
   for (const t of trades) {
@@ -83,9 +85,11 @@ export async function getStockPortfolio(): Promise<StockPortfolio> {
     .map(([ticker, a]) => ({ ticker, lots: a.buyLots - a.sellLots, avgPerLot: a.buyLots ? a.buyIdr / a.buyLots : 0 }))
     .filter((h) => h.lots > 0);
 
-  // Live prices in parallel (each is cached server-side).
+  // Live prices in parallel (each is cached server-side); skipped for past-year snapshots.
   const prices = new Map<string, number | null>();
-  await Promise.all(open.map(async (h) => prices.set(h.ticker, await getLiveStockPrice(h.ticker))));
+  if (livePrices) {
+    await Promise.all(open.map(async (h) => prices.set(h.ticker, await getLiveStockPrice(h.ticker))));
+  }
 
   const holdings: StockHolding[] = open.map((h) => {
     const cost = Math.round(h.lots * h.avgPerLot);

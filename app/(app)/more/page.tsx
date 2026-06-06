@@ -40,6 +40,17 @@ export default function MorePage() {
         ))}
       </div>
 
+      <Link
+        href="/backup"
+        className="card flex items-center justify-between px-4 py-4 transition-colors active:bg-ink-3"
+      >
+        <div>
+          <div className="text-[15px] font-medium text-paper">Backup snapshot</div>
+          <div className="text-xs text-paper-dim">Download a year&apos;s financial status as an Excel file (.xlsx)</div>
+        </div>
+        <span className="text-gold/70">›</span>
+      </Link>
+
       <form action={logout}>
         <button
           type="submit"

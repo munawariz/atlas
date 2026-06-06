@@ -1,5 +1,6 @@
 import "server-only";
 import { supabaseServer } from "./supabaseServer";
+import { todayISO } from "./format";
 import type {
   EffectiveBudget,
   Category,
@@ -338,8 +339,8 @@ export interface SavingsBucket {
   balance: number; // contributed − withdrawn
 }
 
-/** Cumulative balance held in each saving/investment bucket across all time. */
-export async function getSavingsBuckets(): Promise<SavingsBucket[]> {
+/** Cumulative balance held in each saving/investment bucket (optionally as of a cutoff date). */
+export async function getSavingsBuckets(asOf?: string): Promise<SavingsBucket[]> {
   const sb = supabaseServer();
   // Active buckets only — this excludes the archived "Forex Yen" category, whose holding
   // is tracked separately in the Forex module (counting it here would double it).
@@ -353,12 +354,9 @@ export async function getSavingsBuckets(): Promise<SavingsBucket[]> {
 
   // Paginate the relevant transactions (PostgREST caps each response at 1000 rows).
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
-      .from("transactions")
-      .select("type, amount, category_id")
-      .in("type", ["saving", "investment", "withdrawal"])
-      .order("id")
-      .range(from, from + 999);
+    let q = sb.from("transactions").select("type, amount, category_id").in("type", ["saving", "investment", "withdrawal"]);
+    if (asOf) q = q.lte("occurred_on", asOf);
+    const { data, error } = await q.order("id").range(from, from + 999);
     if (error) throw error;
     const batch = (data ?? []) as { type: string; amount: number; category_id: number | null }[];
     for (const r of batch) {
@@ -373,4 +371,43 @@ export async function getSavingsBuckets(): Promise<SavingsBucket[]> {
 
   for (const b of buckets.values()) b.balance = b.contributed - b.withdrawn;
   return [...buckets.values()];
+}
+
+/** All transactions in a calendar year, ascending. Paginated (PostgREST caps at 1000). */
+export async function getYearTransactions(year: number): Promise<Transaction[]> {
+  const sb = supabaseServer();
+  const start = `${year}-01-01`;
+  const end = `${year + 1}-01-01`;
+  const out: Transaction[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("transactions")
+      .select("*")
+      .gte("occurred_on", start)
+      .lt("occurred_on", end)
+      .order("occurred_on")
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    const batch = (data ?? []) as Transaction[];
+    out.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  return out;
+}
+
+/** Years with transaction data (descending), always including the current year. */
+export async function getDataYears(): Promise<number[]> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("transactions")
+    .select("occurred_on")
+    .order("occurred_on", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const currentYear = Number(todayISO().slice(0, 4));
+  const minYear = data ? Number((data as { occurred_on: string }).occurred_on.slice(0, 4)) : currentYear;
+  const years: number[] = [];
+  for (let y = currentYear; y >= Math.min(minYear, currentYear); y--) years.push(y);
+  return years;
 }
