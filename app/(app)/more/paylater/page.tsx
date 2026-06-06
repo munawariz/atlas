@@ -32,8 +32,22 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const pickCats = expenseCats.filter((c) => c.name !== "Cicilan Paylater").map((c) => ({ id: c.id, name: c.name }));
   const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
   const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
+  const paidWithTxn = new Set(paid.filter((p) => p.expense_txn_id != null).map((p) => `${p.item_id}:${p.month}`));
+  const hasExpense = (p: (typeof items)[number]) => paidWithTxn.has(`${p.id}:${monthKey}`);
 
   const active = items.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
+  // Sort by: (1) expense category, (2) months left owed (most first), (3) shorter total
+  // installment first — so a 6-month/1-left ranks above a 12-month/1-left.
+  const catLabel = (p: (typeof items)[number]) =>
+    p.category_id ? catName.get(p.category_id) ?? "Cicilan Paylater" : "Cicilan Paylater";
+  active.sort((a, b) => {
+    const byCat = catLabel(a).localeCompare(catLabel(b));
+    if (byCat !== 0) return byCat;
+    const leftA = span(monthKey, a.last_month_date);
+    const leftB = span(monthKey, b.last_month_date);
+    if (leftA !== leftB) return leftB - leftA; // most months still owed first
+    return span(a.first_month_date, a.last_month_date) - span(b.first_month_date, b.last_month_date);
+  });
   const owed = active.filter((p) => !isPaid(p));
   const dueTotal = owed.reduce((a, p) => a + p.monthly_amount, 0);
   const paidTotal = active.filter(isPaid).reduce((a, p) => a + p.monthly_amount, 0);
@@ -117,6 +131,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
                     month={monthKey}
                     amount={p.monthly_amount}
                     paid={paid}
+                    hasExpense={hasExpense(p)}
                     wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
                   />
                   <PaylaterEdit

@@ -153,49 +153,60 @@ export async function deletePaylater(id: number) {
   revalidatePath("/dashboard");
 }
 
-// Pay an installment month: book an expense withdrawn from the chosen wallet and mark
-// the month paid (linked to that expense).
-export async function payPaylaterMonth(itemId: number, month: string, walletId: number, dateISO: string) {
+// Pay an installment month: mark it paid and, unless skipTxn is set, book an expense
+// withdrawn from the chosen wallet (skipTxn = "I already paid this manually elsewhere").
+export async function payPaylaterMonth(
+  itemId: number,
+  month: string,
+  walletId: number,
+  dateISO: string,
+  skipTxn = false
+) {
   const sb = supabaseServer();
-  const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
   const { data: item } = await sb
     .from("paylater_items")
     .select("item, monthly_amount, category_id")
     .eq("id", itemId)
     .maybeSingle();
-  if (!item || !walletId) return;
+  if (!item) return;
 
-  // Book the expense under the item's custom category, or default to "Cicilan Paylater".
-  let categoryId = item.category_id as number | null;
-  if (!categoryId) {
-    let { data: cat } = await sb
-      .from("categories")
-      .select("id")
-      .eq("kind", "expense")
-      .eq("name", "Cicilan Paylater")
-      .maybeSingle();
-    if (!cat) {
-      const ins = await sb.from("categories").insert({ kind: "expense", name: "Cicilan Paylater" }).select("id").single();
-      cat = ins.data;
+  let expenseTxnId: number | null = null;
+  if (!skipTxn) {
+    if (!walletId) return;
+    const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
+    // Book the expense under the item's custom category, or default to "Cicilan Paylater".
+    let categoryId = item.category_id as number | null;
+    if (!categoryId) {
+      let { data: cat } = await sb
+        .from("categories")
+        .select("id")
+        .eq("kind", "expense")
+        .eq("name", "Cicilan Paylater")
+        .maybeSingle();
+      if (!cat) {
+        const ins = await sb.from("categories").insert({ kind: "expense", name: "Cicilan Paylater" }).select("id").single();
+        cat = ins.data;
+      }
+      categoryId = cat?.id ?? null;
     }
-    categoryId = cat?.id ?? null;
+    const txn = await sb
+      .from("transactions")
+      .insert({
+        occurred_on,
+        type: "expense",
+        amount: item.monthly_amount,
+        description: item.item,
+        category_id: categoryId,
+        source_wallet_id: walletId,
+      })
+      .select("id")
+      .single();
+    expenseTxnId = txn.data?.id ?? null;
   }
-  const txn = await sb
-    .from("transactions")
-    .insert({
-      occurred_on,
-      type: "expense",
-      amount: item.monthly_amount,
-      description: item.item,
-      category_id: categoryId,
-      source_wallet_id: walletId,
-    })
-    .select("id")
-    .single();
 
   await sb
     .from("paylater_payments")
-    .upsert({ item_id: itemId, month, expense_txn_id: txn.data?.id ?? null }, { onConflict: "item_id,month" });
+    .upsert({ item_id: itemId, month, expense_txn_id: expenseTxnId }, { onConflict: "item_id,month" });
 
   revalidatePath("/more/paylater");
   revalidatePath("/dashboard");
