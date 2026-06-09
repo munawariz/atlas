@@ -245,6 +245,9 @@ export interface ChartData {
   months: string[]; // months with flows, ascending "YYYY-MM-01"
   flows: { month: string; income: number; expense: number; saving: number; investment: number }[];
   catTotals: { month: string; categoryId: number; kind: TxnType; total: number }[]; // categoryId 0 = uncategorized
+  // Per-(month, category, description) rollup for drilldown insights — identical
+  // descriptions collapse to one row so the payload stays small. max = biggest single txn.
+  catEntries: { month: string; categoryId: number; kind: TxnType; description: string; count: number; total: number; max: number }[];
   networth: { month: string; total: number }[]; // opening baseline + each subsequent month-end
 }
 
@@ -257,12 +260,12 @@ export async function getChartData(): Promise<ChartData> {
   const sb = supabaseServer();
 
   // Paginate — PostgREST caps each response at 1000 rows.
-  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null };
+  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null; description: string | null };
   const rows: Row[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb
       .from("transactions")
-      .select("occurred_on, type, amount, category_id")
+      .select("occurred_on, type, amount, category_id, description")
       .order("id")
       .range(from, from + 999);
     if (error) throw error;
@@ -286,6 +289,16 @@ export async function getChartData(): Promise<ChartData> {
     c.total += delta;
     catMap.set(key, c);
   };
+  const entryMap = new Map<string, ChartData["catEntries"][number]>();
+  const addEntry = (m: string, cid: number, kind: TxnType, desc: string | null, amount: number) => {
+    const d = (desc ?? "").trim().slice(0, 48);
+    const key = `${m}|${cid}|${kind}|${d.toLowerCase()}`;
+    const e = entryMap.get(key) ?? { month: m, categoryId: cid, kind, description: d, count: 0, total: 0, max: 0 };
+    e.count += 1;
+    e.total += amount;
+    e.max = Math.max(e.max, amount);
+    entryMap.set(key, e);
+  };
   for (const r of rows) {
     if (r.type === "transfer") continue;
     const m = monthOf(r.occurred_on);
@@ -304,10 +317,12 @@ export async function getChartData(): Promise<ChartData> {
     f[r.type as "income" | "expense" | "saving" | "investment"] += r.amount;
     flowMap.set(m, f);
     addCat(m, r.category_id ?? 0, r.type, r.amount);
+    addEntry(m, r.category_id ?? 0, r.type, r.description, r.amount);
   }
   const months = [...flowMap.keys()].sort();
   const flows = months.map((m) => flowMap.get(m)!);
   const catTotals = [...catMap.values()];
+  const catEntries = [...entryMap.values()];
 
   // Net-worth series from opening + cumulative monthly_wallet_delta (drift-proof).
   const opening = await getOpeningBalances();
@@ -326,7 +341,7 @@ export async function getChartData(): Promise<ChartData> {
     networth.push({ month: m, total: running });
   }
 
-  return { months, flows, catTotals, networth };
+  return { months, flows, catTotals, catEntries, networth };
 }
 
 // ---- Savings & investment balances ----
