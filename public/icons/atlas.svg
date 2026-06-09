@@ -1,0 +1,25 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11161f"/>
+      <stop offset="1" stop-color="#090c12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="36%" r="55%">
+      <stop offset="0" stop-color="#3fb950" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#3fb950" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="globe" x1="22%" y1="8%" x2="80%" y2="96%">
+      <stop offset="0" stop-color="#57d364"/>
+      <stop offset="100%" stop-color="#2ea043"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+  <circle cx="256" cy="256" r="150" fill="url(#globe)"/>
+  <g fill="none" stroke="#0a0d13" stroke-width="15" stroke-linecap="round" stroke-opacity="0.9">
+    <line x1="120" y1="256" x2="392" y2="256"/>
+    <line x1="256" y1="120" x2="256" y2="392"/>
+    <ellipse cx="256" cy="256" rx="80" ry="134"/>
+  </g>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#7ee992" stroke-opacity="0.3" stroke-width="3"/>
+</svg>
