@@ -1,0 +1,50 @@
+# Self-host Atlas outside Vercel.
+#
+#   1. cp .example.env .env.local   and fill it in (Supabase URL + service-role key,
+#      APP_PASSWORD, COOKIE_SECRET, and DATABASE_URL for the one-off migration).
+#   2. docker compose --profile setup run --rm migrate   # create the schema (idempotent)
+#      docker compose --profile setup run --rm seed       # optional starter data (fresh DB)
+#   3. docker compose up -d --build                       # run the app on :3000
+#
+# Atlas sets a Secure session cookie in production, so serve it over HTTPS — put a
+# reverse proxy (Caddy / nginx / Traefik) in front. Over plain HTTP the login won't stick.
+
+services:
+  app:
+    build:
+      context: .
+    image: atlas
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.local
+    environment:
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # One-off helpers — only run via `docker compose --profile setup run --rm <name>`.
+  migrate:
+    build:
+      context: .
+      target: tools
+    image: atlas-tools
+    profiles: ["setup"]
+    env_file:
+      - .env.local
+    command: ["node", "scripts/migrate.mjs", "supabase/migrations/0001_init.sql"]
+
+  seed:
+    build:
+      context: .
+      target: tools
+    image: atlas-tools
+    profiles: ["setup"]
+    env_file:
+      - .env.local
+    command: ["node", "scripts/migrate.mjs", "supabase/seed.sql"]

@@ -78,6 +78,27 @@ defaults (created on first use).
    `COOKIE_SECRET` (`DATABASE_URL` is only needed locally for migrate/seed).
 4. Deploy, open the URL on your phone, **Add to Home Screen**.
 
+## Self-host with Docker
+Run Atlas anywhere that has Docker — no Vercel needed. It still talks to a Supabase
+project (hosted or your own self-hosted Supabase); only the app is containerized.
+
+```bash
+cp .example.env .env.local          # fill in SUPABASE_*, APP_PASSWORD, COOKIE_SECRET, DATABASE_URL
+
+docker compose --profile setup run --rm migrate   # create the schema (idempotent, safe to re-run)
+docker compose --profile setup run --rm seed       # optional starter data (fresh DB only)
+
+docker compose up -d --build        # app on http://localhost:3000
+```
+
+- The image is a multi-stage build of Next.js's **standalone** output (`output: "standalone"`,
+  enabled only inside the Docker build), so it's small and runs as a non-root user.
+- `migrate` / `seed` run in a separate `tools` image (kept out of the runtime image) and
+  read `DATABASE_URL` from `.env.local`.
+- **Serve it over HTTPS.** Atlas sets a `Secure` session cookie in production, so put a
+  reverse proxy with TLS in front (Caddy / nginx / Traefik). Over plain HTTP the login
+  cookie won't be stored.
+
 ## Data model
 A single type-discriminated `transactions` table, plus `wallets`, `categories`,
 `budgets` / `recurring_budgets`, `wallet_balances` (opening balances → derived net
