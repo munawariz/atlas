@@ -265,6 +265,86 @@ export async function convertForex(formData: FormData) {
   revalidatePath("/history");
 }
 
+// Edit an existing forex buy/sell from the history editor. Keeps all three parts in
+// sync: the IDR-side ledger transaction, the forex log row, and the holding balance
+// (revert the old move, apply the new one). `bind(null, forexTxnId, txnId)`.
+export async function updateForexTransaction(
+  forexTxnId: number,
+  txnId: number,
+  _prev: { error?: string },
+  formData: FormData
+): Promise<{ error?: string }> {
+  const sb = supabaseServer();
+  const accountId = optInt(formData.get("account_id"));
+  const walletId = optInt(formData.get("wallet_id"));
+  const direction = String(formData.get("direction") ?? "buy") === "sell" ? "sell" : "buy";
+  const idr = digits(formData.get("idr"));
+  const fx = units(formData.get("units"));
+  const date = String(formData.get("date") ?? "").slice(0, 10);
+  if (!accountId || !walletId || idr <= 0 || fx <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { error: "Pick a currency and wallet, and fill in both amounts and the date." };
+  }
+
+  const { data: old } = await sb
+    .from("forex_transactions")
+    .select("account_id, direction, units")
+    .eq("id", forexTxnId)
+    .maybeSingle();
+  if (!old) return { error: "This forex entry no longer exists." };
+  const { data: acct } = await sb.from("forex_accounts").select("currency").eq("id", accountId).maybeSingle();
+  if (!acct) return { error: "That currency no longer exists." };
+
+  // Reconcile holding balances per account: undo the old move, apply the new one.
+  const deltas = new Map<number, number>();
+  const bump = (id: number, d: number) => deltas.set(id, (deltas.get(id) ?? 0) + d);
+  bump(old.account_id, old.direction === "buy" ? -Number(old.units) : Number(old.units)); // undo old
+  bump(accountId, direction === "buy" ? fx : -fx); // apply new
+  for (const [id, delta] of deltas) {
+    if (!delta) continue;
+    const { data: a } = await sb.from("forex_accounts").select("units").eq("id", id).maybeSingle();
+    if (a) await sb.from("forex_accounts").update({ units: Math.max(0, Number(a.units) + delta) }).eq("id", id);
+  }
+
+  // IDR side: buy = investment out of the wallet; sell = income into the wallet.
+  const txnRow =
+    direction === "buy"
+      ? { occurred_on: date, type: "investment", amount: idr, description: `Buy ${acct.currency} (forex)`, category_id: null, source_wallet_id: walletId, dest_wallet_id: null }
+      : { occurred_on: date, type: "income", amount: idr, description: `Sell ${acct.currency} (forex)`, category_id: null, source_wallet_id: null, dest_wallet_id: walletId };
+  await sb.from("transactions").update(txnRow).eq("id", txnId);
+  await sb
+    .from("forex_transactions")
+    .update({ account_id: accountId, occurred_on: date, direction, idr, units: fx, wallet_id: walletId })
+    .eq("id", forexTxnId);
+
+  revalidatePath("/more/forex");
+  revalidatePath("/dashboard");
+  revalidatePath("/history");
+  redirect("/history");
+}
+
+// Delete a forex buy/sell from the history editor: revert the holding balance, then
+// remove both the forex log row and its IDR-side ledger transaction.
+export async function deleteForexTransaction(forexTxnId: number, txnId: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data: old } = await sb
+    .from("forex_transactions")
+    .select("account_id, direction, units")
+    .eq("id", forexTxnId)
+    .maybeSingle();
+  if (old) {
+    const delta = old.direction === "buy" ? -Number(old.units) : Number(old.units); // undo the move
+    const { data: a } = await sb.from("forex_accounts").select("units").eq("id", old.account_id).maybeSingle();
+    if (a) await sb.from("forex_accounts").update({ units: Math.max(0, Number(a.units) + delta) }).eq("id", old.account_id);
+    await sb.from("forex_transactions").delete().eq("id", forexTxnId);
+  }
+  await sb.from("transactions").delete().eq("id", txnId);
+
+  revalidatePath("/more/forex");
+  revalidatePath("/dashboard");
+  revalidatePath("/history");
+  redirect("/history");
+}
+
 // Correct a forex holding's balance directly (no transaction booked).
 export async function setForexUnits(accountId: number, formData: FormData) {
   await supabaseServer().from("forex_accounts").update({ units: units(formData.get("units")) }).eq("id", accountId);
@@ -272,16 +352,36 @@ export async function setForexUnits(accountId: number, formData: FormData) {
   revalidatePath("/dashboard");
 }
 
-// Add a foreign-currency holding (one account per ISO currency code).
+// Add a foreign-currency holding (one account per ISO currency code). An optional
+// starting balance has two sides — the foreign units you hold and the IDR they cost —
+// so the holding opens with a cost basis for the gain/loss view.
 export async function addForexAccount(formData: FormData) {
   const sb = supabaseServer();
   const currency = String(formData.get("currency") ?? "").trim().toUpperCase().replace(/[^A-Z]/g, "");
   const nameRaw = String(formData.get("name") ?? "").trim();
   const startUnits = units(formData.get("units"));
+  const startCost = digits(formData.get("idr")); // IDR paid for the opening balance
   if (currency.length < 2) return;
   const { data: existing } = await sb.from("forex_accounts").select("id").eq("currency", currency).maybeSingle();
   if (existing) return; // already have this currency
-  await sb.from("forex_accounts").insert({ name: nameRaw || `Forex ${currency}`, currency, units: startUnits });
+  const { data: acct } = await sb
+    .from("forex_accounts")
+    .insert({ name: nameRaw || `Forex ${currency}`, currency, units: startUnits })
+    .select("id")
+    .single();
+  // Seed the cost basis as an opening "buy" — no wallet / no ledger transaction, since
+  // it's an existing holding rather than a fresh purchase. Only when both sides are given.
+  if (acct && startUnits > 0 && startCost > 0) {
+    await sb.from("forex_transactions").insert({
+      account_id: acct.id,
+      occurred_on: new Date().toISOString().slice(0, 10),
+      direction: "buy",
+      idr: startCost,
+      units: startUnits,
+      wallet_id: null,
+      txn_id: null,
+    });
+  }
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
 }

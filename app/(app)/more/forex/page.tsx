@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { getWallets, walletMap } from "@/lib/data";
-import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
+import { getForexAccounts, getForexRate, getForexTransactions, forexAvgCost } from "@/lib/forex";
 import { formatMonth, formatRupiah } from "@/lib/format";
-import { addForexAccount, deleteForexAccount, setForexUnits } from "../actions";
+import { deleteForexAccount, setForexUnits } from "../actions";
 import SubmitButton from "@/components/SubmitButton";
 import { TrashIcon } from "@/components/icons";
 import ForexConvert from "./ForexConvert";
+import ForexAddCurrency from "./ForexAddCurrency";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +23,12 @@ export default async function ForexPage() {
   const rates = new Map<string, number>();
   await Promise.all(currencies.map(async (c) => rates.set(c, await getForexRate(c))));
   const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
+
+  // group the forex log per account → average-cost basis of each holding
+  const txnsByAccount = new Map<number, typeof txns>();
+  for (const t of txns) {
+    (txnsByAccount.get(t.account_id) ?? txnsByAccount.set(t.account_id, []).get(t.account_id)!).push(t);
+  }
 
   // group the log by month (already sorted newest-first)
   const byMonth = new Map<string, typeof txns>();
@@ -40,10 +47,17 @@ export default async function ForexPage() {
 
       {accounts.map((a) => {
         const rate = rates.get(a.currency) ?? 0;
+        const avgCost = forexAvgCost(txnsByAccount.get(a.id) ?? []);
+        const invested = Math.round(avgCost * a.units);
+        const value = Math.round(a.units * rate);
+        const hasCost = avgCost > 0 && a.units > 0;
+        const hasValue = rate > 0 && a.units > 0;
+        const pl = value - invested;
+        const plPct = hasCost && hasValue ? (pl / invested) * 100 : null;
         return (
           <div key={a.id} className="space-y-2">
             <div className="card p-4">
-              <div className="flex items-end justify-between">
+              <div className="flex items-start justify-between">
                 <div>
                   <div className="text-[15px] font-medium text-paper">{a.name}</div>
                   <form action={deleteForexAccount.bind(null, a.id)} className="mt-1">
@@ -56,9 +70,47 @@ export default async function ForexPage() {
                   <div className="font-display text-2xl font-bold tabular-nums text-sky">
                     {fmtUnits(a.units)} {a.currency}
                   </div>
-                  <div className="text-[11px] text-paper-faint">≈ {formatRupiah(Math.round(a.units * rate))} at live rate · not in networth</div>
+                  <div className="text-[11px] text-paper-faint">not in networth</div>
                 </div>
               </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2.5">
+                <div className="rounded-xl bg-ink-3/60 p-2.5">
+                  <div className="label">Invested</div>
+                  <div className="mt-0.5 font-display text-sm font-semibold tabular-nums text-paper">
+                    {hasCost ? formatRupiah(invested) : "—"}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-ink-3/60 p-2.5">
+                  <div className="label">Value · live</div>
+                  <div className="mt-0.5 font-display text-sm font-semibold tabular-nums text-paper">
+                    {hasValue ? formatRupiah(value) : "—"}
+                  </div>
+                </div>
+              </div>
+              {plPct !== null ? (
+                <div className={`mt-2 flex flex-wrap items-center gap-x-1.5 text-xs font-medium ${pl >= 0 ? "text-green" : "text-clay"}`}>
+                  <span className="tabular-nums">{pl >= 0 ? "▲" : "▼"} {formatRupiah(Math.abs(pl))}</span>
+                  <span className="tabular-nums">({pl >= 0 ? "+" : "−"}{Math.abs(plPct).toFixed(1)}%)</span>
+                  <span className="text-paper-faint">vs invested · live rate</span>
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-paper-faint">
+                  {!hasValue ? "Live rate unavailable." : "Buy some to track gain/loss."}
+                </div>
+              )}
+              {hasValue && (
+                <div className="mt-1.5 text-[11px] text-paper-faint">
+                  Live{" "}
+                  <span className={`tabular-nums ${hasCost ? (rate >= avgCost ? "text-green" : "text-clay") : "text-paper-dim"}`}>
+                    Rp {fmtUnits(rate)}
+                  </span>
+                  {hasCost && (
+                    <> vs avg <span className="tabular-nums text-paper-dim">Rp {fmtUnits(avgCost)}</span></>
+                  )}
+                  {" "}/ {a.currency}
+                </div>
+              )}
 
               <form action={setForexUnits.bind(null, a.id)} className="mt-3 flex items-center gap-2">
                 <span className="text-xs text-paper-faint">Set balance</span>
@@ -87,19 +139,8 @@ export default async function ForexPage() {
         );
       })}
 
-      {/* Add a new foreign currency */}
-      <form action={addForexAccount} className="card space-y-2 p-4">
-        <div className="label mb-1">Add a currency</div>
-        <div className="flex gap-2">
-          <input name="currency" placeholder="ISO code · e.g. USD" maxLength={4} className="field w-32 uppercase" />
-          <input name="name" placeholder="Name (optional)" className="field flex-1" />
-        </div>
-        <input name="units" inputMode="decimal" placeholder="Starting balance (optional)" className="field" />
-        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
-          Add currency
-        </SubmitButton>
-        <p className="text-[11px] text-paper-faint">Live rate is fetched automatically from the ISO code (e.g. USD, EUR, SGD).</p>
-      </form>
+      {/* Add a new foreign currency (in a modal) */}
+      <ForexAddCurrency />
 
       {accounts.length === 0 && (
         <p className="pt-2 text-center text-sm text-paper-faint">No currencies yet — add one above.</p>
