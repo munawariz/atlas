@@ -71,7 +71,7 @@ export async function deriveWalletBalances(monthKey: string): Promise<Map<number
 export async function getWallets(includeArchived = false): Promise<Wallet[]> {
   let q = supabaseServer().from("wallets").select("*");
   if (!includeArchived) q = q.eq("archived", false);
-  const { data, error } = await q.order("sort_order");
+  const { data, error } = await q.order("sort_order").order("id");
   if (error) throw error;
   return (data ?? []) as Wallet[];
 }
@@ -79,7 +79,7 @@ export async function getWallets(includeArchived = false): Promise<Wallet[]> {
 export async function getCategories(includeArchived = false): Promise<Category[]> {
   let q = supabaseServer().from("categories").select("*");
   if (!includeArchived) q = q.eq("archived", false);
-  const { data, error } = await q.order("kind").order("sort_order");
+  const { data, error } = await q.order("kind").order("sort_order").order("id");
   if (error) throw error;
   return (data ?? []) as Category[];
 }
@@ -90,7 +90,8 @@ export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[
     .select("*")
     .eq("kind", kind)
     .eq("archived", false)
-    .order("sort_order");
+    .order("sort_order")
+    .order("id");
   if (error) throw error;
   return (data ?? []) as Category[];
 }

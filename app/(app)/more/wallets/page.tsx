@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
 import SubmitButton from "@/components/SubmitButton";
-import { addWallet, toggleWalletArchived } from "../actions";
+import ManageRow from "../ManageRow";
+import { addWallet, moveWallet, renameWallet, toggleWalletArchived } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,17 @@ export default async function WalletsPage() {
 
       <div className="card overflow-hidden">
         {wallets.map((w, i) => (
-          <div key={w.id} className={`flex items-center justify-between px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
-            <span className={`text-sm ${w.archived ? "text-paper-faint line-through" : "text-paper"}`}>{w.name}</span>
-            <form action={toggleWalletArchived.bind(null, w.id)}>
-              <SubmitButton className="text-xs text-paper-dim active:text-paper">
-                {w.archived ? "Restore" : "Archive"}
-              </SubmitButton>
-            </form>
+          <div key={w.id} className={i > 0 ? "hr-dash border-t" : ""}>
+            <ManageRow
+              id={w.id}
+              name={w.name}
+              archived={w.archived}
+              isFirst={i === 0}
+              isLast={i === wallets.length - 1}
+              rename={renameWallet}
+              move={moveWallet}
+              toggleArchive={toggleWalletArchived}
+            />
           </div>
         ))}
       </div>

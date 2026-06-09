@@ -2,7 +2,8 @@ import Link from "next/link";
 import { getCategories } from "@/lib/data";
 import type { CategoryKind } from "@/lib/types";
 import SubmitButton from "@/components/SubmitButton";
-import { addCategory, toggleCategoryArchived } from "../actions";
+import ManageRow from "../ManageRow";
+import { addCategory, moveCategory, renameCategory, toggleCategoryArchived } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -43,13 +44,17 @@ export default async function CategoriesPage() {
             <h2 className="label mb-2">{k.label}</h2>
             <div className="card overflow-hidden">
               {rows.map((c, i) => (
-                <div key={c.id} className={`flex items-center justify-between px-4 py-2.5 ${i > 0 ? "hr-dash border-t" : ""}`}>
-                  <span className={`text-sm ${c.archived ? "text-paper-faint line-through" : "text-paper"}`}>{c.name}</span>
-                  <form action={toggleCategoryArchived.bind(null, c.id)}>
-                    <SubmitButton className="text-xs text-paper-dim active:text-paper">
-                      {c.archived ? "Restore" : "Archive"}
-                    </SubmitButton>
-                  </form>
+                <div key={c.id} className={i > 0 ? "hr-dash border-t" : ""}>
+                  <ManageRow
+                    id={c.id}
+                    name={c.name}
+                    archived={c.archived}
+                    isFirst={i === 0}
+                    isLast={i === rows.length - 1}
+                    rename={renameCategory}
+                    move={moveCategory}
+                    toggleArchive={toggleCategoryArchived}
+                  />
                 </div>
               ))}
             </div>

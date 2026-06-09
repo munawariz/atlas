@@ -58,12 +58,41 @@ export async function toggleWalletArchived(id: number) {
   revalidatePath("/more/wallets");
 }
 
+export async function renameWallet(id: number, formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  await supabaseServer().from("wallets").update({ name }).eq("id", id);
+  revalidatePath("/more/wallets");
+}
+
+// Reorder by swapping with the neighbour, then re-numbering sort_order 0..n so the order
+// is always gap-free and tie-free regardless of the seed data.
+export async function moveWallet(id: number, dir: "up" | "down") {
+  const sb = supabaseServer();
+  const { data } = await sb.from("wallets").select("id").order("sort_order").order("id");
+  const list = (data ?? []) as { id: number }[];
+  const i = list.findIndex((w) => w.id === id);
+  const j = dir === "up" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  await Promise.all(list.map((w, k) => sb.from("wallets").update({ sort_order: k }).eq("id", w.id)));
+  revalidatePath("/more/wallets");
+}
+
 // ---- Categories ----
 export async function addCategory(formData: FormData) {
   const kind = String(formData.get("kind") ?? "") as CategoryKind;
   const name = String(formData.get("name") ?? "").trim();
   if (!name || !["income", "expense", "saving", "investment"].includes(kind)) return;
-  await supabaseServer().from("categories").insert({ kind, name });
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("categories")
+    .select("sort_order")
+    .eq("kind", kind)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  const next = (data?.[0]?.sort_order ?? 0) + 1;
+  await sb.from("categories").insert({ kind, name, sort_order: next });
   revalidatePath("/more/categories");
 }
 
@@ -71,6 +100,33 @@ export async function toggleCategoryArchived(id: number) {
   const sb = supabaseServer();
   const { data } = await sb.from("categories").select("archived").eq("id", id).maybeSingle();
   await sb.from("categories").update({ archived: !data?.archived }).eq("id", id);
+  revalidatePath("/more/categories");
+}
+
+export async function renameCategory(id: number, formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  await supabaseServer().from("categories").update({ name }).eq("id", id);
+  revalidatePath("/more/categories");
+}
+
+// Reorder within the category's own kind (re-numbering that kind's sort_order 0..n).
+export async function moveCategory(id: number, dir: "up" | "down") {
+  const sb = supabaseServer();
+  const { data: cat } = await sb.from("categories").select("kind").eq("id", id).maybeSingle();
+  if (!cat) return;
+  const { data } = await sb
+    .from("categories")
+    .select("id")
+    .eq("kind", cat.kind)
+    .order("sort_order")
+    .order("id");
+  const list = (data ?? []) as { id: number }[];
+  const i = list.findIndex((c) => c.id === id);
+  const j = dir === "up" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  await Promise.all(list.map((c, k) => sb.from("categories").update({ sort_order: k }).eq("id", c.id)));
   revalidatePath("/more/categories");
 }
 
