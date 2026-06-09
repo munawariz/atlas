@@ -319,7 +319,7 @@ export async function updateForexTransaction(
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
   revalidatePath("/history");
-  redirect("/history");
+  redirect(`/history?m=${date.slice(0, 7)}-01`);
 }
 
 // Delete a forex buy/sell from the history editor: revert the holding balance, then
@@ -328,7 +328,7 @@ export async function deleteForexTransaction(forexTxnId: number, txnId: number):
   const sb = supabaseServer();
   const { data: old } = await sb
     .from("forex_transactions")
-    .select("account_id, direction, units")
+    .select("account_id, direction, units, occurred_on")
     .eq("id", forexTxnId)
     .maybeSingle();
   if (old) {
@@ -342,7 +342,7 @@ export async function deleteForexTransaction(forexTxnId: number, txnId: number):
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
   revalidatePath("/history");
-  redirect("/history");
+  redirect(old?.occurred_on ? `/history?m=${String(old.occurred_on).slice(0, 7)}-01` : "/history");
 }
 
 // Correct a forex holding's balance directly (no transaction booked).
