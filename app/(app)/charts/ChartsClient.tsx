@@ -30,7 +30,11 @@ const mShort = (mk: string) => monthName(Number(mk.slice(5, 7))).slice(0, 3);
 const mLong = (mk: string) => `${monthName(Number(mk.slice(5, 7)))} ${mk.slice(0, 4)}`;
 
 export default function ChartsClient({ data, categories }: { data: ChartData; categories: Cat[] }) {
+  const months = data.months; // ascending "YYYY-MM-01"
   const [rangeN, setRangeN] = useState(6);
+  const [custom, setCustom] = useState(false);
+  const [customFrom, setCustomFrom] = useState(() => months[Math.max(0, months.length - 6)] ?? months[0] ?? "");
+  const [customTo, setCustomTo] = useState(() => months[months.length - 1] ?? "");
   const [selMonth, setSelMonth] = useState<string | null>(null);
   const [kind, setKind] = useState<Kind>("expense");
   const [selCat, setSelCat] = useState<number | null>(null);
@@ -40,12 +44,24 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
     return (id: number) => (id === 0 ? "Uncategorized" : m.get(id) ?? "—");
   }, [categories]);
 
-  const flows = useMemo(() => (rangeN === Infinity ? data.flows : data.flows.slice(-rangeN)), [data.flows, rangeN]);
-  const visMonths = useMemo(() => new Set(flows.map((f) => f.month)), [flows]);
+  // Custom = an explicit [from..to] window; presets = the trailing N months. (lo/hi keep
+  // it valid even if From is set after To.)
+  const lo = customFrom <= customTo ? customFrom : customTo;
+  const hi = customFrom <= customTo ? customTo : customFrom;
+  const visMonths = useMemo(() => {
+    if (custom) return new Set(months.filter((m) => m >= lo && m <= hi));
+    return new Set(rangeN === Infinity ? months : months.slice(-rangeN));
+  }, [custom, lo, hi, rangeN, months]);
+  const flows = useMemo(() => data.flows.filter((f) => visMonths.has(f.month)), [data.flows, visMonths]);
   const nw = useMemo(() => {
     const pts = data.networth;
+    if (custom) {
+      const inRange = pts.filter((p) => p.month >= lo && p.month <= hi);
+      const before = [...pts].reverse().find((p) => p.month < lo); // leading baseline for the area
+      return before ? [before, ...inRange] : inRange;
+    }
     return rangeN === Infinity ? pts : pts.slice(-(rangeN + 1));
-  }, [data.networth, rangeN]);
+  }, [data.networth, custom, lo, hi, rangeN]);
 
   // keep selected month valid for the current range
   const activeMonth = selMonth && visMonths.has(selMonth) ? selMonth : null;
@@ -141,15 +157,52 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
           <button
             key={r.label}
             type="button"
-            onClick={() => setRangeN(r.n)}
+            onClick={() => {
+              setCustom(false);
+              setRangeN(r.n);
+            }}
             className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-colors ${
-              rangeN === r.n ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
+              !custom && rangeN === r.n ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
             }`}
           >
             {r.label}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setCustom(true)}
+          className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-colors ${
+            custom ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
+          }`}
+        >
+          Custom
+        </button>
       </div>
+      {custom && (
+        <div className="flex items-center gap-2">
+          <select
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            className="field min-w-0 flex-1 py-1.5 text-xs [color-scheme:dark]"
+            aria-label="From month"
+          >
+            {months.map((m) => (
+              <option key={m} value={m} className="bg-ink-2">{mLong(m)}</option>
+            ))}
+          </select>
+          <span className="shrink-0 text-xs text-paper-faint">→</span>
+          <select
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            className="field min-w-0 flex-1 py-1.5 text-xs [color-scheme:dark]"
+            aria-label="To month"
+          >
+            {months.map((m) => (
+              <option key={m} value={m} className="bg-ink-2">{mLong(m)}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* ---------- Net worth ---------- */}
       <section className="card p-4">

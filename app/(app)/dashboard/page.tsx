@@ -95,14 +95,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const investTotal = savInvRows.filter((r) => r.kind === "investment").reduce((a, r) => a + r.amt, 0);
   const maxSavInv = savInvRows.reduce((m, r) => Math.max(m, Math.abs(r.amt)), 0) || 1;
 
-  // Individual "Other" expenses, listed under the Other row (it's a catch-all).
-  const otherCat = [...cats.values()].find((c) => c.kind === "expense" && c.name === "Other");
-  const otherItems = otherCat
-    ? txns
-        .filter((t) => t.type === "expense" && t.category_id === otherCat.id)
-        .map((t) => ({ desc: t.description || "—", amt: t.amount }))
-        .sort((a, b) => b.amt - a.amt)
-    : [];
+  // Individual expenses grouped by category — listed under each row when expanded,
+  // with the wallet each was paid from.
+  const walletName = new Map(wallets.map((w) => [w.id, w.name]));
+  const itemsByCat = new Map<number, { desc: string; amt: number; wallet: string }[]>();
+  for (const t of txns) {
+    if (t.type === "expense" && t.category_id) {
+      const arr = itemsByCat.get(t.category_id) ?? [];
+      arr.push({
+        desc: t.description || "—",
+        amt: t.amount,
+        wallet: t.source_wallet_id ? walletName.get(t.source_wallet_id) ?? "—" : "—",
+      });
+      itemsByCat.set(t.category_id, arr);
+    }
+  }
+  for (const arr of itemsByCat.values()) arr.sort((a, b) => b.amt - a.amt);
 
   // Auto budgets: the configured loan-income category = total expected to collect this
   // month; the configured paylater-expense category = total installments active this month.
@@ -289,33 +297,36 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <section>
           <h2 className="label mb-2.5 text-amber">Where it went</h2>
           <div className="card space-y-3.5 p-4">
-            {spendRows.map((r) => (
-              <div key={r.name}>
-                <div className="mb-1.5 flex justify-between text-xs">
-                  <span className="text-paper">{r.name}</span>
-                  <span className="tabular-nums text-paper-dim">{formatRupiahShort(r.amt)}</span>
-                </div>
-                <Bar pct={(r.amt / maxSpend) * 100} color="bg-clay/85" />
-                {r.id === otherCat?.id && otherItems.length > 0 && (
-                  <details className="group mt-2">
-                    <summary className="inline-flex items-center gap-1 text-[11px] font-medium text-paper-dim transition-colors active:text-paper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 transition-transform">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
-                      </svg>
-                      {otherItems.length} items
-                    </summary>
+            {spendRows.map((r) => {
+              const items = itemsByCat.get(r.id) ?? [];
+              return (
+                <details key={r.id} className="group">
+                  <summary className="cursor-pointer">
+                    <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                      <span className="flex min-w-0 items-center gap-1.5 text-paper">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+                        </svg>
+                        <span className="truncate">{r.name}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums text-paper-dim">{formatRupiahShort(r.amt)}</span>
+                    </div>
+                    <Bar pct={(r.amt / maxSpend) * 100} color="bg-clay/85" />
+                  </summary>
+                  {items.length > 0 && (
                     <div className="mt-2 space-y-1 border-l border-line/70 pl-3">
-                      {otherItems.map((it, i) => (
-                        <div key={i} className="flex justify-between gap-2 text-[11px]">
-                          <span className="truncate text-paper-dim">{it.desc}</span>
+                      {items.map((it, i) => (
+                        <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+                          <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
+                          <span className="shrink-0 text-paper-faint">{it.wallet}</span>
                           <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
                         </div>
                       ))}
                     </div>
-                  </details>
-                )}
-              </div>
-            ))}
+                  )}
+                </details>
+              );
+            })}
           </div>
         </section>
       )}
