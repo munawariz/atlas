@@ -81,7 +81,8 @@ export async function getCategories(includeArchived = false): Promise<Category[]
   if (!includeArchived) q = q.eq("archived", false);
   const { data, error } = await q.order("kind").order("sort_order").order("id");
   if (error) throw error;
-  return (data ?? []) as Category[];
+  // Default `period` so the app works before the column is migrated (everything monthly).
+  return (data ?? []).map((c) => ({ ...c, period: (c as { period?: string }).period ?? "monthly" })) as Category[];
 }
 
 export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[]> {
@@ -93,7 +94,7 @@ export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[
     .order("sort_order")
     .order("id");
   if (error) throw error;
-  return (data ?? []) as Category[];
+  return (data ?? []).map((c) => ({ ...c, period: (c as { period?: string }).period ?? "monthly" })) as Category[];
 }
 
 export async function walletMap(): Promise<Map<number, string>> {
@@ -169,8 +170,11 @@ export async function getTransaction(id: number): Promise<Transaction | null> {
   return (data as Transaction) ?? null;
 }
 
-// Resolve each category's budget for the month: a per-month override (in `budgets`)
-// wins; otherwise the recurring rule with the greatest effective_from <= the month.
+// Resolve each category's budget amount for the month: a per-month override (in `budgets`)
+// wins; otherwise the recurring rule with the greatest effective_from <= the month. The
+// cadence is a property of the category (Category.period) — non-monthly categories never
+// have per-month overrides (those are cleared when the period changes), so a single
+// recurring rule resolves cleanly here. For the dashboard panel, pass the current month.
 export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBudget[]> {
   const sb = supabaseServer();
   const [ov, rec] = await Promise.all([
@@ -195,6 +199,69 @@ export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBud
     amount: ovByCat.has(category_id) ? ovByCat.get(category_id)! : recByCat.get(category_id)!,
     recurring: !ovByCat.has(category_id),
   }));
+}
+
+export interface PeriodActuals {
+  daily: Map<number, number>;
+  weekly: Map<number, number>;
+  monthly: Map<number, number>;
+  yearly: Map<number, number>;
+}
+
+// Boundaries of the period windows that contain `todayIso`. Week runs Monday→Sunday.
+function periodBounds(todayIso: string) {
+  const [y, m, d] = todayIso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const mondayOffset = (dt.getUTCDay() + 6) % 7; // 0 = Monday
+  const ws = new Date(dt);
+  ws.setUTCDate(dt.getUTCDate() - mondayOffset);
+  const we = new Date(ws);
+  we.setUTCDate(ws.getUTCDate() + 6);
+  const iso = (x: Date) => x.toISOString().slice(0, 10);
+  return {
+    today: todayIso,
+    weekStart: iso(ws),
+    weekEnd: iso(we),
+    monthStart: `${todayIso.slice(0, 7)}-01`,
+    yearStart: `${todayIso.slice(0, 4)}-01-01`,
+  };
+}
+
+// Per-category actual in each current period window (anchored to today). Transfers and
+// withdrawals are excluded so each sum matches the budgeted category's own kind.
+export async function getPeriodActuals(todayIso: string): Promise<PeriodActuals> {
+  const b = periodBounds(todayIso);
+  const windowStart = b.weekStart < b.yearStart ? b.weekStart : b.yearStart;
+  const sb = supabaseServer();
+  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null };
+  const rows: Row[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb
+      .from("transactions")
+      .select("occurred_on, type, amount, category_id")
+      .gte("occurred_on", windowStart)
+      .lte("occurred_on", b.today)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw error;
+    const batch = (data ?? []) as Row[];
+    rows.push(...batch);
+    if (batch.length < 1000) break;
+  }
+  const daily = new Map<number, number>();
+  const weekly = new Map<number, number>();
+  const monthly = new Map<number, number>();
+  const yearly = new Map<number, number>();
+  const add = (mp: Map<number, number>, id: number, amt: number) => mp.set(id, (mp.get(id) ?? 0) + amt);
+  for (const r of rows) {
+    if (!r.category_id || r.type === "transfer" || r.type === "withdrawal") continue;
+    const d = r.occurred_on.slice(0, 10);
+    if (d >= b.yearStart) add(yearly, r.category_id, r.amount);
+    if (d >= b.monthStart) add(monthly, r.category_id, r.amount);
+    if (d >= b.weekStart && d <= b.weekEnd) add(weekly, r.category_id, r.amount);
+    if (d === b.today) add(daily, r.category_id, r.amount);
+  }
+  return { daily, weekly, monthly, yearly };
 }
 
 export async function getWalletBalances(monthKey: string): Promise<WalletBalance[]> {

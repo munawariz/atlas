@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems } from "@/lib/data";
-import { formatNumber, formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
+import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
+import type { BudgetPeriod } from "@/lib/types";
 import MonthSwitcher from "@/components/MonthSwitcher";
-import SubmitButton from "@/components/SubmitButton";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
-import { setBudget } from "../actions";
+import BudgetRow from "./BudgetRow";
 
 export const dynamic = "force-dynamic";
 
@@ -50,9 +50,13 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   const autoValue = (id: number) => (id === cicilanCatId ? instFor(cicilanCatId ?? -1) : loanExpected);
 
   // Expected cashflow from the PLAN (budgets): income in, minus expense + saving out.
-  // Effective budget = auto value, else the user budget plus any installment additions.
-  const effBudget = (c: { id: number; name: string; kind: string }) =>
-    isAuto(c.id) ? autoValue(c.id) : (byCat.get(c.id) ?? 0) + instFor(c.id);
+  // Non-monthly budgets are converted to a monthly-equivalent so the estimate is comparable.
+  const monthlyEquiv = (amt: number, p: BudgetPeriod) =>
+    p === "daily" ? amt * 30.4 : p === "weekly" ? amt * 4.345 : p === "yearly" ? amt / 12 : amt;
+  const effBudget = (c: { id: number; period: BudgetPeriod }) => {
+    if (isAuto(c.id)) return autoValue(c.id);
+    return monthlyEquiv(byCat.get(c.id) ?? 0, c.period) + (c.period === "monthly" ? instFor(c.id) : 0);
+  };
   let plannedIncome = 0;
   let plannedExpense = 0;
   let plannedSaving = 0;
@@ -77,7 +81,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
       {/* Planned cashflow for the month (income budget − expense − saving budgets) */}
       <div className="card p-4">
         <div className="flex items-center justify-between">
-          <span className="label">Expected cashflow</span>
+          <span className="label">Expected cashflow · /mo</span>
           <span className={`font-display text-base font-semibold tabular-nums ${cashflow >= 0 ? "text-green" : "text-red"}`}>
             {cashflow >= 0 ? "+" : "−"}
             {formatRupiah(Math.abs(cashflow))}
@@ -127,65 +131,34 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
               </span>
             </div>
           ) : (
-            <form key={c.id} action={setBudget} className="card px-4 py-2.5">
-              <input type="hidden" name="category_id" value={c.id} />
-              <input type="hidden" name="month" value={monthKey} />
-              <div className="flex items-center justify-between gap-3">
-                <span className="shrink-0 text-sm font-medium text-paper">
-                  {c.name}
-                  <span className="ml-1.5 text-[10px] uppercase tracking-wider text-paper-faint">{c.kind}</span>
-                  {recurringSet.has(c.id) && (
-                    <span className="ml-1.5 rounded bg-sky/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-sky">
-                      every mo
-                    </span>
-                  )}
-                </span>
-                <span className="flex items-center gap-2">
-                  <span className="text-xs text-paper-faint">Rp</span>
-                  <input
-                    name="amount"
-                    inputMode="numeric"
-                    defaultValue={byCat.get(c.id) ? formatNumber(byCat.get(c.id)!) : ""}
-                    placeholder="0"
-                    className="w-24 bg-transparent text-right font-display text-sm font-medium tabular-nums text-paper outline-none placeholder:text-paper-faint"
-                  />
-                </span>
-              </div>
-              {instFor(c.id) > 0 && (
-                <p className="mt-1 text-[11px] text-plum">
-                  + {formatRupiah(instFor(c.id))} from installments → effective{" "}
-                  <span className="text-paper-dim">{formatRupiah((byCat.get(c.id) ?? 0) + instFor(c.id))}</span>
-                </p>
-              )}
-              <div className="mt-2 flex items-center justify-end gap-2">
-                <select
-                  name="scope"
-                  defaultValue="forward"
-                  className="rounded-lg border border-line/60 bg-ink-3 px-2 py-1 text-xs text-paper-dim outline-none [color-scheme:dark]"
-                >
-                  <option value="forward">This month →</option>
-                  <option value="all">All months</option>
-                  <option value="month">This month only</option>
-                </select>
-                <SubmitButton
-                  pendingText="Saving…"
-                  className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
-                >
-                  Save
-                </SubmitButton>
-              </div>
-            </form>
+            <BudgetRow
+              key={c.id}
+              id={c.id}
+              name={c.name}
+              kind={c.kind}
+              amount={byCat.get(c.id) ?? 0}
+              period={c.period}
+              recurring={recurringSet.has(c.id)}
+              month={monthKey}
+              instAmount={instFor(c.id)}
+            />
           )
           )
         )}
       </div>
 
       <p className="px-1 text-xs text-paper-faint">
-        Pick a scope when saving: <span className="text-paper-dim">This month →</span> sets it for this month and every
-        month after, <span className="text-paper-dim">All months</span> sets it everywhere, and{" "}
-        <span className="text-paper-dim">This month only</span> overrides just this one. A{" "}
-        <span className="rounded bg-sky/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-sky">every mo</span>{" "}
-        tag means the value comes from a recurring rule.
+        Each category's <span className="text-paper-dim">period</span> (daily, weekly Mon→Sun, monthly, or yearly) is set on
+        the <Link href="/more/categories" className="underline">Categories</Link> page. The amount here is the limit per that
+        period; non-monthly ones are converted to a monthly estimate for the cashflow above.
+      </p>
+
+      <p className="px-1 text-xs text-paper-faint">
+        For daily, weekly and monthly budgets, pick a scope when saving:{" "}
+        <span className="text-paper-dim">This month →</span> sets it for this month and every month after,{" "}
+        <span className="text-paper-dim">This month only</span> sets just this one (monthly also has{" "}
+        <span className="text-paper-dim">All months</span>). <span className="text-paper-dim">Yearly</span> is a single
+        whole-year limit, counted as 1/12 per month in the cashflow.
       </p>
 
       {kind !== "saving" && (

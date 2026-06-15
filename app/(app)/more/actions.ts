@@ -110,6 +110,45 @@ export async function renameCategory(id: number, formData: FormData) {
   revalidatePath("/more/categories");
 }
 
+// Bind a budgeting cadence to a category. Daily/weekly/monthly all share the month-scoped
+// storage, so switching among them just reinterprets the amount. Switching to YEARLY
+// collapses the budget to a single whole-year rule (latest amount) and drops per-month
+// overrides/versioning, since yearly has no month scope.
+export async function setCategoryPeriod(id: number, periodRaw: string) {
+  const period = ["daily", "weekly", "monthly", "yearly"].includes(periodRaw) ? periodRaw : "monthly";
+  const sb = supabaseServer();
+  await sb.from("categories").update({ period }).eq("id", id);
+
+  if (period === "yearly") {
+    // Carry over the latest budget amount (recurring rule, else most recent override).
+    let amount = 0;
+    const { data: rules } = await sb
+      .from("recurring_budgets")
+      .select("amount")
+      .eq("category_id", id)
+      .order("effective_from", { ascending: false })
+      .limit(1);
+    if (rules && rules.length) {
+      amount = rules[0].amount as number;
+    } else {
+      const { data: ov } = await sb
+        .from("budgets")
+        .select("amount")
+        .eq("category_id", id)
+        .order("month", { ascending: false })
+        .limit(1);
+      if (ov && ov.length) amount = ov[0].amount as number;
+    }
+    await sb.from("recurring_budgets").delete().eq("category_id", id);
+    await sb.from("budgets").delete().eq("category_id", id);
+    if (amount > 0) await sb.from("recurring_budgets").insert({ category_id: id, amount, effective_from: "1900-01-01" });
+  }
+
+  revalidatePath("/more/categories");
+  revalidatePath("/more/budgets");
+  revalidatePath("/dashboard");
+}
+
 // Reorder within the category's own kind (re-numbering that kind's sort_order 0..n).
 export async function moveCategory(id: number, dir: "up" | "down") {
   const sb = supabaseServer();
@@ -142,7 +181,13 @@ export async function setBudget(formData: FormData) {
   if (!category_id || !/^\d{4}-\d{2}-01$/.test(month)) return;
   const sb = supabaseServer();
 
-  if (scope === "all") {
+  // The cadence is bound to the category (set on the Categories page). Daily/weekly/monthly
+  // budgets use the month scope (this month only / forward / all); yearly is a single
+  // whole-year limit. (select("*") tolerates the period column not being migrated yet.)
+  const { data: cat } = await sb.from("categories").select("*").eq("id", category_id).maybeSingle();
+  const period = ((cat as { period?: string } | null)?.period) ?? "monthly";
+
+  if (period === "yearly" || scope === "all") {
     // One recurring rule from the dawn of time; wipe every override and other rule.
     await sb.from("recurring_budgets").delete().eq("category_id", category_id);
     await sb.from("budgets").delete().eq("category_id", category_id);

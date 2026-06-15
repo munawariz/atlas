@@ -14,6 +14,7 @@ export interface Category {
   name: string;
   sort_order: number;
   archived: boolean;
+  period: BudgetPeriod; // budget cadence bound to this category
 }
 
 export interface Transaction {
@@ -51,8 +52,18 @@ export interface RecurringBudget {
   effective_from: string;
 }
 
-// The resolved budget for a given month: a per-month override wins, otherwise the
-// recurring rule in effect. `recurring` is true when the value came from a rule.
+export type BudgetPeriod = "daily" | "weekly" | "monthly" | "yearly";
+
+export const BUDGET_PERIODS: { value: BudgetPeriod; label: string; per: string }[] = [
+  { value: "daily", label: "Daily", per: "day" },
+  { value: "weekly", label: "Weekly", per: "week" },
+  { value: "monthly", label: "Monthly", per: "month" },
+  { value: "yearly", label: "Yearly", per: "year" },
+];
+
+// The resolved budget amount for a category in a given month: a per-month override wins,
+// otherwise the recurring rule in effect. `recurring` is true when it came from a rule.
+// The cadence lives on the category (Category.period), not here.
 export interface EffectiveBudget {
   category_id: number;
   amount: number;

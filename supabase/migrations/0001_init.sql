@@ -73,6 +73,12 @@ create table if not exists recurring_budgets (
   unique (category_id, effective_from)
 );
 
+-- Budget cadence bound to each category: 'daily' | 'weekly' | 'monthly' | 'yearly'
+-- (set on the Categories page). Monthly keeps the per-month override + effective_from
+-- versioning; the other periods use a single recurring rule whose amount is the
+-- per-period limit. Weeks run Monday→Sunday.
+alter table categories add column if not exists period text not null default 'monthly';
+
 -- Key/value app settings. Lets a self-hosting clone map auto-transaction categories &
 -- default wallets to their own setup instead of hardcoded names (see lib/settings.ts).
 create table if not exists app_settings (

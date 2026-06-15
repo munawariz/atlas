@@ -3,6 +3,7 @@ import { getCategories } from "@/lib/data";
 import type { CategoryKind } from "@/lib/types";
 import SubmitButton from "@/components/SubmitButton";
 import ManageRow from "../ManageRow";
+import CategoryPeriodSelect from "./CategoryPeriodSelect";
 import { addCategory, moveCategory, renameCategory, toggleCategoryArchived } from "../actions";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +56,10 @@ export default async function CategoriesPage() {
                     move={moveCategory}
                     toggleArchive={toggleCategoryArchived}
                   />
+                  <div className="flex items-center justify-end gap-2 px-4 pb-2.5">
+                    <span className="text-[10px] uppercase tracking-wider text-paper-faint">Budget period</span>
+                    <CategoryPeriodSelect id={c.id} period={c.period} />
+                  </div>
                 </div>
               ))}
             </div>
