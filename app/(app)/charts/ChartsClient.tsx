@@ -20,6 +20,7 @@ const KIND_COLOR: Record<Kind, string> = { expense: C.red, income: C.green, savi
 const PALETTE = [C.red, C.amber, C.sky, C.plum, C.green, "#db61a2", "#f0883e", "#56d364", "#79c0ff", "#d2a8ff"];
 
 const RANGES = [
+  { label: "1M", n: 1 },
   { label: "3M", n: 3 },
   { label: "6M", n: 6 },
   { label: "12M", n: 12 },
@@ -28,11 +29,18 @@ const RANGES = [
 
 const mShort = (mk: string) => monthName(Number(mk.slice(5, 7))).slice(0, 3);
 const mLong = (mk: string) => `${monthName(Number(mk.slice(5, 7)))} ${mk.slice(0, 4)}`;
+// Shift a YYYY-MM-01 month key by `delta` months.
+const addMonths = (mk: string, delta: number) => {
+  const [y, mo] = mk.split("-").map(Number);
+  const idx = y * 12 + (mo - 1) + delta;
+  return `${Math.floor(idx / 12)}-${String((idx % 12) + 1).padStart(2, "0")}-01`;
+};
 
 export default function ChartsClient({ data, categories }: { data: ChartData; categories: Cat[] }) {
   const months = data.months; // ascending "YYYY-MM-01"
   const [rangeN, setRangeN] = useState(6);
   const [custom, setCustom] = useState(false);
+  const [anchor, setAnchor] = useState(() => months[months.length - 1] ?? ""); // end month for presets
   const [customFrom, setCustomFrom] = useState(() => months[Math.max(0, months.length - 6)] ?? months[0] ?? "");
   const [customTo, setCustomTo] = useState(() => months[months.length - 1] ?? "");
   const [selMonth, setSelMonth] = useState<string | null>(null);
@@ -44,24 +52,27 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
     return (id: number) => (id === 0 ? "Uncategorized" : m.get(id) ?? "—");
   }, [categories]);
 
-  // Custom = an explicit [from..to] window; presets = the trailing N months. (lo/hi keep
-  // it valid even if From is set after To.)
+  // Custom = an explicit [from..to] window; presets = the N months ENDING at `anchor`
+  // (1M = just that month). lo/hi keep custom valid even if From is set after To.
   const lo = customFrom <= customTo ? customFrom : customTo;
   const hi = customFrom <= customTo ? customTo : customFrom;
+  const presetLo = rangeN === Infinity ? months[0] ?? "" : addMonths(anchor, -(rangeN - 1));
+  const presetHi = anchor;
   const visMonths = useMemo(() => {
     if (custom) return new Set(months.filter((m) => m >= lo && m <= hi));
-    return new Set(rangeN === Infinity ? months : months.slice(-rangeN));
-  }, [custom, lo, hi, rangeN, months]);
+    if (rangeN === Infinity) return new Set(months);
+    return new Set(months.filter((m) => m >= presetLo && m <= presetHi));
+  }, [custom, lo, hi, rangeN, presetLo, presetHi, months]);
   const flows = useMemo(() => data.flows.filter((f) => visMonths.has(f.month)), [data.flows, visMonths]);
   const nw = useMemo(() => {
     const pts = data.networth;
-    if (custom) {
-      const inRange = pts.filter((p) => p.month >= lo && p.month <= hi);
-      const before = [...pts].reverse().find((p) => p.month < lo); // leading baseline for the area
-      return before ? [before, ...inRange] : inRange;
-    }
-    return rangeN === Infinity ? pts : pts.slice(-(rangeN + 1));
-  }, [data.networth, custom, lo, hi, rangeN]);
+    if (!custom && rangeN === Infinity) return pts;
+    const wlo = custom ? lo : presetLo;
+    const whi = custom ? hi : presetHi;
+    const inRange = pts.filter((p) => p.month >= wlo && p.month <= whi);
+    const before = [...pts].reverse().find((p) => p.month < wlo); // leading baseline for the area
+    return before ? [before, ...inRange] : inRange;
+  }, [data.networth, custom, lo, hi, rangeN, presetLo, presetHi]);
 
   // keep selected month valid for the current range
   const activeMonth = selMonth && visMonths.has(selMonth) ? selMonth : null;
@@ -178,6 +189,21 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
           Custom
         </button>
       </div>
+      {!custom && rangeN !== Infinity && (
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-xs text-paper-faint">{rangeN === 1 ? "Month" : `${rangeN}M ending`}</span>
+          <select
+            value={anchor}
+            onChange={(e) => setAnchor(e.target.value)}
+            className="field min-w-0 flex-1 py-1.5 text-xs [color-scheme:dark]"
+            aria-label="Anchor month"
+          >
+            {months.map((m) => (
+              <option key={m} value={m} className="bg-ink-2">{mLong(m)}</option>
+            ))}
+          </select>
+        </div>
+      )}
       {custom && (
         <div className="flex items-center gap-2">
           <select
