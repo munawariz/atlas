@@ -7,14 +7,16 @@ import {
   getMonthTransactions,
   getPaylaterItems,
   getPaylaterPayments,
+  getPeriodActuals,
   getWallets,
   prevMonthKey,
 } from "@/lib/data";
+import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
 import { forexUnitsAt, getForexAccounts, getForexRate } from "@/lib/forex";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import ForexToggleValue from "@/components/ForexToggleValue";
 import { formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
-import MonthSwitcher from "@/components/MonthSwitcher";
+import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
 import Link from "next/link";
 import { ChartIcon } from "@/components/icons";
@@ -30,27 +32,35 @@ function Bar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
-export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ d?: string }> }) {
   const sp = await searchParams;
-  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+  const today = todayISO();
+  // The stats page is scoped to a single DAY (?d=YYYY-MM-DD, default today). The selected
+  // day's month drives the monthly sections + budget panel.
+  const selectedDay = /^\d{4}-\d{2}-\d{2}$/.test(sp.d ?? "") ? (sp.d as string) : today;
+  const monthKey = `${selectedDay.slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, cats, wallets, paylater, paylaterPaid, loans, payments, derivedNow, derivedPrev, forexAccounts, forexUnits, settings] =
+  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, loans, payments, derivedStart, forexAccounts, forexUnits, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
+      getPeriodActuals(selectedDay),
       categoryMap(),
       getWallets(),
       getPaylaterItems(),
       getPaylaterPayments(),
       getLoans(),
       getLoanPayments(),
-      deriveWalletBalances(monthKey),
-      deriveWalletBalances(prevMonthKey(monthKey)),
+      deriveWalletBalances(prevMonthKey(monthKey)), // per-wallet balance at the start of this month
       getForexAccounts(),
       forexUnitsAt(monthKey),
       getSettings(),
     ]);
+
+  // This day's transactions, and everything up to & including it (for as-of-day net worth).
+  const dayTxns = txns.filter((t) => t.occurred_on.slice(0, 10) === selectedDay);
+  const upToDay = txns.filter((t) => t.occurred_on.slice(0, 10) <= selectedDay);
   const fxCurrencies = [...new Set(forexAccounts.map((a) => a.currency))];
   const fxRates = new Map<string, number>();
   await Promise.all(fxCurrencies.map(async (c) => fxRates.set(c, await getForexRate(c))));
@@ -62,12 +72,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .filter((a) => a.units !== 0);
 
   const sum = (t: typeof txns) => t.reduce((a, x) => a + x.amount, 0);
-  const totalIncome = sum(txns.filter((t) => t.type === "income"));
-  const totalExpense = sum(txns.filter((t) => t.type === "expense"));
+  const totalIncome = sum(dayTxns.filter((t) => t.type === "income"));
+  const totalExpense = sum(dayTxns.filter((t) => t.type === "expense"));
   const net = totalIncome - totalExpense;
 
   const byCat = new Map<number, number>();
-  for (const t of txns) {
+  for (const t of dayTxns) {
     if (t.type === "expense" && t.category_id) byCat.set(t.category_id, (byCat.get(t.category_id) ?? 0) + t.amount);
   }
   const spendRows = [...byCat.entries()]
@@ -99,7 +109,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // with the wallet each was paid from.
   const walletName = new Map(wallets.map((w) => [w.id, w.name]));
   const itemsByCat = new Map<number, { desc: string; amt: number; wallet: string }[]>();
-  for (const t of txns) {
+  for (const t of dayTxns) {
     if (t.type === "expense" && t.category_id) {
       const arr = itemsByCat.get(t.category_id) ?? [];
       arr.push({
@@ -112,8 +122,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   for (const arr of itemsByCat.values()) arr.sort((a, b) => b.amt - a.amt);
 
-  // Auto budgets: the configured loan-income category = total expected to collect this
-  // month; the configured paylater-expense category = total installments active this month.
+  // Auto budgets (monthly): the configured loan-income category = total expected to
+  // collect in the selected day's month; the paylater-expense category = installments
+  // active that month.
   const catList = [...cats.values()];
   const loanById = new Map(loans.map((l) => [l.id, l]));
   const hutangCatId = mappedCategoryId(settings, catList, "cat_loan", "Hutang", "income");
@@ -121,8 +132,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  // Each active installment contributes its monthly amount to its category's budget
-  // (default paylater category). Custom categories get it ADDED on top of the user budget.
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
     if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
@@ -130,32 +139,67 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
   }
 
-  const budgetByCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
-  if (hutangCatId) budgetByCat.set(hutangCatId, loanExpected); // override with auto value
-  for (const [catId, amt] of instByCat) {
-    if (catId === cicilanCatId) budgetByCat.set(catId, amt); // paylater category = installments only
-    else budgetByCat.set(catId, (budgetByCat.get(catId) ?? 0) + amt); // custom: add on top of user budget
+  // Budget vs actual, grouped by cadence and measured against the period instance that
+  // contains the selected day (that day / its Mon–Sun week / its month / its year).
+  type BRow = { name: string; budget: number; actual: number; pct: number; auto: boolean };
+  const budgetGroups: Record<BudgetPeriod, BRow[]> = { daily: [], weekly: [], monthly: [], yearly: [] };
+  const monthlyByCat = new Map<number, number>();
+  for (const b of budgets) {
+    if (b.category_id === hutangCatId || b.category_id === cicilanCatId) continue; // auto rows handled below
+    const cat = cats.get(b.category_id);
+    if (!cat || b.amount <= 0) continue;
+    if (cat.period === "monthly") {
+      monthlyByCat.set(b.category_id, b.amount);
+    } else {
+      const actual = periodActuals[cat.period].get(b.category_id) ?? 0;
+      budgetGroups[cat.period].push({ name: cat.name, budget: b.amount, actual, pct: b.amount ? (actual / b.amount) * 100 : 0, auto: false });
+    }
   }
+  // Monthly group merges user budgets + auto values + installment additions.
+  if (hutangCatId) monthlyByCat.set(hutangCatId, loanExpected);
+  for (const [catId, amt] of instByCat) {
+    if (catId === cicilanCatId) monthlyByCat.set(catId, amt); // paylater category = installments only
+    else monthlyByCat.set(catId, (monthlyByCat.get(catId) ?? 0) + amt); // custom: add on top
+  }
+  for (const [catId, amount] of monthlyByCat) {
+    const cat = cats.get(catId);
+    if (!cat || amount <= 0) continue;
+    const actual = periodActuals.monthly.get(catId) ?? 0;
+    budgetGroups.monthly.push({
+      name: cat.name,
+      budget: amount,
+      actual,
+      pct: amount ? (actual / amount) * 100 : 0,
+      auto: catId === hutangCatId || catId === cicilanCatId,
+    });
+  }
+  for (const k of ["daily", "weekly", "monthly", "yearly"] as BudgetPeriod[]) {
+    budgetGroups[k].sort((a, b) => b.budget - a.budget);
+  }
+  const hasBudgets = BUDGET_PERIODS.some((p) => budgetGroups[p.value].length > 0);
 
-  const budgetRows = [...budgetByCat.entries()]
-    .map(([catId, amount]) => {
-      const cat = cats.get(catId);
-      if (!cat) return null;
-      const actual = sum(txns.filter((t) => t.type === cat.kind && t.category_id === catId));
-      return {
-        name: cat.name,
-        budget: amount,
-        actual,
-        pct: amount ? (actual / amount) * 100 : 0,
-        auto: catId === hutangCatId || catId === cicilanCatId,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null && x.budget > 0)
-    .sort((a, b) => b.budget - a.budget);
-
-  const netWorthNow = wallets.reduce((a, w) => a + (derivedNow.get(w.id) ?? 0), 0); // IDR only — forex excluded
-  const netWorthPrev = wallets.reduce((a, w) => a + (derivedPrev.get(w.id) ?? 0), 0);
-  const netWorthDelta = netWorthNow - netWorthPrev;
+  // Net worth as of the END of the selected day: start-of-month balances + this month's
+  // wallet moves up to & including the day. (IDR wallets only — forex is its own module.)
+  const derivedDay = new Map(derivedStart);
+  const bumpWallet = (id: number | null, amt: number) => {
+    if (id) derivedDay.set(id, (derivedDay.get(id) ?? 0) + amt);
+  };
+  for (const t of upToDay) {
+    if (t.type === "expense") bumpWallet(t.source_wallet_id, -t.amount);
+    else if (t.type === "income" || t.type === "withdrawal") bumpWallet(t.dest_wallet_id, t.amount);
+    else if (t.type === "saving" || t.type === "investment") bumpWallet(t.source_wallet_id, -t.amount);
+    else if (t.type === "transfer") {
+      bumpWallet(t.source_wallet_id, -t.amount);
+      bumpWallet(t.dest_wallet_id, t.amount);
+    }
+  }
+  const netWorthNow = wallets.reduce((a, w) => a + (derivedDay.get(w.id) ?? 0), 0);
+  // The selected day's net change to wallet balances (income/withdrawal in; the rest out).
+  const dayDelta = dayTxns.reduce((s, t) => {
+    if (t.type === "income" || t.type === "withdrawal") return s + t.amount;
+    if (t.type === "expense" || t.type === "saving" || t.type === "investment") return s - t.amount;
+    return s;
+  }, 0);
   const hasAnyBalance = netWorthNow !== 0 || forexLines.length > 0;
 
   const paylaterPaidSet = new Set(paylaterPaid.map((p) => `${p.item_id}:${p.month}`));
@@ -180,7 +224,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   return (
     <div className="privacy-scope stagger space-y-5 pt-4">
       <RefreshOnFocus />
-      <MonthSwitcher monthKey={monthKey} />
+      <DaySwitcher day={selectedDay} />
 
       {/* Networth hero */}
       <div className="card relative overflow-hidden p-6">
@@ -194,16 +238,16 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <ChartIcon className="h-3.5 w-3.5" /> Charts
           </Link>
         </div>
-        <div className="label">Networth · {monthName(m)}</div>
+        <div className="label">Networth · end of day</div>
         <div className="priv-left mt-1.5 font-display font-medium leading-none tabular-nums text-paper text-[clamp(1.9rem,8.5vw,2.6rem)]">
           {formatRupiah(netWorthNow)}
         </div>
-        {netWorthPrev !== 0 && (
-          <div className={`mt-2 text-sm font-medium ${netWorthDelta >= 0 ? "text-jade" : "text-clay"}`}>
+        {dayTxns.length > 0 && (
+          <div className={`mt-2 text-sm font-medium ${dayDelta >= 0 ? "text-jade" : "text-clay"}`}>
             <span className="priv-left tabular-nums">
-              {netWorthDelta >= 0 ? "▲" : "▼"} {formatRupiahShort(Math.abs(netWorthDelta))}
+              {dayDelta >= 0 ? "▲" : "▼"} {formatRupiahShort(Math.abs(dayDelta))}
             </span>
-            <span className="text-paper-faint"> vs last month</span>
+            <span className="text-paper-faint"> on this day</span>
           </div>
         )}
         {!hasAnyBalance && (
@@ -219,7 +263,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               {wallets.map((w) => (
                 <div key={w.id} className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="text-paper-dim">{w.name}</span>
-                  <span className="tabular-nums text-paper">{formatNumber(derivedNow.get(w.id) ?? 0)}</span>
+                  <span className="tabular-nums text-paper">{formatNumber(derivedDay.get(w.id) ?? 0)}</span>
                 </div>
               ))}
             </div>
@@ -265,29 +309,41 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         ))}
       </div>
 
-      {/* Budget vs actual */}
-      {budgetRows.length > 0 && (
+      {/* Budget vs actual — grouped by period, measured against the current day/week/month/year */}
+      {hasBudgets && (
         <section>
           <h2 className="label mb-2.5 text-amber">Budget vs actual</h2>
-          <div className="card space-y-3.5 p-4">
-            {budgetRows.map((r) => (
-              <div key={r.name}>
-                <div className="mb-1.5 flex justify-between text-xs">
-                  <span className="text-paper">
-                    {r.name}
-                    {r.auto && (
-                      <span className="ml-1.5 rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
-                        auto
-                      </span>
-                    )}
-                  </span>
-                  <span className="tabular-nums text-paper-dim">
-                    {formatRupiahShort(r.actual)} / {formatRupiahShort(r.budget)}
-                  </span>
+          <div className="space-y-3">
+            {BUDGET_PERIODS.map((p) =>
+              budgetGroups[p.value].length === 0 ? null : (
+                <div key={p.value} className="card p-4">
+                  <div className="mb-2.5 flex items-baseline justify-between">
+                    <span className="text-sm font-medium text-paper">{p.label}</span>
+                    <span className="text-[10px] uppercase tracking-wider text-paper-faint">this {p.per}</span>
+                  </div>
+                  <div className="space-y-3.5">
+                    {budgetGroups[p.value].map((r) => (
+                      <div key={r.name}>
+                        <div className="mb-1.5 flex justify-between text-xs">
+                          <span className="text-paper">
+                            {r.name}
+                            {r.auto && (
+                              <span className="ml-1.5 rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
+                                auto
+                              </span>
+                            )}
+                          </span>
+                          <span className="tabular-nums text-paper-dim">
+                            {formatRupiahShort(r.actual)} / {formatRupiahShort(r.budget)}
+                          </span>
+                        </div>
+                        <Bar pct={r.pct} color={r.pct > 100 ? "bg-clay" : "bg-green"} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <Bar pct={r.pct} color={r.pct > 100 ? "bg-clay" : "bg-green"} />
-              </div>
-            ))}
+              )
+            )}
           </div>
         </section>
       )}
@@ -335,7 +391,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       {savInvRows.length > 0 && (
         <section>
           <div className="mb-2.5 flex items-center justify-between">
-            <h2 className="label text-amber">Saved &amp; invested · net</h2>
+            <h2 className="label text-amber">Saved &amp; invested · {monthName(m)}</h2>
             <Link href="/savings" className="text-[11px] text-paper-dim active:text-paper">Balances ›</Link>
           </div>
           <div className="mb-2.5 grid grid-cols-2 gap-2.5">
