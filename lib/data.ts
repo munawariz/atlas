@@ -2,6 +2,7 @@ import "server-only";
 import { supabaseServer } from "./supabaseServer";
 import { todayISO } from "./format";
 import type {
+  BudgetPeriod,
   EffectiveBudget,
   Category,
   CategoryKind,
@@ -201,11 +202,23 @@ export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBud
   }));
 }
 
+// One transaction backing a budget's actual, for the expandable detail on the dashboard.
+export interface BudgetActualItem {
+  desc: string;
+  amt: number;
+  walletId: number | null;
+  date: string; // YYYY-MM-DD
+}
+
 export interface PeriodActuals {
   daily: Map<number, number>;
   weekly: Map<number, number>;
   monthly: Map<number, number>;
   yearly: Map<number, number>;
+  // The individual transactions behind each (period, category) total, so a budget row can
+  // expand into its entries. Same windows as the totals above; a single txn can appear in
+  // several periods (e.g. today is in daily/weekly/monthly/yearly).
+  items: Record<BudgetPeriod, Map<number, BudgetActualItem[]>>;
 }
 
 // Boundaries of the period windows that contain `todayIso`. Week runs Monday→Sunday.
@@ -227,18 +240,27 @@ function periodBounds(todayIso: string) {
   };
 }
 
-// Per-category actual in each current period window (anchored to today). Transfers and
-// withdrawals are excluded so each sum matches the budgeted category's own kind.
+// Per-category actual in each current period window (anchored to today), plus the
+// individual transactions behind each total. Transfers and withdrawals are excluded so
+// each sum matches the budgeted category's own kind.
 export async function getPeriodActuals(todayIso: string): Promise<PeriodActuals> {
   const b = periodBounds(todayIso);
   const windowStart = b.weekStart < b.yearStart ? b.weekStart : b.yearStart;
   const sb = supabaseServer();
-  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null };
+  type Row = {
+    occurred_on: string;
+    type: TxnType;
+    amount: number;
+    category_id: number | null;
+    description: string | null;
+    source_wallet_id: number | null;
+    dest_wallet_id: number | null;
+  };
   const rows: Row[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb
       .from("transactions")
-      .select("occurred_on, type, amount, category_id")
+      .select("occurred_on, type, amount, category_id, description, source_wallet_id, dest_wallet_id")
       .gte("occurred_on", windowStart)
       .lte("occurred_on", b.today)
       .order("id")
@@ -252,16 +274,37 @@ export async function getPeriodActuals(todayIso: string): Promise<PeriodActuals>
   const weekly = new Map<number, number>();
   const monthly = new Map<number, number>();
   const yearly = new Map<number, number>();
+  const items: Record<BudgetPeriod, Map<number, BudgetActualItem[]>> = {
+    daily: new Map(),
+    weekly: new Map(),
+    monthly: new Map(),
+    yearly: new Map(),
+  };
   const add = (mp: Map<number, number>, id: number, amt: number) => mp.set(id, (mp.get(id) ?? 0) + amt);
+  const addItem = (period: BudgetPeriod, id: number, it: BudgetActualItem) => {
+    const arr = items[period].get(id) ?? [];
+    arr.push(it);
+    items[period].set(id, arr);
+  };
   for (const r of rows) {
     if (!r.category_id || r.type === "transfer" || r.type === "withdrawal") continue;
     const d = r.occurred_on.slice(0, 10);
-    if (d >= b.yearStart) add(yearly, r.category_id, r.amount);
-    if (d >= b.monthStart) add(monthly, r.category_id, r.amount);
-    if (d >= b.weekStart && d <= b.weekEnd) add(weekly, r.category_id, r.amount);
-    if (d === b.today) add(daily, r.category_id, r.amount);
+    const it: BudgetActualItem = {
+      desc: r.description?.trim() || "—",
+      amt: r.amount,
+      walletId: r.source_wallet_id ?? r.dest_wallet_id ?? null,
+      date: d,
+    };
+    if (d >= b.yearStart) { add(yearly, r.category_id, r.amount); addItem("yearly", r.category_id, it); }
+    if (d >= b.monthStart) { add(monthly, r.category_id, r.amount); addItem("monthly", r.category_id, it); }
+    if (d >= b.weekStart && d <= b.weekEnd) { add(weekly, r.category_id, r.amount); addItem("weekly", r.category_id, it); }
+    if (d === b.today) { add(daily, r.category_id, r.amount); addItem("daily", r.category_id, it); }
   }
-  return { daily, weekly, monthly, yearly };
+  // Biggest entries first within each list (matches the rest of the dashboard).
+  for (const period of ["daily", "weekly", "monthly", "yearly"] as BudgetPeriod[]) {
+    for (const arr of items[period].values()) arr.sort((x, y) => y.amt - x.amt);
+  }
+  return { daily, weekly, monthly, yearly, items };
 }
 
 export async function getWalletBalances(monthKey: string): Promise<WalletBalance[]> {

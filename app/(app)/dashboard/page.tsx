@@ -15,7 +15,7 @@ import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
 import { forexUnitsAt, getForexAccounts, getForexRate } from "@/lib/forex";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import ForexToggleValue from "@/components/ForexToggleValue";
-import { formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
+import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
 import Link from "next/link";
@@ -141,7 +141,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   // Budget vs actual, grouped by cadence and measured against the period instance that
   // contains the selected day (that day / its Mon–Sun week / its month / its year).
-  type BRow = { name: string; budget: number; actual: number; pct: number; auto: boolean };
+  type BRow = { id: number; name: string; budget: number; actual: number; pct: number; auto: boolean };
   const budgetGroups: Record<BudgetPeriod, BRow[]> = { daily: [], weekly: [], monthly: [], yearly: [] };
   const monthlyByCat = new Map<number, number>();
   for (const b of budgets) {
@@ -152,7 +152,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       monthlyByCat.set(b.category_id, b.amount);
     } else {
       const actual = periodActuals[cat.period].get(b.category_id) ?? 0;
-      budgetGroups[cat.period].push({ name: cat.name, budget: b.amount, actual, pct: b.amount ? (actual / b.amount) * 100 : 0, auto: false });
+      budgetGroups[cat.period].push({ id: b.category_id, name: cat.name, budget: b.amount, actual, pct: b.amount ? (actual / b.amount) * 100 : 0, auto: false });
     }
   }
   // Monthly group merges user budgets + auto values + installment additions.
@@ -166,6 +166,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     if (!cat || amount <= 0) continue;
     const actual = periodActuals.monthly.get(catId) ?? 0;
     budgetGroups.monthly.push({
+      id: catId,
       name: cat.name,
       budget: amount,
       actual,
@@ -322,24 +323,48 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
                     <span className="text-[10px] uppercase tracking-wider text-paper-faint">this {p.per}</span>
                   </div>
                   <div className="space-y-3.5">
-                    {budgetGroups[p.value].map((r) => (
-                      <div key={r.name}>
-                        <div className="mb-1.5 flex justify-between text-xs">
-                          <span className="text-paper">
-                            {r.name}
-                            {r.auto && (
-                              <span className="ml-1.5 rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
-                                auto
-                              </span>
-                            )}
-                          </span>
-                          <span className="tabular-nums text-paper-dim">
-                            {formatRupiahShort(r.actual)} / {formatRupiahShort(r.budget)}
-                          </span>
-                        </div>
-                        <Bar pct={r.pct} color={r.pct > 100 ? "bg-clay" : "bg-green"} />
-                      </div>
-                    ))}
+                    {budgetGroups[p.value].map((r) => {
+                      const items = periodActuals.items[p.value].get(r.id) ?? [];
+                      const header = (
+                        <>
+                          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+                            <span className="flex min-w-0 items-center gap-1.5 text-paper">
+                              {items.length > 0 && (
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+                                </svg>
+                              )}
+                              <span className="truncate">{r.name}</span>
+                              {r.auto && (
+                                <span className="rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
+                                  auto
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-paper-dim">
+                              {formatRupiahShort(r.actual)} / {formatRupiahShort(r.budget)}
+                            </span>
+                          </div>
+                          <Bar pct={r.pct} color={r.pct > 100 ? "bg-clay" : "bg-green"} />
+                        </>
+                      );
+                      return items.length > 0 ? (
+                        <details key={r.id} className="group">
+                          <summary className="cursor-pointer">{header}</summary>
+                          <div className="mt-2 space-y-1 border-l border-line/70 pl-3">
+                            {items.map((it, i) => (
+                              <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+                                <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
+                                <span className="shrink-0 text-paper-faint">{formatDateShort(it.date)}</span>
+                                <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : (
+                        <div key={r.id}>{header}</div>
+                      );
+                    })}
                   </div>
                 </div>
               )
