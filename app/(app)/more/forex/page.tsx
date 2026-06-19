@@ -54,6 +54,8 @@ export default async function ForexPage() {
         const hasValue = rate > 0 && a.units > 0;
         const pl = value - invested;
         const plPct = hasCost && hasValue ? (pl / invested) * 100 : null;
+        // Realized gain/loss already booked from this holding's sells (income/expense).
+        const realized = (txnsByAccount.get(a.id) ?? []).reduce((s, t) => s + (t.realized_pl ?? 0), 0);
         return (
           <div key={a.id} className="space-y-2">
             <div className="card p-4">
@@ -111,6 +113,15 @@ export default async function ForexPage() {
                   {" "}/ {a.currency}
                 </div>
               )}
+              {realized !== 0 && (
+                <div className="mt-1 text-[11px] text-paper-faint">
+                  Realized{" "}
+                  <span className={`tabular-nums ${realized >= 0 ? "text-green" : "text-clay"}`}>
+                    {realized >= 0 ? "+" : "−"}{formatRupiah(Math.abs(realized))}
+                  </span>{" "}
+                  booked to date
+                </div>
+              )}
 
               <form action={setForexUnits.bind(null, a.id)} className="mt-3 flex items-center gap-2">
                 <span className="text-xs text-paper-faint">Set balance</span>
@@ -160,7 +171,15 @@ export default async function ForexPage() {
                         <div className="text-sm font-medium text-paper">
                           {t.direction === "buy" ? "Buy" : "Sell"} {fmtUnits(t.units)} {currencyById.get(t.account_id) ?? ""}
                         </div>
-                        <div className="text-xs text-paper-dim">{t.wallet_id ? ws.get(t.wallet_id) : "—"}</div>
+                        <div className="text-xs text-paper-dim">
+                          {t.wallet_id ? ws.get(t.wallet_id) : "—"}
+                          {t.direction === "sell" && t.realized_pl != null && t.realized_pl !== 0 && (
+                            <span className={t.realized_pl >= 0 ? "text-green" : "text-clay"}>
+                              {" · "}{t.realized_pl >= 0 ? "profit " : "loss "}
+                              {formatRupiah(Math.abs(t.realized_pl)).replace("Rp", "").trim()}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className={`shrink-0 font-display text-sm font-medium tabular-nums ${t.direction === "buy" ? "text-clay" : "text-green"}`}>
                         {t.direction === "buy" ? "−" : "+"}{formatRupiah(t.idr).replace("Rp", "").trim()}

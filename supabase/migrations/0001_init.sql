@@ -159,7 +159,11 @@ create table if not exists forex_accounts (
   units    numeric not null default 0  -- current balance in the foreign currency
 );
 
--- Per-month log of forex moves (buy = IDR→currency, sell = currency→IDR).
+-- Per-month log of forex moves (buy = IDR→currency, sell = currency→IDR). A buy books an
+-- investment from the wallet into the "Forex" bucket; a sell returns the cost basis to the
+-- wallet (withdrawal) and books the realized P/L (Forex Profit income / Forex Loss expense),
+-- mirroring the stock_trades module. `txn_id` is the buy/cost-basis ledger row, `pl_txn_id`
+-- the realized-P/L row, `realized_pl` the proceeds − cost basis on a sell.
 create table if not exists forex_transactions (
   id          bigint generated always as identity primary key,
   account_id  bigint not null references forex_accounts(id) on delete cascade,
@@ -168,8 +172,12 @@ create table if not exists forex_transactions (
   idr         bigint not null,
   units       numeric not null,
   wallet_id   bigint references wallets(id) on delete set null,
-  txn_id      bigint references transactions(id) on delete set null
+  txn_id      bigint references transactions(id) on delete set null,
+  pl_txn_id   bigint references transactions(id) on delete set null,  -- realized P/L on a sell
+  realized_pl bigint                                                  -- proceeds − cost basis (sells only)
 );
+alter table forex_transactions add column if not exists pl_txn_id bigint references transactions(id) on delete set null;
+alter table forex_transactions add column if not exists realized_pl bigint;
 
 -- Loans — money other people owe the user, collected monthly (receivables).
 create table if not exists loans (

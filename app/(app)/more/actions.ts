@@ -6,7 +6,11 @@ import { cookies } from "next/headers";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { SESSION_COOKIE } from "@/lib/auth";
 import { SETTING_KEYS, resolveCategoryId } from "@/lib/settings";
+import { forexAvgCost } from "@/lib/forex";
 import type { CategoryKind } from "@/lib/types";
+
+// A forex move as needed to derive average cost (a subset of forex_transactions columns).
+type ForexCostRow = { direction: "buy" | "sell"; idr: number; units: number; occurred_on: string };
 
 function digits(v: FormDataEntryValue | null): number {
   return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
@@ -322,56 +326,144 @@ export async function unpayPaylaterMonth(itemId: number, month: string) {
 }
 
 // ---- Forex ----
-// Move money between an IDR wallet and a foreign-currency holding. Buy = IDR -> forex
-// (books a Forex investment out of the wallet); Sell = forex -> IDR (books income in).
+// Book the ledger side(s) of a forex convert and move the holding balance, returning the ids
+// to record on the forex_transactions row. Buy = investment out of the wallet into the
+// "Forex" bucket. Sell = return the cost basis to the wallet (a withdrawal) plus the realized
+// P/L (Forex Profit income / Forex Loss expense) — mirrors the stocks module. For a sell,
+// `priorTxns` are the account's OTHER forex moves, used to derive the average-cost basis.
+async function bookForexConvert(
+  sb: ReturnType<typeof supabaseServer>,
+  p: {
+    accountId: number;
+    currency: string;
+    direction: "buy" | "sell";
+    walletId: number;
+    idr: number;
+    fx: number;
+    occurredOn: string;
+    priorTxns: ForexCostRow[];
+  }
+): Promise<{ txnId: number | null; plTxnId: number | null; realizedPl: number | null }> {
+  const forexCat = await resolveCategoryId("cat_forex", "Forex", "investment");
+  let txnId: number | null = null;
+  let plTxnId: number | null = null;
+  let realizedPl: number | null = null;
+
+  if (p.direction === "buy") {
+    const ins = await sb
+      .from("transactions")
+      .insert({
+        occurred_on: p.occurredOn, type: "investment", amount: p.idr,
+        description: `Buy ${p.currency} (forex)`, category_id: forexCat, source_wallet_id: p.walletId,
+      })
+      .select("id")
+      .single();
+    txnId = ins.data?.id ?? null;
+  } else {
+    // Cost basis of the sold units (average-cost), then split the proceeds into a return of
+    // capital (withdrawal back to the wallet) and the realized gain/loss.
+    const realizedCost = Math.round(forexAvgCost(p.priorTxns) * p.fx);
+    realizedPl = p.idr - realizedCost; // proceeds − cost basis
+
+    if (realizedCost > 0) {
+      const w = await sb
+        .from("transactions")
+        .insert({
+          occurred_on: p.occurredOn, type: "withdrawal", amount: realizedCost,
+          description: `Sell ${p.currency} (forex)`, category_id: forexCat, dest_wallet_id: p.walletId,
+        })
+        .select("id")
+        .single();
+      txnId = w.data?.id ?? null;
+    }
+
+    if (realizedPl > 0) {
+      const cat = await resolveCategoryId("cat_forex_profit", "Forex Profit", "income");
+      const ptxn = await sb
+        .from("transactions")
+        .insert({
+          occurred_on: p.occurredOn, type: "income", amount: realizedPl,
+          description: `Profit ${p.currency} (forex)`, category_id: cat, dest_wallet_id: p.walletId,
+        })
+        .select("id")
+        .single();
+      plTxnId = ptxn.data?.id ?? null;
+    } else if (realizedPl < 0) {
+      const cat = await resolveCategoryId("cat_forex_loss", "Forex Loss", "expense");
+      const ptxn = await sb
+        .from("transactions")
+        .insert({
+          occurred_on: p.occurredOn, type: "expense", amount: -realizedPl,
+          description: `Loss ${p.currency} (forex)`, category_id: cat, source_wallet_id: p.walletId,
+        })
+        .select("id")
+        .single();
+      plTxnId = ptxn.data?.id ?? null;
+    }
+  }
+
+  // Move the foreign holding (buy adds units, sell removes them).
+  const delta = p.direction === "buy" ? p.fx : -p.fx;
+  const { data: a } = await sb.from("forex_accounts").select("units").eq("id", p.accountId).maybeSingle();
+  if (a) {
+    await sb.from("forex_accounts").update({ units: Math.max(0, Number(a.units) + delta) }).eq("id", p.accountId);
+  }
+
+  return { txnId, plTxnId, realizedPl };
+}
+
+// The account's existing forex moves, as the minimal columns needed for the cost basis.
+async function forexCostRows(
+  sb: ReturnType<typeof supabaseServer>,
+  accountId: number,
+  excludeId?: number
+): Promise<ForexCostRow[]> {
+  let q = sb.from("forex_transactions").select("direction, idr, units, occurred_on").eq("account_id", accountId);
+  if (excludeId) q = q.neq("id", excludeId);
+  const { data } = await q;
+  return (data ?? []).map((t) => {
+    const r = t as { direction: "buy" | "sell"; idr: number; units: number | string; occurred_on: string };
+    return { direction: r.direction, idr: r.idr, units: Number(r.units), occurred_on: r.occurred_on };
+  });
+}
+
+// Move money between an IDR wallet and a foreign-currency holding (from the Forex screen).
 export async function convertForex(formData: FormData) {
   const sb = supabaseServer();
   const accountId = parseInt(String(formData.get("account_id") ?? ""), 10);
-  const direction = String(formData.get("direction") ?? "buy");
+  const direction = String(formData.get("direction") ?? "buy") === "sell" ? "sell" : "buy";
   const walletId = parseInt(String(formData.get("wallet_id") ?? ""), 10);
   const idr = digits(formData.get("idr"));
   const fx = units(formData.get("units"));
   if (!accountId || !walletId || idr <= 0 || fx <= 0) return;
 
-  const { data: acct } = await sb.from("forex_accounts").select("currency, units").eq("id", accountId).maybeSingle();
+  const { data: acct } = await sb.from("forex_accounts").select("currency").eq("id", accountId).maybeSingle();
   if (!acct) return;
   const occurred_on = new Date().toISOString().slice(0, 10);
-  const dir = direction === "sell" ? "sell" : "buy";
+  const priorTxns = direction === "sell" ? await forexCostRows(sb, accountId) : [];
 
-  // The IDR side moves a real wallet (so wallet balances stay correct); the foreign side
-  // is tracked separately and is NOT added to networth.
-  let txnId: number | null = null;
-  if (dir === "sell") {
-    const ins = await sb.from("transactions").insert({
-      occurred_on, type: "income", amount: idr, description: `Sell ${acct.currency} (forex)`,
-      category_id: null, dest_wallet_id: walletId,
-    }).select("id").single();
-    txnId = ins.data?.id ?? null;
-    await sb.from("forex_accounts").update({ units: Math.max(0, Number(acct.units) - fx) }).eq("id", accountId);
-  } else {
-    const ins = await sb.from("transactions").insert({
-      occurred_on, type: "investment", amount: idr, description: `Buy ${acct.currency} (forex)`,
-      category_id: null, source_wallet_id: walletId,
-    }).select("id").single();
-    txnId = ins.data?.id ?? null;
-    await sb.from("forex_accounts").update({ units: Number(acct.units) + fx }).eq("id", accountId);
-  }
+  const { txnId, plTxnId, realizedPl } = await bookForexConvert(sb, {
+    accountId, currency: acct.currency, direction, walletId, idr, fx, occurredOn: occurred_on, priorTxns,
+  });
 
   await sb.from("forex_transactions").insert({
-    account_id: accountId, occurred_on, direction: dir, idr, units: fx, wallet_id: walletId, txn_id: txnId,
+    account_id: accountId, occurred_on, direction, idr, units: fx,
+    wallet_id: walletId, txn_id: txnId, pl_txn_id: plTxnId, realized_pl: realizedPl,
   });
 
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
+  revalidatePath("/savings");
   revalidatePath("/history");
 }
 
-// Edit an existing forex buy/sell from the history editor. Keeps all three parts in
-// sync: the IDR-side ledger transaction, the forex log row, and the holding balance
-// (revert the old move, apply the new one). `bind(null, forexTxnId, txnId)`.
+// Edit an existing forex buy/sell from the history editor. Because a sell's cost-basis
+// split and realized P/L depend on the rest of the log, the safest path is to fully revert
+// the old entry (undo the holding move, drop its ledger row(s)) and re-book it from scratch
+// with the new values, then update the forex log row in place. `bind(null, forexTxnId, txnId)`.
 export async function updateForexTransaction(
   forexTxnId: number,
-  txnId: number,
+  _txnId: number,
   _prev: { error?: string },
   formData: FormData
 ): Promise<{ error?: string }> {
@@ -388,60 +480,65 @@ export async function updateForexTransaction(
 
   const { data: old } = await sb
     .from("forex_transactions")
-    .select("account_id, direction, units")
+    .select("account_id, direction, units, txn_id, pl_txn_id")
     .eq("id", forexTxnId)
     .maybeSingle();
   if (!old) return { error: "This forex entry no longer exists." };
   const { data: acct } = await sb.from("forex_accounts").select("currency").eq("id", accountId).maybeSingle();
   if (!acct) return { error: "That currency no longer exists." };
 
-  // Reconcile holding balances per account: undo the old move, apply the new one.
-  const deltas = new Map<number, number>();
-  const bump = (id: number, d: number) => deltas.set(id, (deltas.get(id) ?? 0) + d);
-  bump(old.account_id, old.direction === "buy" ? -Number(old.units) : Number(old.units)); // undo old
-  bump(accountId, direction === "buy" ? fx : -fx); // apply new
-  for (const [id, delta] of deltas) {
-    if (!delta) continue;
-    const { data: a } = await sb.from("forex_accounts").select("units").eq("id", id).maybeSingle();
-    if (a) await sb.from("forex_accounts").update({ units: Math.max(0, Number(a.units) + delta) }).eq("id", id);
+  // 1) Undo the old holding move and delete its ledger row(s).
+  const undo = old.direction === "buy" ? -Number(old.units) : Number(old.units);
+  const { data: oldAcct } = await sb.from("forex_accounts").select("units").eq("id", old.account_id).maybeSingle();
+  if (oldAcct) {
+    await sb.from("forex_accounts").update({ units: Math.max(0, Number(oldAcct.units) + undo) }).eq("id", old.account_id);
   }
+  if (old.txn_id) await sb.from("transactions").delete().eq("id", old.txn_id);
+  if (old.pl_txn_id) await sb.from("transactions").delete().eq("id", old.pl_txn_id);
 
-  // IDR side: buy = investment out of the wallet; sell = income into the wallet.
-  const txnRow =
-    direction === "buy"
-      ? { occurred_on: date, type: "investment", amount: idr, description: `Buy ${acct.currency} (forex)`, category_id: null, source_wallet_id: walletId, dest_wallet_id: null }
-      : { occurred_on: date, type: "income", amount: idr, description: `Sell ${acct.currency} (forex)`, category_id: null, source_wallet_id: null, dest_wallet_id: walletId };
-  await sb.from("transactions").update(txnRow).eq("id", txnId);
+  // 2) Re-book with the new values (cost basis from the account's other moves) and save.
+  const priorTxns = direction === "sell" ? await forexCostRows(sb, accountId, forexTxnId) : [];
+  const { txnId, plTxnId, realizedPl } = await bookForexConvert(sb, {
+    accountId, currency: acct.currency, direction, walletId, idr, fx, occurredOn: date, priorTxns,
+  });
   await sb
     .from("forex_transactions")
-    .update({ account_id: accountId, occurred_on: date, direction, idr, units: fx, wallet_id: walletId })
+    .update({
+      account_id: accountId, occurred_on: date, direction, idr, units: fx,
+      wallet_id: walletId, txn_id: txnId, pl_txn_id: plTxnId, realized_pl: realizedPl,
+    })
     .eq("id", forexTxnId);
 
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
+  revalidatePath("/savings");
   revalidatePath("/history");
   redirect(`/history?m=${date.slice(0, 7)}-01`);
 }
 
-// Delete a forex buy/sell from the history editor: revert the holding balance, then
-// remove both the forex log row and its IDR-side ledger transaction.
+// Delete a forex buy/sell from the history editor: revert the holding balance, then remove
+// the forex log row together with its cost-basis/investment ledger row and any realized-P/L row.
 export async function deleteForexTransaction(forexTxnId: number, txnId: number): Promise<void> {
   const sb = supabaseServer();
   const { data: old } = await sb
     .from("forex_transactions")
-    .select("account_id, direction, units, occurred_on")
+    .select("account_id, direction, units, occurred_on, txn_id, pl_txn_id")
     .eq("id", forexTxnId)
     .maybeSingle();
   if (old) {
     const delta = old.direction === "buy" ? -Number(old.units) : Number(old.units); // undo the move
     const { data: a } = await sb.from("forex_accounts").select("units").eq("id", old.account_id).maybeSingle();
     if (a) await sb.from("forex_accounts").update({ units: Math.max(0, Number(a.units) + delta) }).eq("id", old.account_id);
+    if (old.txn_id) await sb.from("transactions").delete().eq("id", old.txn_id);
+    if (old.pl_txn_id) await sb.from("transactions").delete().eq("id", old.pl_txn_id);
     await sb.from("forex_transactions").delete().eq("id", forexTxnId);
   }
+  // Safety net for legacy rows whose primary ledger id was only carried on the form.
   await sb.from("transactions").delete().eq("id", txnId);
 
   revalidatePath("/more/forex");
   revalidatePath("/dashboard");
+  revalidatePath("/savings");
   revalidatePath("/history");
   redirect(old?.occurred_on ? `/history?m=${String(old.occurred_on).slice(0, 7)}-01` : "/history");
 }

@@ -102,7 +102,9 @@ export interface ForexTransaction {
   idr: number;
   units: number;
   wallet_id: number | null;
-  txn_id: number | null;
+  txn_id: number | null; // buy = investment / sell = cost-basis withdrawal ledger row
+  pl_txn_id: number | null; // realized P/L row on a sell (Forex Profit income / Forex Loss expense)
+  realized_pl: number | null; // proceeds − cost basis (sells only)
 }
 
 export interface Loan {

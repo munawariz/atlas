@@ -12,6 +12,9 @@ export const CATEGORY_SETTINGS = [
   { key: "cat_stock_loss", label: "Stock realized loss", kind: "expense", default: "Cut Loss", help: "Expense when a stock is sold at a loss" },
   { key: "cat_bond", label: "Bond holding", kind: "investment", default: "Bonds", help: "Bucket money moves into when buying/selling bonds" },
   { key: "cat_bond_coupon", label: "Bond coupon", kind: "income", default: "Kupon", help: "Income when you log a bond coupon" },
+  { key: "cat_forex", label: "Forex holding", kind: "investment", default: "Forex", help: "Bucket money moves into when buying/selling forex" },
+  { key: "cat_forex_profit", label: "Forex realized profit", kind: "income", default: "Forex Profit", help: "Income when forex is sold at a gain" },
+  { key: "cat_forex_loss", label: "Forex realized loss", kind: "expense", default: "Forex Loss", help: "Expense when forex is sold at a loss" },
 ] as const;
 
 export const WALLET_SETTINGS = [

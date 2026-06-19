@@ -38,8 +38,11 @@ export async function getForexTxnByTxnId(txnId: number): Promise<ForexTransactio
 }
 
 /** Average IDR cost per 1 unit of a holding, from its buy/sell log (average-cost method):
- *  buys add cost + units, sells remove cost proportionally. 0 if there's no buy history. */
-export function forexAvgCost(accountTxns: ForexTransaction[]): number {
+ *  buys add cost + units, sells remove cost proportionally. 0 if there's no buy history.
+ *  Takes only the fields it needs, so action paths can pass partial query rows. */
+export function forexAvgCost(
+  accountTxns: Pick<ForexTransaction, "direction" | "idr" | "units" | "occurred_on">[]
+): number {
   const chrono = [...accountTxns].sort((a, b) => a.occurred_on.localeCompare(b.occurred_on));
   let units = 0;
   let cost = 0;
