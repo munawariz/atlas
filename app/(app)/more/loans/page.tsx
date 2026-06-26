@@ -3,6 +3,7 @@ import { getLoanPayments, getLoans, getWallets } from "@/lib/data";
 import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
 import { addLoan, deleteLoan } from "../actions";
 import SubmitButton from "@/components/SubmitButton";
+import MoneyInput from "@/components/MoneyInput";
 import { TrashIcon } from "@/components/icons";
 import PaymentGrid, { type Cell } from "./PaymentGrid";
 
@@ -77,7 +78,7 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
           <input name="lender" placeholder="Via (e.g. Spinjam)" className="field" />
         </div>
         <div className="flex gap-2">
-          <input name="installment" inputMode="numeric" placeholder="Monthly Rp" className="field" />
+          <MoneyInput name="installment" placeholder="Monthly Rp" className="field" />
           <input name="note" placeholder="Note" className="field" />
         </div>
         <div className="flex gap-2">

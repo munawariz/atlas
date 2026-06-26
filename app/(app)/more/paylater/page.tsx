@@ -5,6 +5,7 @@ import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { TrashIcon } from "@/components/icons";
 import { addPaylater, deletePaylater } from "../actions";
+import MoneyInput from "@/components/MoneyInput";
 import PaylaterToggle from "./PaylaterToggle";
 import PaylaterEdit from "./PaylaterEdit";
 import PaylaterMonths from "./PaylaterMonths";
@@ -150,7 +151,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
     <div className="space-y-4 pt-4">
       <div className="flex items-center justify-between">
         <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">My Paylater</h1>
+        <h1 className="font-display text-xl font-medium tracking-tight text-paper">My Installment</h1>
         <span className="w-12" />
       </div>
 
@@ -172,7 +173,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
 
       <form action={addPaylater} className="card space-y-2 p-4">
         <input name="item" placeholder="Item name" className="field" />
-        <input name="monthly_amount" inputMode="numeric" placeholder="Monthly Rp" className="field" />
+        <MoneyInput name="monthly_amount" placeholder="Monthly Rp" className="field" />
         <div className="flex gap-2">
           <label className="flex-1 text-xs text-paper-dim">
             First month

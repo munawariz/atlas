@@ -1,8 +1,9 @@
 "use client";
 
-import { formatNumber, formatRupiah } from "@/lib/format";
+import { formatRupiah } from "@/lib/format";
 import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
 import SubmitButton from "@/components/SubmitButton";
+import MoneyInput from "@/components/MoneyInput";
 import { setBudget } from "../actions";
 
 // One editable budget row. The cadence is bound to the category (shown read-only here —
@@ -64,10 +65,9 @@ export default function BudgetRow({
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
           <span className="text-xs text-paper-faint">Rp</span>
-          <input
+          <MoneyInput
             name="amount"
-            inputMode="numeric"
-            defaultValue={amount ? formatNumber(amount) : ""}
+            defaultValue={amount}
             placeholder="0"
             className="w-24 bg-transparent text-right font-display text-sm font-medium tabular-nums text-paper outline-none placeholder:text-paper-faint"
           />

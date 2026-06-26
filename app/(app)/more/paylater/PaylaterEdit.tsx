@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { editPaylater } from "../actions";
+import MoneyInput from "@/components/MoneyInput";
 import { PencilIcon } from "@/components/icons";
 
 export default function PaylaterEdit({
@@ -60,13 +61,7 @@ export default function PaylaterEdit({
             <h3 className="font-display text-lg font-medium text-paper">Edit installment</h3>
             <input type="hidden" name="id" value={id} />
             <input name="item" defaultValue={item} placeholder="Item name" className="field" />
-            <input
-              name="monthly_amount"
-              inputMode="numeric"
-              defaultValue={monthlyAmount || ""}
-              placeholder="Monthly Rp"
-              className="field"
-            />
+            <MoneyInput name="monthly_amount" defaultValue={monthlyAmount} placeholder="Monthly Rp" className="field" />
             <div className="flex gap-2">
               <label className="flex-1 text-xs text-paper-dim">
                 First month

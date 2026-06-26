@@ -28,7 +28,7 @@ export default function InstallmentsTab({
         </p>
         <p className="text-center text-xs text-paper-faint">
           Add some on{" "}
-          <Link href="/more/paylater" className="text-green underline">My Paylater</Link>.
+          <Link href="/more/paylater" className="text-green underline">My Installment</Link>.
         </p>
       </div>
     );

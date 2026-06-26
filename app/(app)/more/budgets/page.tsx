@@ -168,7 +168,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
           The <span className="text-green">loan-collection</span> category is auto-calculated from{" "}
           <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month. Every{" "}
           <span className="text-plum">installment</span> category (one per provider) is auto-calculated from its active{" "}
-          <Link href="/more/paylater" className="underline">My Paylater</Link> installments this month. Installments without
+          <Link href="/more/paylater" className="underline">My Installment</Link> installments this month. Installments without
           a provider are uncategorized and shown under <span className="text-paper-dim">Other</span> on Home.
         </p>
       )}

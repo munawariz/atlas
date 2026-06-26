@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { addForexAccount } from "../actions";
+import MoneyInput from "@/components/MoneyInput";
 
 export default function ForexAddCurrency() {
   const [open, setOpen] = useState(false);
@@ -48,7 +49,7 @@ export default function ForexAddCurrency() {
               </label>
               <label className="flex-1 text-xs text-paper-dim">
                 Its IDR cost
-                <input name="idr" inputMode="numeric" placeholder="Rp" className="field mt-1" />
+                <MoneyInput name="idr" placeholder="Rp" className="field mt-1" />
               </label>
             </div>
             <p className="text-[11px] text-paper-faint">
