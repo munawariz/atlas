@@ -362,6 +362,17 @@ export async function deletePaylaterProvider(id: number) {
   revalidatePath("/more/paylater");
 }
 
+// Persist a drag-and-drop reorder of installment providers (re-number sort_order 0..n).
+// Their order drives the provider groups on My Paylater and the Home installments tab.
+export async function reorderPaylaterProviders(orderedIds: number[]) {
+  if (!orderedIds.length) return;
+  const sb = supabaseServer();
+  await Promise.all(orderedIds.map((id, i) => sb.from("paylater_providers").update({ sort_order: i }).eq("id", id)));
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+  revalidatePath("/dashboard");
+}
+
 // ---- Paylater ----
 export async function addPaylater(formData: FormData) {
   const item = String(formData.get("item") ?? "").trim();
