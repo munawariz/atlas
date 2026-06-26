@@ -13,9 +13,8 @@ import {
   prevMonthKey,
 } from "@/lib/data";
 import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
-import { forexUnitsAt, getForexAccounts, getForexRate } from "@/lib/forex";
+import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
-import ForexToggleValue from "@/components/ForexToggleValue";
 import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
@@ -44,7 +43,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const monthKey = `${selectedDay.slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexUnits, settings] =
+  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexTxns, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
@@ -58,7 +57,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       getLoanPayments(),
       deriveWalletBalances(prevMonthKey(monthKey)), // per-wallet balance at the start of this month
       getForexAccounts(),
-      forexUnitsAt(monthKey),
+      getForexTransactions(),
       getSettings(),
     ]);
 
@@ -68,12 +67,31 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const fxCurrencies = [...new Set(forexAccounts.map((a) => a.currency))];
   const fxRates = new Map<string, number>();
   await Promise.all(fxCurrencies.map(async (c) => fxRates.set(c, await getForexRate(c))));
+  const fmtFx = (n: number) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(n);
+  // Per forex holding: its value in IDR (live rate), plus the day's change in the FOREIGN
+  // currency (units bought − sold that day). Units are taken as of the end of the selected
+  // day; IDR fluctuation from the rate itself is deliberately not surfaced.
   const forexLines = forexAccounts
     .map((a) => {
-      const u = forexUnits.get(a.id) ?? 0;
-      return { id: a.id, name: a.name, currency: a.currency, units: u, idr: Math.round(u * (fxRates.get(a.currency) ?? 0)) };
+      let units = Number(a.units);
+      let dayDelta = 0;
+      for (const t of forexTxns) {
+        if (t.account_id !== a.id) continue;
+        const d = t.occurred_on.slice(0, 10);
+        const signed = t.direction === "buy" ? t.units : -t.units;
+        if (d > selectedDay) units -= signed; // undo moves after the selected day
+        else if (d === selectedDay) dayDelta += signed;
+      }
+      return {
+        id: a.id,
+        name: a.name,
+        currency: a.currency,
+        units,
+        dayDelta,
+        idr: Math.round(units * (fxRates.get(a.currency) ?? 0)),
+      };
     })
-    .filter((a) => a.units !== 0);
+    .filter((a) => a.units !== 0 || a.dayDelta !== 0);
 
   const sum = (t: typeof txns) => t.reduce((a, x) => a + x.amount, 0);
   const totalIncome = sum(dayTxns.filter((t) => t.type === "income"));
@@ -126,22 +144,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   for (const arr of itemsByCat.values()) arr.sort((a, b) => b.amt - a.amt);
 
-  // Auto budgets (monthly): the configured loan-income category = total expected to
-  // collect in the selected day's month; the paylater-expense category = installments
-  // active that month.
+  // Auto budgets (monthly): the configured loan-income category = total expected to collect
+  // in the selected day's month; each provider's installment category = its installments
+  // active that month. No-provider installments are uncategorized ("other") and not budgeted.
   const catList = [...cats.values()];
   const loanById = new Map(loans.map((l) => [l.id, l]));
   const providerById = new Map(providers.map((pr) => [pr.id, pr]));
   const hutangCatId = mappedCategoryId(settings, catList, "cat_loan", "Hutang", "income");
-  const cicilanCatId = mappedCategoryId(settings, catList, "cat_paylater", "Cicilan Paylater", "expense");
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  // The installment expense category an item rolls up to: its provider's category, else its
-  // own, else the default paylater category.
+  // The installment expense category an item rolls up to: its provider's category, else none.
   const installmentCatOf = (p: (typeof paylater)[number]) => {
     const prov = p.provider_id ? providerById.get(p.provider_id) : null;
-    return prov?.category_id ?? p.category_id ?? cicilanCatId;
+    return prov?.category_id ?? null;
   };
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
@@ -327,14 +343,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <>
             <hr className="hr-dash my-4" />
             <div className="flex items-center justify-between">
-              <span className="label">Forex</span>
-              <span className="text-[10px] uppercase tracking-wider text-paper-faint">not in networth</span>
+              <span className="label">Forex · in IDR</span>
+              <span className="text-[10px] uppercase tracking-wider text-paper-faint">live rate · separate</span>
             </div>
-            <div className="mt-1.5 grid grid-cols-2 gap-x-5 gap-y-2">
+            <div className="mt-1.5 space-y-1.5">
               {forexLines.map((a) => (
-                <div key={a.name} className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className="text-sky">{a.name}</span>
-                  <ForexToggleValue units={a.units} currency={a.currency} idr={a.idr} />
+                <div key={a.id} className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className="min-w-0 truncate">
+                    <span className="text-sky">{a.name}</span>{" "}
+                    <span className="tabular-nums text-paper-faint">{fmtFx(a.units)} {a.currency}</span>
+                    {a.dayDelta !== 0 && (
+                      <span className={`tabular-nums ${a.dayDelta > 0 ? "text-green" : "text-clay"}`}>
+                        {" "}{a.dayDelta > 0 ? "▲" : "▼"} {fmtFx(Math.abs(a.dayDelta))}
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-paper">{formatRupiah(a.idr)}</span>
                 </div>
               ))}
             </div>

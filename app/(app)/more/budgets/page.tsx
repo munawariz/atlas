@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems } from "@/lib/data";
+import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems, getPaylaterProviders } from "@/lib/data";
 import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
 import type { BudgetPeriod } from "@/lib/types";
 import MonthSwitcher from "@/components/MonthSwitcher";
@@ -18,12 +18,13 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const kind = KINDS.some((k) => k.value === sp.kind) ? (sp.kind as string) : "expense";
-  const [cats, budgets, loans, payments, paylater, settings] = await Promise.all([
+  const [cats, budgets, loans, payments, paylater, providers, settings] = await Promise.all([
     getCategories(),
     getBudgetsForMonth(monthKey),
     getLoans(),
     getLoanPayments(),
     getPaylaterItems(),
+    getPaylaterProviders(true),
     getSettings(),
   ]);
   const byCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
@@ -31,23 +32,24 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
   const rows = cats.filter((c) => c.kind === kind);
 
   // Auto budgets for the selected month: the configured loan-income category = total
-  // expected to collect from Loans; the configured paylater-expense category =
-  // installments active this month using the default category. Custom ones add on top.
+  // expected to collect from Loans; every INSTALLMENT category = its installments active
+  // this month (rolled up by provider). No-provider installments are uncategorized ("other").
   const loanById = new Map(loans.map((l) => [l.id, l]));
+  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
+  const catById = new Map(cats.map((c) => [c.id, c]));
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
   const hutangCatId = mappedCategoryId(settings, cats, "cat_loan", "Hutang", "income");
-  const cicilanCatId = mappedCategoryId(settings, cats, "cat_paylater", "Cicilan Paylater", "expense");
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
     if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.category_id ?? cicilanCatId;
+    const catId = p.provider_id ? providerById.get(p.provider_id)?.category_id ?? null : null;
     if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
   }
   const instFor = (id: number) => instByCat.get(id) ?? 0;
-  const isAuto = (id: number) => id === hutangCatId || id === cicilanCatId;
-  const autoValue = (id: number) => (id === cicilanCatId ? instFor(cicilanCatId ?? -1) : loanExpected);
+  const isAuto = (id: number) => id === hutangCatId || !!catById.get(id)?.is_installment;
+  const autoValue = (id: number) => (id === hutangCatId ? loanExpected : instFor(id));
 
   // Expected cashflow from the PLAN (budgets): income in, minus expense + saving out.
   // Non-monthly budgets are converted to a monthly-equivalent so the estimate is comparable.
@@ -55,7 +57,7 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
     p === "daily" ? amt * 30.4 : p === "weekly" ? amt * 4.345 : p === "yearly" ? amt / 12 : amt;
   const effBudget = (c: { id: number; period: BudgetPeriod }) => {
     if (isAuto(c.id)) return autoValue(c.id);
-    return monthlyEquiv(byCat.get(c.id) ?? 0, c.period) + (c.period === "monthly" ? instFor(c.id) : 0);
+    return monthlyEquiv(byCat.get(c.id) ?? 0, c.period);
   };
   let plannedIncome = 0;
   let plannedExpense = 0;
@@ -163,11 +165,11 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
 
       {kind !== "saving" && (
         <p className="px-1 text-xs text-paper-faint">
-          <span className="text-green">Hutang</span> is auto-calculated from{" "}
-          <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month.{" "}
-          <span className="text-red">Cicilan Paylater</span> is auto-calculated from default{" "}
-          <Link href="/more/paylater" className="underline">My Paylater</Link> installments. An installment set to a custom
-          category instead <span className="text-plum">adds</span> to that category's budget here.
+          The <span className="text-green">loan-collection</span> category is auto-calculated from{" "}
+          <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month. Every{" "}
+          <span className="text-plum">installment</span> category (one per provider) is auto-calculated from its active{" "}
+          <Link href="/more/paylater" className="underline">My Paylater</Link> installments this month. Installments without
+          a provider are uncategorized and shown under <span className="text-paper-dim">Other</span> on Home.
         </p>
       )}
     </div>

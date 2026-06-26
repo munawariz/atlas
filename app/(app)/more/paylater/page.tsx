@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { getCategoriesByKind, getPaylaterItems, getPaylaterPayments, getPaylaterProviders, getWallets } from "@/lib/data";
-import { getSettings, mappedCategoryId } from "@/lib/settings";
+import { getPaylaterItems, getPaylaterPayments, getPaylaterProviders, getWallets } from "@/lib/data";
 import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -39,41 +38,29 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const ym = monthKey.slice(0, 7);
 
-  const [items, paid, wallets, expenseCats, settings, providers] = await Promise.all([
+  const [items, paid, wallets, providers] = await Promise.all([
     getPaylaterItems(),
     getPaylaterPayments(),
     getWallets(),
-    getCategoriesByKind("expense"),
-    getSettings(),
     getPaylaterProviders(true), // include archived so existing groupings still render
   ]);
-  const catName = new Map(expenseCats.map((c) => [c.id, c.name]));
   const providerById = new Map(providers.map((pr) => [pr.id, pr]));
   // Active providers are offered in the add/edit pickers; archived ones only label groups.
   const pickProviders = providers.filter((pr) => !pr.archived).map((pr) => ({ id: pr.id, name: pr.name }));
-  // The default installment category (configurable; defaults to "Cicilan Paylater").
-  const defaultCatId = mappedCategoryId(settings, expenseCats, "cat_paylater", "Cicilan Paylater", "expense");
-  const defaultCatName = expenseCats.find((c) => c.id === defaultCatId)?.name ?? "Cicilan Paylater";
-  // Categories a user can pick for an installment (excluding the default).
-  const pickCats = expenseCats.filter((c) => c.id !== defaultCatId).map((c) => ({ id: c.id, name: c.name }));
   const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
   const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
   const paidWithTxn = new Set(paid.filter((p) => p.expense_txn_id != null).map((p) => `${p.item_id}:${p.month}`));
   const hasExpense = (p: (typeof items)[number]) => paidWithTxn.has(`${p.id}:${monthKey}`);
 
   const active = items.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
-  // Sort by: (0) one-month "1/1" installments first (top priority), then (1) expense
-  // category, (2) months left owed (most first), (3) shorter total installment — so a
-  // 6-month/1-left ranks above a 12-month/1-left.
-  const catLabel = (p: (typeof items)[number]) =>
-    p.category_id ? catName.get(p.category_id) ?? defaultCatName : defaultCatName;
+  // Sort by: (0) one-month "1/1" installments first (top priority), then (1) months left
+  // owed (most first), (2) shorter total installment — so a 6-month/1-left ranks above a
+  // 12-month/1-left. (Provider grouping handles clustering by provider.)
   const totalMonths = (p: (typeof items)[number]) => span(p.first_month_date, p.last_month_date);
   active.sort((a, b) => {
     const oneA = totalMonths(a) === 1;
     const oneB = totalMonths(b) === 1;
     if (oneA !== oneB) return oneA ? -1 : 1;
-    const byCat = catLabel(a).localeCompare(catLabel(b));
-    if (byCat !== 0) return byCat;
     const leftA = span(monthKey, a.last_month_date);
     const leftB = span(monthKey, b.last_month_date);
     if (leftA !== leftB) return leftB - leftA; // most months still owed first
@@ -118,14 +105,7 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
       <div key={p.id} className="card px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-sm font-medium text-paper">{p.item}</span>
-              {p.category_id && p.category_id !== defaultCatId && catName.get(p.category_id) && (
-                <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
-                  {catName.get(p.category_id)}
-                </span>
-              )}
-            </div>
+            <div className="truncate text-sm font-medium text-paper">{p.item}</div>
             <div className="text-xs text-paper-dim">
               {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
               {p.note ? ` · ${p.note}` : ""}
@@ -147,10 +127,8 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
               monthlyAmount={p.monthly_amount}
               firstMonth={p.first_month_date}
               lastMonth={p.last_month_date}
-              categoryId={p.category_id}
               providerId={p.provider_id ?? null}
               note={p.note}
-              categories={pickCats}
               providers={pickProviders}
             />
             <form action={deletePaylater.bind(null, p.id)}>
@@ -216,15 +194,6 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
             </select>
           </label>
         )}
-        <label className="block text-xs text-paper-dim">
-          Count in budget as
-          <select name="category_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
-            <option value="" className="bg-ink-2">{defaultCatName} (default)</option>
-            {pickCats.map((c) => (
-              <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
-            ))}
-          </select>
-        </label>
         <input name="note" placeholder="Note (optional)" className="field" />
         <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
           Add item

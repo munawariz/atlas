@@ -279,11 +279,11 @@ async function resolveProviderCategory(
 }
 
 // The expense category an installment payment books under: the provider's installment
-// category when the item has a provider; else the item's own category; else the default
-// "Cicilan Paylater" (marked installment).
+// category when the item has a provider; otherwise null (uncategorized — shown as "Other"
+// on the Home installments tab and not auto-budgeted).
 async function resolvePaylaterExpenseCategory(
   sb: ReturnType<typeof supabaseServer>,
-  item: { provider_id: number | null; category_id: number | null }
+  item: { provider_id: number | null }
 ): Promise<number | null> {
   if (item.provider_id) {
     const { data: prov } = await sb
@@ -293,10 +293,7 @@ async function resolvePaylaterExpenseCategory(
       .maybeSingle();
     if (prov) return resolveProviderCategory(sb, prov as { id: number; name: string; category_id: number | null });
   }
-  if (item.category_id) return item.category_id;
-  const id = await resolveCategoryId("cat_paylater", "Cicilan Paylater", "expense");
-  if (id) await sb.from("categories").update({ is_installment: true }).eq("id", id);
-  return id;
+  return null;
 }
 
 // ---- Paylater providers ----
@@ -376,7 +373,6 @@ export async function addPaylater(formData: FormData) {
     monthly_amount: digits(formData.get("monthly_amount")),
     first_month_date: first,
     last_month_date: last < first ? first : last,
-    category_id: optInt(formData.get("category_id")),
     provider_id: optInt(formData.get("provider_id")),
     note: String(formData.get("note") ?? "").trim() || null,
   });
@@ -397,7 +393,6 @@ export async function editPaylater(formData: FormData) {
       monthly_amount: digits(formData.get("monthly_amount")),
       first_month_date: first,
       last_month_date: last < first ? first : last,
-      category_id: optInt(formData.get("category_id")),
       provider_id: optInt(formData.get("provider_id")),
       note: String(formData.get("note") ?? "").trim() || null,
     })
@@ -426,7 +421,7 @@ export async function payPaylaterMonth(
   const sb = supabaseServer();
   const { data: item } = await sb
     .from("paylater_items")
-    .select("item, monthly_amount, category_id, provider_id")
+    .select("item, monthly_amount, provider_id")
     .eq("id", itemId)
     .maybeSingle();
   if (!item) return;
@@ -435,8 +430,8 @@ export async function payPaylaterMonth(
   if (!skipTxn) {
     if (!walletId) return;
     const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
-    // Book the expense under the provider's installment category (or the item's / default one).
-    const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null; category_id: number | null });
+    // Book the expense under the provider's installment category (or the default one).
+    const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null });
     const txn = await sb
       .from("transactions")
       .insert({
@@ -488,15 +483,15 @@ export async function payPaylaterMonths(
 
     const { data: item } = await sb
       .from("paylater_items")
-      .select("item, monthly_amount, category_id, provider_id")
+      .select("item, monthly_amount, provider_id")
       .eq("id", itemId)
       .maybeSingle();
     if (!item) continue;
 
     let expenseTxnId: number | null = null;
     if (!skipTxn) {
-      // Each item books under its provider's installment category (or its own / the default).
-      const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null; category_id: number | null });
+      // Each item books under its provider's installment category (or the default).
+      const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null });
       const txn = await sb
         .from("transactions")
         .insert({

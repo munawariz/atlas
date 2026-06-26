@@ -18,13 +18,13 @@ insert into categories (kind, name, sort_order) values
   ('investment', 'Stock', 1), ('investment', 'Bonds', 2), ('investment', 'Forex', 3)
 on conflict (kind, name) do nothing;
 
--- Installment expense categories — one per provider, plus the default. Marked installment
--- so the stats page can track them separately from normal spending.
+-- Installment expense categories — one per provider. Marked installment so the stats page
+-- can track them separately from normal spending. (Installments with no provider stay
+-- uncategorized and show under "Other".)
 insert into categories (kind, name, sort_order, is_installment) values
   ('expense', 'ShopeePaylater', 10, true),
   ('expense', 'GoPayLater', 11, true),
-  ('expense', 'Credit Card', 12, true),
-  ('expense', 'Cicilan Paylater', 13, true)
+  ('expense', 'Credit Card', 12, true)
 on conflict (kind, name) do nothing;
 
 -- Starter installment providers — group paylater items by where they're financed, each

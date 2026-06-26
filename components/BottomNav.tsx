@@ -51,7 +51,7 @@ export default function BottomNav() {
   return (
     <nav className="sticky bottom-0 z-20 border-t border-line/60 bg-ink/85 backdrop-blur-xl safe-bottom">
       <div className="mx-auto flex max-w-md items-end justify-around px-2 pb-1.5 pt-1">
-        <Tab href="/dashboard" label="Stats" icon="dashboard" active={is("/dashboard")} />
+        <Tab href="/dashboard" label="Home" icon="dashboard" active={is("/dashboard")} />
         <Tab href="/history" label="History" icon="history" active={is("/history")} />
 
         {/* Primary action — larger, raised */}

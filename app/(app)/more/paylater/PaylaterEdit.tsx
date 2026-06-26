@@ -10,10 +10,8 @@ export default function PaylaterEdit({
   monthlyAmount,
   firstMonth,
   lastMonth,
-  categoryId,
   providerId,
   note,
-  categories,
   providers,
 }: {
   id: number;
@@ -21,10 +19,8 @@ export default function PaylaterEdit({
   monthlyAmount: number;
   firstMonth: string; // YYYY-MM-DD
   lastMonth: string; // YYYY-MM-DD
-  categoryId: number | null;
   providerId: number | null;
   note: string | null;
-  categories: { id: number; name: string }[];
   providers: { id: number; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
@@ -102,15 +98,6 @@ export default function PaylaterEdit({
                 </select>
               </label>
             )}
-            <label className="block text-xs text-paper-dim">
-              Count in budget as
-              <select name="category_id" defaultValue={categoryId ?? ""} className="field mt-1 [color-scheme:dark]">
-                <option value="" className="bg-ink-2">Cicilan Paylater (default)</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
-                ))}
-              </select>
-            </label>
             <input name="note" defaultValue={note ?? ""} placeholder="Note (optional)" className="field" />
 
             <div className="mt-3 flex gap-2">

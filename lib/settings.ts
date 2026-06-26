@@ -5,7 +5,6 @@ import type { Category } from "./types";
 // Categories used by automated transactions. `default` is the seeded fallback name so a
 // fresh clone (or one that hasn't configured settings) still works out of the box.
 export const CATEGORY_SETTINGS = [
-  { key: "cat_paylater", label: "Paylater installment", kind: "expense", default: "Cicilan Paylater", help: "Expense booked when you pay an installment" },
   { key: "cat_loan", label: "Loan collection", kind: "income", default: "Hutang", help: "Income booked when you collect a loan payment" },
   { key: "cat_stock", label: "Stock holding", kind: "investment", default: "Stock", help: "Bucket money moves into when buying/selling stocks" },
   { key: "cat_stock_profit", label: "Stock realized profit", kind: "income", default: "Trading", help: "Income when a stock is sold at a gain" },

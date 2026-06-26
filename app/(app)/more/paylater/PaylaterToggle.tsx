@@ -112,7 +112,7 @@ export default function PaylaterToggle({
                 <p className="mt-2 text-[11px] text-paper-faint">
                   {skipTxn
                     ? "Marks the month paid only — no expense is created."
-                    : "Adds a Cicilan Paylater expense from that wallet."}
+                    : "Adds an installment expense from that wallet (under its provider's category, or Other)."}
                 </p>
               </>
             ) : (

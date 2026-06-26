@@ -85,8 +85,8 @@ export interface PaylaterItem {
   monthly_amount: number;
   first_month_date: string; // YYYY-MM-01
   last_month_date: string; // YYYY-MM-01
-  category_id: number | null; // null = default "Cicilan Paylater"
-  provider_id: number | null; // optional grouping (ShopeePaylater, GoPayLater, …)
+  category_id: number | null; // legacy/unused — installments now categorize by provider
+  provider_id: number | null; // installment grouping; its category books the expense (else "Other")
   note: string | null;
 }
 

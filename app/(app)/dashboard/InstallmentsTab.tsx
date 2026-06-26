@@ -80,7 +80,7 @@ export default function InstallmentsTab({
               {g.items.map((it) => (
                 <div key={it.id} className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="min-w-0 flex-1 truncate text-paper-dim">{it.item}</span>
-                  <span className="shrink-0 tabular-nums text-paper">{formatRupiahShort(it.amount)}</span>
+                  <span className="shrink-0 tabular-nums text-paper">{formatRupiah(it.amount)}</span>
                   <span
                     className={`w-12 shrink-0 text-right text-[10px] font-medium uppercase tracking-wide ${
                       it.paid ? "text-green" : "text-amber"
