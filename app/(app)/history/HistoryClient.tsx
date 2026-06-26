@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { formatRupiah, formatDateShort } from "@/lib/format";
 import { TXN_TYPES, type Transaction, type TxnType } from "@/lib/types";
+import { bulkUpdateWallets } from "./actions";
 
 const SIGN: Record<TxnType, { color: string; prefix: string }> = {
   expense: { color: "text-clay", prefix: "−" },
@@ -13,6 +15,18 @@ const SIGN: Record<TxnType, { color: string; prefix: string }> = {
   transfer: { color: "text-paper-dim", prefix: "" },
   withdrawal: { color: "text-sky", prefix: "←" },
 };
+
+// Which wallet field(s) each type uses — drives the bulk-edit pickers.
+const WALLET_FIELDS: Record<TxnType, { source: boolean; dest: boolean }> = {
+  expense: { source: true, dest: false },
+  saving: { source: true, dest: false },
+  investment: { source: true, dest: false },
+  income: { source: false, dest: true },
+  withdrawal: { source: false, dest: true },
+  transfer: { source: true, dest: true },
+};
+
+const typeLabel = (t: TxnType) => TXN_TYPES.find((x) => x.value === t)?.label ?? t;
 
 type Cat = { id: number; name: string; kind: string };
 type Wal = { id: number; name: string };
@@ -28,10 +42,19 @@ export default function HistoryClient({
   categories: Cat[];
   wallets: Wal[];
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [type, setType] = useState<TxnType | "all">("all");
   const [catId, setCatId] = useState<number | "all">("all");
   const [hydrated, setHydrated] = useState(false);
+
+  // ---- bulk select mode ----
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkSource, setBulkSource] = useState<number | "">("");
+  const [bulkDest, setBulkDest] = useState<number | "">("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   // Keep the search + filters for the session so they survive leaving the page to edit a
   // transaction (the edit redirect remounts this component) and other in-app navigations.
@@ -119,6 +142,58 @@ export default function HistoryClient({
 
   const hasFilter = query.trim() !== "" || type !== "all" || catId !== "all";
 
+  // The single type the selection is locked to (all selected rows share one type so the
+  // wallet fields are consistent), and the type "Select all" would use.
+  const selType = useMemo<TxnType | null>(() => {
+    for (const t of transactions) if (selected.has(t.id)) return t.type;
+    return null;
+  }, [transactions, selected]);
+  const effType: TxnType | null = selType ?? (type !== "all" ? (type as TxnType) : null);
+  const fields = selType ? WALLET_FIELDS[selType] : null;
+  const canSelect = (t: Transaction) => !selType || t.type === selType || selected.has(t.id);
+
+  const exitSelect = () => {
+    setSelectMode(false);
+    setSelected(new Set());
+    setBulkSource("");
+    setBulkDest("");
+    setError(null);
+  };
+
+  const toggle = (t: Transaction) => {
+    setError(null);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(t.id)) next.delete(t.id);
+      else if (!selType || t.type === selType) next.add(t.id);
+      return next;
+    });
+  };
+
+  const selectAllFiltered = () => {
+    if (!effType) return;
+    setError(null);
+    setSelected(new Set(filtered.filter((t) => t.type === effType).map((t) => t.id)));
+  };
+
+  const apply = () => {
+    const source = fields?.source && bulkSource !== "" ? Number(bulkSource) : null;
+    const dest = fields?.dest && bulkDest !== "" ? Number(bulkDest) : null;
+    if (source == null && dest == null) {
+      setError("Pick a wallet to set.");
+      return;
+    }
+    startTransition(async () => {
+      const res = await bulkUpdateWallets([...selected], source, dest);
+      if (res.error) {
+        setError(res.error);
+        return;
+      }
+      exitSelect();
+      router.refresh();
+    });
+  };
+
   return (
     <div className="space-y-3">
       {/* Search */}
@@ -176,22 +251,121 @@ export default function HistoryClient({
         ))}
       </div>
 
-      <p className="px-1 text-[11px] text-paper-faint">
-        {filtered.length} of {transactions.length} {transactions.length === 1 ? "entry" : "entries"}
-        {hasFilter && (
+      <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-paper-faint">
+        <span>
+          {filtered.length} of {transactions.length} {transactions.length === 1 ? "entry" : "entries"}
+          {hasFilter && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery("");
+                setType("all");
+                setCatId("all");
+              }}
+              className="ml-2 text-paper-dim underline decoration-dotted underline-offset-2 active:text-paper"
+            >
+              clear filters
+            </button>
+          )}
+        </span>
+        {!selectMode && transactions.length > 0 && (
           <button
             type="button"
-            onClick={() => {
-              setQuery("");
-              setType("all");
-              setCatId("all");
-            }}
-            className="ml-2 text-paper-dim underline decoration-dotted underline-offset-2 active:text-paper"
+            onClick={() => setSelectMode(true)}
+            className="shrink-0 font-medium text-gold active:opacity-70"
           >
-            clear filters
+            Bulk edit
           </button>
         )}
-      </p>
+      </div>
+
+      {/* Bulk-edit toolbar */}
+      {selectMode && (
+        <div className="card space-y-2.5 border border-gold/30 p-3">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <button type="button" onClick={exitSelect} className="font-medium text-paper-dim active:text-paper">
+              Cancel
+            </button>
+            <span className="text-paper">
+              {selected.size} selected{selType ? <span className="text-paper-faint"> · {typeLabel(selType)}</span> : ""}
+            </span>
+            {selected.size > 0 ? (
+              <button type="button" onClick={() => setSelected(new Set())} className="font-medium text-paper-dim active:text-paper">
+                Clear
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={selectAllFiltered}
+                disabled={!effType}
+                className="font-medium text-gold disabled:text-paper-faint disabled:opacity-50"
+              >
+                Select all
+              </button>
+            )}
+          </div>
+
+          {selected.size === 0 ? (
+            <p className="text-[11px] text-paper-faint">
+              Tap entries to select (one type at a time), then set their wallet.
+              {!effType && " Filter by a type to enable Select all."}
+            </p>
+          ) : (
+            <>
+              {selType && effType && (
+                <button
+                  type="button"
+                  onClick={selectAllFiltered}
+                  className="text-[11px] text-gold underline decoration-dotted underline-offset-2 active:opacity-70"
+                >
+                  Select all {filtered.filter((t) => t.type === selType).length} {typeLabel(selType)} shown
+                </button>
+              )}
+              <div className="flex flex-col gap-2">
+                {fields?.source && (
+                  <label className="text-[11px] text-paper-dim">
+                    {selType === "transfer" ? "Set source (from) wallet" : "Set wallet (source)"}
+                    <select
+                      value={bulkSource}
+                      onChange={(e) => setBulkSource(e.target.value === "" ? "" : Number(e.target.value))}
+                      className="field mt-1 [color-scheme:dark]"
+                    >
+                      <option value="" className="bg-ink-2">— keep current —</option>
+                      {wallets.map((w) => (
+                        <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {fields?.dest && (
+                  <label className="text-[11px] text-paper-dim">
+                    {selType === "transfer" ? "Set destination (to) wallet" : "Set wallet (destination)"}
+                    <select
+                      value={bulkDest}
+                      onChange={(e) => setBulkDest(e.target.value === "" ? "" : Number(e.target.value))}
+                      className="field mt-1 [color-scheme:dark]"
+                    >
+                      <option value="" className="bg-ink-2">— keep current —</option>
+                      {wallets.map((w) => (
+                        <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {error && <p className="text-xs text-clay">{error}</p>}
+              <button
+                type="button"
+                onClick={apply}
+                disabled={pending}
+                className="w-full rounded-2xl bg-green py-2.5 text-sm font-semibold text-ink disabled:opacity-60"
+              >
+                {pending ? "Applying…" : `Apply to ${selected.size} ${selType ? typeLabel(selType).toLowerCase() : "txn"}${selected.size === 1 ? "" : "s"}`}
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <p className="pt-10 text-center text-sm text-paper-faint">
@@ -205,15 +379,10 @@ export default function HistoryClient({
               <div className="card overflow-hidden">
                 {rows.map((t, i) => {
                   const s = SIGN[t.type];
-                  return (
-                    <Link
-                      key={t.id}
-                      href={`/history/${t.id}`}
-                      className={`flex items-center justify-between gap-3 px-4 py-3.5 transition-colors active:bg-ink-3 ${
-                        i > 0 ? "hr-dash border-t" : ""
-                      }`}
-                    >
-                      <div className="min-w-0">
+                  const border = i > 0 ? "hr-dash border-t" : "";
+                  const inner = (
+                    <>
+                      <div className="min-w-0 flex-1">
                         <div className="truncate text-[15px] font-medium text-paper">
                           {t.description || (t.category_id ? catName.get(t.category_id) : undefined) || t.type}
                         </div>
@@ -223,6 +392,43 @@ export default function HistoryClient({
                         {s.prefix}
                         {formatRupiah(t.amount).replace("Rp", "").trim()}
                       </div>
+                    </>
+                  );
+
+                  if (selectMode) {
+                    const on = selected.has(t.id);
+                    const dim = !canSelect(t);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => toggle(t)}
+                        disabled={dim}
+                        className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors ${border} ${
+                          on ? "bg-green/10" : "active:bg-ink-3"
+                        } ${dim ? "opacity-40" : ""}`}
+                      >
+                        <span
+                          className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${
+                            on ? "border-green bg-green text-ink" : "border-line/70 text-transparent"
+                          }`}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-3 w-3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </span>
+                        {inner}
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <Link
+                      key={t.id}
+                      href={`/history/${t.id}`}
+                      className={`flex items-center justify-between gap-3 px-4 py-3.5 transition-colors active:bg-ink-3 ${border}`}
+                    >
+                      {inner}
                     </Link>
                   );
                 })}

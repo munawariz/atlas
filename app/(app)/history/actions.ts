@@ -29,6 +29,29 @@ export async function updateTransaction(
   redirect(historyHref(row.occurred_on));
 }
 
+// Bulk-set the source and/or destination wallet on many transactions at once (used by the
+// History select mode). The caller restricts the selection to a single type, so only the
+// wallet field(s) meaningful for that type are passed. The DB trigger reverses each old row
+// and applies the new one, so wallet balances stay correct.
+export async function bulkUpdateWallets(
+  ids: number[],
+  source: number | null,
+  dest: number | null
+): Promise<{ error?: string; updated?: number }> {
+  if (!ids.length) return { error: "Nothing selected." };
+  const update: Record<string, number> = {};
+  if (source != null) update.source_wallet_id = source;
+  if (dest != null) update.dest_wallet_id = dest;
+  if (!Object.keys(update).length) return { error: "Pick a wallet to set." };
+
+  const { error } = await supabaseServer().from("transactions").update(update).in("id", ids);
+  if (error) return { error: error.message };
+
+  revalidatePath("/dashboard");
+  revalidatePath("/history");
+  return { updated: ids.length };
+}
+
 export async function deleteTransaction(id: number): Promise<void> {
   const sb = supabaseServer();
   const { data: txn } = await sb.from("transactions").select("occurred_on").eq("id", id).maybeSingle();
