@@ -37,7 +37,6 @@ const span = (a: string, b: string) => {
 export default async function PaylaterPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
   const sp = await searchParams;
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
-  const ym = monthKey.slice(0, 7);
 
   const [items, paid, wallets, providers] = await Promise.all([
     getPaylaterItems(),
@@ -177,11 +176,11 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
         <div className="flex gap-2">
           <label className="flex-1 text-xs text-paper-dim">
             First month
-            <input type="month" name="first_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
+            <input type="date" name="first_month" defaultValue={monthKey} className="field mt-1 [color-scheme:dark]" />
           </label>
           <label className="flex-1 text-xs text-paper-dim">
             Last month
-            <input type="month" name="last_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
+            <input type="date" name="last_month" defaultValue={monthKey} className="field mt-1 [color-scheme:dark]" />
           </label>
         </div>
         {pickProviders.length > 0 && (

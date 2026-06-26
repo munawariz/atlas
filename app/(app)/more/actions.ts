@@ -16,10 +16,11 @@ function digits(v: FormDataEntryValue | null): number {
   return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
 }
 
-// An <input type="month"> gives "YYYY-MM"; store it as a first-of-month date.
+// Accepts "YYYY-MM" (month input) or "YYYY-MM-DD" (date input) and snaps to a first-of-month
+// date — installments are month-scoped, so the day is ignored.
 function monthDate(v: FormDataEntryValue | null): string | null {
-  const s = String(v ?? "").trim();
-  return /^\d{4}-\d{2}$/.test(s) ? `${s}-01` : null;
+  const m = /^(\d{4}-\d{2})(?:-\d{2})?$/.exec(String(v ?? "").trim());
+  return m ? `${m[1]}-01` : null;
 }
 
 function addMonthsISO(iso: string, n: number): string {

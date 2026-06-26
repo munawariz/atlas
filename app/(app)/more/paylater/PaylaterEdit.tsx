@@ -66,18 +66,18 @@ export default function PaylaterEdit({
               <label className="flex-1 text-xs text-paper-dim">
                 First month
                 <input
-                  type="month"
+                  type="date"
                   name="first_month"
-                  defaultValue={firstMonth.slice(0, 7)}
+                  defaultValue={firstMonth.slice(0, 10)}
                   className="field mt-1 [color-scheme:dark]"
                 />
               </label>
               <label className="flex-1 text-xs text-paper-dim">
                 Last month
                 <input
-                  type="month"
+                  type="date"
                   name="last_month"
-                  defaultValue={lastMonth.slice(0, 7)}
+                  defaultValue={lastMonth.slice(0, 10)}
                   className="field mt-1 [color-scheme:dark]"
                 />
               </label>
