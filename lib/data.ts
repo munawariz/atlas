@@ -372,6 +372,8 @@ export async function getLoanPayments(): Promise<LoanPayment[]> {
 export interface ChartData {
   months: string[]; // months with flows, ascending "YYYY-MM-01"
   flows: { month: string; income: number; expense: number; saving: number; investment: number }[];
+  dailyFlows: { date: string; income: number; expense: number; saving: number; investment: number }[]; // per active day, ascending — for 1-month (daily) view
+
   catTotals: { month: string; categoryId: number; kind: TxnType; total: number }[]; // categoryId 0 = uncategorized
   // Per-(month, category, description) rollup for drilldown insights — identical
   // descriptions collapse to one row so the payload stays small. max = biggest single txn.
@@ -410,6 +412,7 @@ export async function getChartData(): Promise<ChartData> {
 
   const monthOf = (d: string) => `${d.slice(0, 7)}-01`;
   const flowMap = new Map<string, ChartData["flows"][number]>();
+  const dailyMap = new Map<string, ChartData["dailyFlows"][number]>();
   const catMap = new Map<string, ChartData["catTotals"][number]>();
   const addCat = (m: string, cid: number, kind: TxnType, delta: number) => {
     const key = `${m}|${cid}|${kind}`;
@@ -430,25 +433,33 @@ export async function getChartData(): Promise<ChartData> {
   for (const r of rows) {
     if (r.type === "transfer") continue;
     const m = monthOf(r.occurred_on);
+    const day = r.occurred_on.slice(0, 10);
     const f = flowMap.get(m) ?? { month: m, income: 0, expense: 0, saving: 0, investment: 0 };
+    const df = dailyMap.get(day) ?? { date: day, income: 0, expense: 0, saving: 0, investment: 0 };
 
     if (r.type === "withdrawal") {
       const k = r.category_id ? catKind.get(r.category_id) : null;
       if ((k === "saving" || k === "investment") && r.category_id) {
         f[k] -= r.amount; // money left the bucket
+        df[k] -= r.amount;
         flowMap.set(m, f);
+        dailyMap.set(day, df);
         addCat(m, r.category_id, k, -r.amount);
       }
       continue;
     }
 
-    f[r.type as "income" | "expense" | "saving" | "investment"] += r.amount;
+    const t = r.type as "income" | "expense" | "saving" | "investment";
+    f[t] += r.amount;
+    df[t] += r.amount;
     flowMap.set(m, f);
+    dailyMap.set(day, df);
     addCat(m, r.category_id ?? 0, r.type, r.amount);
     addEntry(m, r.category_id ?? 0, r.type, r.description, r.amount);
   }
   const months = [...flowMap.keys()].sort();
   const flows = months.map((m) => flowMap.get(m)!);
+  const dailyFlows = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
   const catTotals = [...catMap.values()];
   const catEntries = [...entryMap.values()];
 
@@ -469,7 +480,7 @@ export async function getChartData(): Promise<ChartData> {
     networth.push({ month: m, total: running });
   }
 
-  return { months, flows, catTotals, catEntries, networth };
+  return { months, flows, dailyFlows, catTotals, catEntries, networth };
 }
 
 // ---- Savings & investment balances ----

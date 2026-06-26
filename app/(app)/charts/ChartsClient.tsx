@@ -44,6 +44,7 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
   const [customFrom, setCustomFrom] = useState(() => months[Math.max(0, months.length - 6)] ?? months[0] ?? "");
   const [customTo, setCustomTo] = useState(() => months[months.length - 1] ?? "");
   const [selMonth, setSelMonth] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<Kind | null>(null); // a cash-flow line to isolate
   const [kind, setKind] = useState<Kind>("expense");
   const [selCat, setSelCat] = useState<number | null>(null);
 
@@ -76,6 +77,23 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
 
   // keep selected month valid for the current range
   const activeMonth = selMonth && visMonths.has(selMonth) ? selMonth : null;
+
+  // Cash-flow line points. In 1-month mode, zoom to per-DAY points across the anchor month
+  // (all days, zero-filled); otherwise one point per visible month.
+  const isDaily = !custom && rangeN === 1 && !!anchor;
+  const seriesPoints = useMemo(() => {
+    if (isDaily) {
+      const [yy, mm] = anchor.split("-").map(Number);
+      const daysInMonth = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+      const byDate = new Map(data.dailyFlows.map((d) => [d.date, d]));
+      return Array.from({ length: daysInMonth }, (_, i) => {
+        const date = `${yy}-${String(mm).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`;
+        const v = byDate.get(date);
+        return { label: date, income: v?.income ?? 0, expense: v?.expense ?? 0, saving: v?.saving ?? 0, investment: v?.investment ?? 0 };
+      });
+    }
+    return flows.map((f) => ({ label: f.month, income: f.income, expense: f.expense, saving: f.saving, investment: f.investment }));
+  }, [isDaily, anchor, data.dailyFlows, flows]);
 
   // ----- scope totals -----
   const scope = useMemo(() => {
@@ -249,9 +267,9 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
 
       {/* ---------- Cash flow ---------- */}
       <section className="card p-4">
-        <div className="mb-1 flex items-center justify-between">
-          <p className="label">Income vs expense</p>
-          {activeMonth && (
+        <div className="mb-2 flex items-center justify-between">
+          <p className="label">Cash flow{isDaily ? " · daily" : ""}</p>
+          {activeMonth && !isDaily && (
             <button
               type="button"
               onClick={() => setSelMonth(null)}
@@ -261,14 +279,43 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
             </button>
           )}
         </div>
-        <GroupedBars flows={flows} selected={activeMonth} onSelect={(m) => setSelMonth((cur) => (cur === m ? null : m))} />
+
+        {/* Legend — tap a series to isolate its line */}
+        <div className="mb-1 flex flex-wrap gap-1.5">
+          {(["income", "expense", "saving", "investment"] as Kind[]).map((k) => {
+            const on = highlight === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setHighlight((cur) => (cur === k ? null : k))}
+                className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium capitalize transition-opacity ${
+                  highlight && !on ? "opacity-40" : ""
+                } ${on ? "text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"}`}
+                style={on ? { backgroundColor: KIND_COLOR[k] } : undefined}
+              >
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: KIND_COLOR[k] }} />
+                {k}
+              </button>
+            );
+          })}
+        </div>
+
+        <MultiLineChart
+          points={seriesPoints}
+          highlight={highlight}
+          daily={isDaily}
+          selected={isDaily ? null : activeMonth}
+          onSelect={isDaily ? undefined : (label) => setSelMonth((cur) => (cur === label ? null : label))}
+        />
+
         <div className="mt-3 grid grid-cols-3 gap-2 text-center">
           <Stat label="Income" value={scope.income} color="text-green" />
           <Stat label="Expense" value={scope.expense} color="text-red" />
           <Stat label="Net" value={scope.net} color={scope.net >= 0 ? "text-green" : "text-red"} signed />
         </div>
         <p className="mt-2 text-center text-[11px] text-paper-faint">
-          {activeMonth ? mLong(activeMonth) : `${flows.length} months`} · saved + invested{" "}
+          {isDaily ? mLong(anchor) : activeMonth ? mLong(activeMonth) : `${flows.length} months`} · saved + invested{" "}
           <span className="text-sky">{formatRupiahShort(scope.saving + scope.investment)}</span>
           {scope.income > 0 && (
             <> · rate <span className="text-paper-dim">{Math.round(((scope.saving + scope.investment) / scope.income) * 100)}%</span></>
@@ -545,55 +592,76 @@ function AreaChart({ points }: { points: { month: string; total: number }[] }) {
   );
 }
 
-// ---- Income vs expense grouped bars (SVG) ----
-function GroupedBars({
-  flows,
+// ---- Cash-flow multi-line (SVG): income / expense / saving / investment ----
+function MultiLineChart({
+  points,
+  highlight,
+  daily,
   selected,
   onSelect,
 }: {
-  flows: ChartData["flows"];
+  points: { label: string; income: number; expense: number; saving: number; investment: number }[];
+  highlight: Kind | null;
+  daily: boolean;
   selected: string | null;
-  onSelect: (month: string) => void;
+  onSelect?: (label: string) => void;
 }) {
   const W = 700;
   const H = 190;
   const pad = 10;
-  const n = flows.length;
-  const max = flows.reduce((m, f) => Math.max(m, f.income, f.expense), 0) || 1;
-  const groupW = (W - 2 * pad) / n;
-  const barW = Math.min(groupW * 0.32, 26);
-  const baseline = H - pad;
-  const h = (v: number) => (v / max) * (H - 2 * pad);
+  const n = points.length;
+  if (n < 2) return <p className="py-6 text-center text-xs text-paper-faint">Need more points to chart.</p>;
+
+  const SERIES: { key: Kind; color: string }[] = [
+    { key: "saving", color: C.sky },
+    { key: "investment", color: C.plum },
+    { key: "income", color: C.green },
+    { key: "expense", color: C.red },
+  ];
+  const max = points.reduce((m, p) => Math.max(m, p.income, p.expense, p.saving, p.investment), 0) || 1;
+  const x = (i: number) => pad + (i / (n - 1)) * (W - 2 * pad);
+  const y = (v: number) => pad + (1 - v / max) * (H - 2 * pad);
+  const labelOf = (lbl: string) => (daily ? String(Number(lbl.slice(8, 10))) : mShort(lbl));
+  const step = Math.max(1, Math.ceil(n / 6));
+  const selIdx = selected ? points.findIndex((p) => p.label === selected) : -1;
 
   return (
     <div className="mt-1">
       <div className="relative">
         <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full">
-          {flows.map((f, i) => {
-            const cx = pad + groupW * i + groupW / 2;
-            const inH = h(f.income);
-            const exH = h(f.expense);
+          {selIdx >= 0 && (
+            <line x1={x(selIdx)} y1={pad} x2={x(selIdx)} y2={H - pad} stroke={C.line} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+          )}
+          {SERIES.map((s) => {
+            const dim = highlight !== null && highlight !== s.key;
+            const d = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join(" ");
             return (
-              <g key={f.month}>
-                {selected === f.month && (
-                  <rect x={pad + groupW * i} y={pad} width={groupW} height={H - 2 * pad} fill={C.line} opacity="0.4" rx="4" />
-                )}
-                <rect x={cx - barW - 1} y={baseline - inH} width={barW} height={inH} rx="2" fill={C.green} />
-                <rect x={cx + 1} y={baseline - exH} width={barW} height={exH} rx="2" fill={C.red} />
-              </g>
+              <path
+                key={s.key}
+                d={d}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={dim ? 1.2 : 2.4}
+                opacity={dim ? 0.18 : 1}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                vectorEffect="non-scaling-stroke"
+              />
             );
           })}
         </svg>
-        <div className="absolute inset-0 flex">
-          {flows.map((f) => (
-            <button key={f.month} type="button" aria-label={f.month} className="flex-1" onClick={() => onSelect(f.month)} />
-          ))}
-        </div>
+        {onSelect && (
+          <div className="absolute inset-0 flex">
+            {points.map((p) => (
+              <button key={p.label} type="button" aria-label={p.label} className="flex-1" onClick={() => onSelect(p.label)} />
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex">
-        {flows.map((f) => (
-          <span key={f.month} className="flex-1 text-center text-[9px] text-paper-faint">
-            {mShort(f.month)}
+        {points.map((p, i) => (
+          <span key={p.label} className="flex-1 text-center text-[9px] text-paper-faint">
+            {i % step === 0 || i === n - 1 ? labelOf(p.label) : ""}
           </span>
         ))}
       </div>
