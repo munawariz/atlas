@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatRupiah, formatDateShort } from "@/lib/format";
 import { TXN_TYPES, type Transaction, type TxnType } from "@/lib/types";
-import { bulkUpdateWallets } from "./actions";
+import { bulkUpdateTransactions } from "./actions";
 
 const SIGN: Record<TxnType, { color: string; prefix: string }> = {
   expense: { color: "text-clay", prefix: "−" },
@@ -24,6 +24,16 @@ const WALLET_FIELDS: Record<TxnType, { source: boolean; dest: boolean }> = {
   income: { source: false, dest: true },
   withdrawal: { source: false, dest: true },
   transfer: { source: true, dest: true },
+};
+
+// Category kinds a type's category can be (empty = no category, e.g. transfers).
+const CATEGORY_KINDS: Record<TxnType, string[]> = {
+  expense: ["expense"],
+  income: ["income"],
+  saving: ["saving"],
+  investment: ["investment"],
+  withdrawal: ["saving", "investment"], // a withdrawal draws from a saving/investment bucket
+  transfer: [],
 };
 
 const typeLabel = (t: TxnType) => TXN_TYPES.find((x) => x.value === t)?.label ?? t;
@@ -53,6 +63,8 @@ export default function HistoryClient({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkSource, setBulkSource] = useState<number | "">("");
   const [bulkDest, setBulkDest] = useState<number | "">("");
+  const [bulkCategory, setBulkCategory] = useState<number | "">("");
+  const [bulkDate, setBulkDate] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -150,6 +162,8 @@ export default function HistoryClient({
   }, [transactions, selected]);
   const effType: TxnType | null = selType ?? (type !== "all" ? (type as TxnType) : null);
   const fields = selType ? WALLET_FIELDS[selType] : null;
+  const catKinds = selType ? CATEGORY_KINDS[selType] : [];
+  const bulkCatOptions = catKinds.length ? categories.filter((c) => catKinds.includes(c.kind)) : [];
   const canSelect = (t: Transaction) => !selType || t.type === selType || selected.has(t.id);
 
   const exitSelect = () => {
@@ -157,6 +171,8 @@ export default function HistoryClient({
     setSelected(new Set());
     setBulkSource("");
     setBulkDest("");
+    setBulkCategory("");
+    setBulkDate("");
     setError(null);
   };
 
@@ -177,14 +193,17 @@ export default function HistoryClient({
   };
 
   const apply = () => {
-    const source = fields?.source && bulkSource !== "" ? Number(bulkSource) : null;
-    const dest = fields?.dest && bulkDest !== "" ? Number(bulkDest) : null;
-    if (source == null && dest == null) {
-      setError("Pick a wallet to set.");
+    const patch: { source_wallet_id?: number; dest_wallet_id?: number; category_id?: number; occurred_on?: string } = {};
+    if (fields?.source && bulkSource !== "") patch.source_wallet_id = Number(bulkSource);
+    if (fields?.dest && bulkDest !== "") patch.dest_wallet_id = Number(bulkDest);
+    if (catKinds.length && bulkCategory !== "") patch.category_id = Number(bulkCategory);
+    if (bulkDate) patch.occurred_on = bulkDate;
+    if (Object.keys(patch).length === 0) {
+      setError("Pick a wallet, category, or date to set.");
       return;
     }
     startTransition(async () => {
-      const res = await bulkUpdateWallets([...selected], source, dest);
+      const res = await bulkUpdateTransactions([...selected], patch);
       if (res.error) {
         setError(res.error);
         return;
@@ -307,7 +326,7 @@ export default function HistoryClient({
 
           {selected.size === 0 ? (
             <p className="text-[11px] text-paper-faint">
-              Tap entries to select (one type at a time), then set their wallet.
+              Tap entries to select (one type at a time), then set their wallet, category, or date.
               {!effType && " Filter by a type to enable Select all."}
             </p>
           ) : (
@@ -352,6 +371,30 @@ export default function HistoryClient({
                     </select>
                   </label>
                 )}
+                {bulkCatOptions.length > 0 && (
+                  <label className="text-[11px] text-paper-dim">
+                    Set category
+                    <select
+                      value={bulkCategory}
+                      onChange={(e) => setBulkCategory(e.target.value === "" ? "" : Number(e.target.value))}
+                      className="field mt-1 [color-scheme:dark]"
+                    >
+                      <option value="" className="bg-ink-2">— keep current —</option>
+                      {bulkCatOptions.map((c) => (
+                        <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="text-[11px] text-paper-dim">
+                  Set date
+                  <input
+                    type="date"
+                    value={bulkDate}
+                    onChange={(e) => setBulkDate(e.target.value)}
+                    className="field mt-1 [color-scheme:dark]"
+                  />
+                </label>
               </div>
               {error && <p className="text-xs text-clay">{error}</p>}
               <button

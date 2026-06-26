@@ -29,20 +29,28 @@ export async function updateTransaction(
   redirect(historyHref(row.occurred_on));
 }
 
-// Bulk-set the source and/or destination wallet on many transactions at once (used by the
-// History select mode). The caller restricts the selection to a single type, so only the
-// wallet field(s) meaningful for that type are passed. The DB trigger reverses each old row
-// and applies the new one, so wallet balances stay correct.
-export async function bulkUpdateWallets(
+// Bulk-set the source/destination wallet, category, and/or date on many transactions at
+// once (used by the History select mode). The caller restricts the selection to a single
+// type, so only the fields meaningful for that type are passed. The DB trigger reverses each
+// old row and applies the new one, so wallet balances stay correct (incl. date/month moves).
+export interface BulkPatch {
+  source_wallet_id?: number;
+  dest_wallet_id?: number;
+  category_id?: number;
+  occurred_on?: string; // YYYY-MM-DD
+}
+
+export async function bulkUpdateTransactions(
   ids: number[],
-  source: number | null,
-  dest: number | null
+  patch: BulkPatch
 ): Promise<{ error?: string; updated?: number }> {
   if (!ids.length) return { error: "Nothing selected." };
-  const update: Record<string, number> = {};
-  if (source != null) update.source_wallet_id = source;
-  if (dest != null) update.dest_wallet_id = dest;
-  if (!Object.keys(update).length) return { error: "Pick a wallet to set." };
+  const update: Record<string, number | string> = {};
+  if (patch.source_wallet_id != null) update.source_wallet_id = patch.source_wallet_id;
+  if (patch.dest_wallet_id != null) update.dest_wallet_id = patch.dest_wallet_id;
+  if (patch.category_id != null) update.category_id = patch.category_id;
+  if (patch.occurred_on && /^\d{4}-\d{2}-\d{2}$/.test(patch.occurred_on)) update.occurred_on = patch.occurred_on;
+  if (!Object.keys(update).length) return { error: "Pick something to change." };
 
   const { error } = await supabaseServer().from("transactions").update(update).in("id", ids);
   if (error) return { error: error.message };
