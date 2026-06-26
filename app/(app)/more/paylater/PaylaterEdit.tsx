@@ -11,8 +11,10 @@ export default function PaylaterEdit({
   firstMonth,
   lastMonth,
   categoryId,
+  providerId,
   note,
   categories,
+  providers,
 }: {
   id: number;
   item: string;
@@ -20,8 +22,10 @@ export default function PaylaterEdit({
   firstMonth: string; // YYYY-MM-DD
   lastMonth: string; // YYYY-MM-DD
   categoryId: number | null;
+  providerId: number | null;
   note: string | null;
   categories: { id: number; name: string }[];
+  providers: { id: number; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -87,6 +91,17 @@ export default function PaylaterEdit({
                 />
               </label>
             </div>
+            {providers.length > 0 && (
+              <label className="block text-xs text-paper-dim">
+                Provider
+                <select name="provider_id" defaultValue={providerId ?? ""} className="field mt-1 [color-scheme:dark]">
+                  <option value="" className="bg-ink-2">No provider</option>
+                  {providers.map((pr) => (
+                    <option key={pr.id} value={pr.id} className="bg-ink-2">{pr.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="block text-xs text-paper-dim">
               Count in budget as
               <select name="category_id" defaultValue={categoryId ?? ""} className="field mt-1 [color-scheme:dark]">

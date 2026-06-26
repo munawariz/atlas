@@ -15,6 +15,7 @@ export interface Category {
   sort_order: number;
   archived: boolean;
   period: BudgetPeriod; // budget cadence bound to this category
+  is_installment: boolean; // expense category that tracks installment payments (per provider)
 }
 
 export interface Transaction {
@@ -70,6 +71,14 @@ export interface EffectiveBudget {
   recurring: boolean;
 }
 
+export interface PaylaterProvider {
+  id: number;
+  name: string;
+  sort_order: number;
+  archived: boolean;
+  category_id: number | null; // the provider's installment expense category
+}
+
 export interface PaylaterItem {
   id: number;
   item: string;
@@ -77,6 +86,7 @@ export interface PaylaterItem {
   first_month_date: string; // YYYY-MM-01
   last_month_date: string; // YYYY-MM-01
   category_id: number | null; // null = default "Cicilan Paylater"
+  provider_id: number | null; // optional grouping (ShopeePaylater, GoPayLater, …)
   note: string | null;
 }
 

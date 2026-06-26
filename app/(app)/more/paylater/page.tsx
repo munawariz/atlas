@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCategoriesByKind, getPaylaterItems, getPaylaterPayments, getWallets } from "@/lib/data";
+import { getCategoriesByKind, getPaylaterItems, getPaylaterPayments, getPaylaterProviders, getWallets } from "@/lib/data";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
@@ -9,6 +9,7 @@ import { addPaylater, deletePaylater } from "../actions";
 import PaylaterToggle from "./PaylaterToggle";
 import PaylaterEdit from "./PaylaterEdit";
 import PaylaterMonths from "./PaylaterMonths";
+import PaylaterPayGroup from "./PaylaterPayGroup";
 
 export const dynamic = "force-dynamic";
 
@@ -38,14 +39,18 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
   const ym = monthKey.slice(0, 7);
 
-  const [items, paid, wallets, expenseCats, settings] = await Promise.all([
+  const [items, paid, wallets, expenseCats, settings, providers] = await Promise.all([
     getPaylaterItems(),
     getPaylaterPayments(),
     getWallets(),
     getCategoriesByKind("expense"),
     getSettings(),
+    getPaylaterProviders(true), // include archived so existing groupings still render
   ]);
   const catName = new Map(expenseCats.map((c) => [c.id, c.name]));
+  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
+  // Active providers are offered in the add/edit pickers; archived ones only label groups.
+  const pickProviders = providers.filter((pr) => !pr.archived).map((pr) => ({ id: pr.id, name: pr.name }));
   // The default installment category (configurable; defaults to "Cicilan Paylater").
   const defaultCatId = mappedCategoryId(settings, expenseCats, "cat_paylater", "Cicilan Paylater", "expense");
   const defaultCatName = expenseCats.find((c) => c.id === defaultCatId)?.name ?? "Cicilan Paylater";
@@ -78,12 +83,101 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
   const dueTotal = owed.reduce((a, p) => a + p.monthly_amount, 0);
   const paidTotal = active.filter(isPaid).reduce((a, p) => a + p.monthly_amount, 0);
 
+  // Group the month's active installments by provider (provider sort_order; an archived
+  // provider still labels its group). Items with no/deleted provider fall into a trailing
+  // "Other" group. With no providers defined at all, the list renders flat (no headers).
+  type ActiveItem = (typeof active)[number];
+  const itemsByProvider = new Map<number, ActiveItem[]>();
+  const ungrouped: ActiveItem[] = [];
+  for (const p of active) {
+    const pid = p.provider_id ?? null;
+    if (pid && providerById.has(pid)) {
+      (itemsByProvider.get(pid) ?? itemsByProvider.set(pid, []).get(pid)!).push(p);
+    } else {
+      ungrouped.push(p);
+    }
+  }
+  const groups: { key: string; name: string | null; items: ActiveItem[] }[] = [];
+  for (const pr of providers) {
+    const its = itemsByProvider.get(pr.id);
+    if (its && its.length) groups.push({ key: String(pr.id), name: pr.name, items: its });
+  }
+  if (ungrouped.length) groups.push({ key: "none", name: null, items: ungrouped });
+  const grouped = groups.some((g) => g.name !== null);
+  const groupOwed = (its: ActiveItem[]) => its.filter((p) => !isPaid(p)).reduce((a, p) => a + p.monthly_amount, 0);
+
+  const renderCard = (p: ActiveItem) => {
+    const paid = isPaid(p);
+    const months = span(p.first_month_date, p.last_month_date);
+    const monthsLeft = span(monthKey, p.last_month_date); // this month through the last
+    const monthList = monthsBetween(p.first_month_date, p.last_month_date).map((m) => ({
+      month: m,
+      paid: paidSet.has(`${p.id}:${m}`),
+    }));
+    return (
+      <div key={p.id} className="card px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium text-paper">{p.item}</span>
+              {p.category_id && p.category_id !== defaultCatId && catName.get(p.category_id) && (
+                <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
+                  {catName.get(p.category_id)}
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-paper-dim">
+              {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
+              {p.note ? ` · ${p.note}` : ""}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <PaylaterToggle
+              itemId={p.id}
+              item={p.item}
+              month={monthKey}
+              amount={p.monthly_amount}
+              paid={paid}
+              hasExpense={hasExpense(p)}
+              wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
+            />
+            <PaylaterEdit
+              id={p.id}
+              item={p.item}
+              monthlyAmount={p.monthly_amount}
+              firstMonth={p.first_month_date}
+              lastMonth={p.last_month_date}
+              categoryId={p.category_id}
+              providerId={p.provider_id ?? null}
+              note={p.note}
+              categories={pickCats}
+              providers={pickProviders}
+            />
+            <form action={deletePaylater.bind(null, p.id)}>
+              <SubmitButton
+                label="Delete"
+                className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
+              >
+                <TrashIcon className="h-[18px] w-[18px]" />
+              </SubmitButton>
+            </form>
+          </div>
+        </div>
+        <PaylaterMonths months={monthList} current={monthKey} />
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4 pt-4">
       <div className="flex items-center justify-between">
         <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
         <h1 className="font-display text-xl font-medium tracking-tight text-paper">My Paylater</h1>
         <span className="w-12" />
+      </div>
+
+      <div className="flex justify-end">
+        <Link href="/more/providers" className="text-xs text-paper-dim active:text-paper">Manage providers ›</Link>
       </div>
 
       <MonthSwitcher monthKey={monthKey} basePath="/more/paylater" />
@@ -111,6 +205,17 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
             <input type="month" name="last_month" defaultValue={ym} className="field mt-1 [color-scheme:dark]" />
           </label>
         </div>
+        {pickProviders.length > 0 && (
+          <label className="block text-xs text-paper-dim">
+            Provider
+            <select name="provider_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
+              <option value="" className="bg-ink-2">No provider</option>
+              {pickProviders.map((pr) => (
+                <option key={pr.id} value={pr.id} className="bg-ink-2">{pr.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="block text-xs text-paper-dim">
           Count in budget as
           <select name="category_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
@@ -128,68 +233,41 @@ export default async function PaylaterPage({ searchParams }: { searchParams: Pro
 
       {active.length === 0 ? (
         <p className="pt-6 text-center text-sm text-paper-faint">Nothing due in {formatMonth(monthKey)}.</p>
-      ) : (
-        <div className="space-y-2">
-          {active.map((p) => {
-            const paid = isPaid(p);
-            const months = span(p.first_month_date, p.last_month_date);
-            const monthsLeft = span(monthKey, p.last_month_date); // this month through the last
-            const monthList = monthsBetween(p.first_month_date, p.last_month_date).map((m) => ({
-              month: m,
-              paid: paidSet.has(`${p.id}:${m}`),
-            }));
+      ) : grouped ? (
+        <div className="space-y-5">
+          {groups.map((g) => {
+            const unpaid = g.items.filter((p) => !isPaid(p));
             return (
-              <div key={p.id} className="card px-4 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-sm font-medium text-paper">{p.item}</span>
-                      {p.category_id && p.category_id !== defaultCatId && catName.get(p.category_id) && (
-                        <span className="shrink-0 rounded bg-plum/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-plum">
-                          {catName.get(p.category_id)}
-                        </span>
+              <section key={g.key} className="space-y-2">
+                <div className="flex items-center justify-between gap-2 px-1">
+                  <div className="flex items-baseline gap-2">
+                    <h2 className="label text-amber">{g.name ?? "Other"}</h2>
+                    <span className="text-xs text-paper-faint">
+                      {g.items.length} item{g.items.length > 1 ? "s" : ""}
+                      {groupOwed(g.items) > 0 && (
+                        <>
+                          {" · "}
+                          <span className="text-sand">{formatRupiah(groupOwed(g.items))}</span> owed
+                        </>
                       )}
-                    </div>
-                    <div className="text-xs text-paper-dim">
-                      {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
-                      {p.note ? ` · ${p.note}` : ""}
-                    </div>
+                    </span>
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                  <PaylaterToggle
-                    itemId={p.id}
-                    item={p.item}
-                    month={monthKey}
-                    amount={p.monthly_amount}
-                    paid={paid}
-                    hasExpense={hasExpense(p)}
-                    wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-                  />
-                  <PaylaterEdit
-                    id={p.id}
-                    item={p.item}
-                    monthlyAmount={p.monthly_amount}
-                    firstMonth={p.first_month_date}
-                    lastMonth={p.last_month_date}
-                    categoryId={p.category_id}
-                    note={p.note}
-                    categories={pickCats}
-                  />
-                  <form action={deletePaylater.bind(null, p.id)}>
-                    <SubmitButton
-                      label="Delete"
-                      className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
-                    >
-                      <TrashIcon className="h-[18px] w-[18px]" />
-                    </SubmitButton>
-                  </form>
-                  </div>
+                  {unpaid.length > 0 && (
+                    <PaylaterPayGroup
+                      groupName={g.name ?? "Other"}
+                      items={unpaid.map((p) => ({ id: p.id, item: p.item, amount: p.monthly_amount }))}
+                      month={monthKey}
+                      wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
+                    />
+                  )}
                 </div>
-                <PaylaterMonths months={monthList} current={monthKey} />
-              </div>
+                {g.items.map(renderCard)}
+              </section>
             );
           })}
         </div>
+      ) : (
+        <div className="space-y-2">{active.map(renderCard)}</div>
       )}
     </div>
   );

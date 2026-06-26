@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/more/forex", label: "Forex", desc: "Foreign currency holdings (live rate)" },
   { href: "/more/budgets", label: "Budgets", desc: "Set monthly targets" },
   { href: "/more/paylater", label: "My Paylater", desc: "Installment items" },
+  { href: "/more/providers", label: "Installment providers", desc: "Group paylater by provider (add / edit / delete)" },
   { href: "/more/loans", label: "Loans", desc: "Money people owe you each month" },
   { href: "/more/wallets", label: "Wallets", desc: "Add / archive wallets" },
   { href: "/more/categories", label: "Categories", desc: "Add / archive categories" },

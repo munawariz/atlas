@@ -2,9 +2,8 @@ import Link from "next/link";
 import { getCategories } from "@/lib/data";
 import type { CategoryKind } from "@/lib/types";
 import SubmitButton from "@/components/SubmitButton";
-import ManageRow from "../ManageRow";
-import CategoryPeriodSelect from "./CategoryPeriodSelect";
-import { addCategory, moveCategory, renameCategory, toggleCategoryArchived } from "../actions";
+import CategoryList from "./CategoryList";
+import { addCategory } from "../actions";
 
 export const dynamic = "force-dynamic";
 
@@ -43,26 +42,7 @@ export default async function CategoriesPage() {
         return (
           <section key={k.kind}>
             <h2 className="label mb-2">{k.label}</h2>
-            <div className="card overflow-hidden">
-              {rows.map((c, i) => (
-                <div key={c.id} className={i > 0 ? "hr-dash border-t" : ""}>
-                  <ManageRow
-                    id={c.id}
-                    name={c.name}
-                    archived={c.archived}
-                    isFirst={i === 0}
-                    isLast={i === rows.length - 1}
-                    rename={renameCategory}
-                    move={moveCategory}
-                    toggleArchive={toggleCategoryArchived}
-                  />
-                  <div className="flex items-center justify-end gap-2 px-4 pb-2.5">
-                    <span className="text-[10px] uppercase tracking-wider text-paper-faint">Budget period</span>
-                    <CategoryPeriodSelect id={c.id} period={c.period} />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CategoryList kind={k.kind} categories={rows} />
           </section>
         );
       })}

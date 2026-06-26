@@ -2,12 +2,13 @@
 
 import { useState, useTransition } from "react";
 import SubmitButton from "@/components/SubmitButton";
-import { PencilIcon, CheckIcon, ChevronUpIcon, ChevronDownIcon } from "@/components/icons";
+import { PencilIcon, CheckIcon, ChevronUpIcon, ChevronDownIcon, TrashIcon } from "@/components/icons";
 
 type Dir = "up" | "down";
 
 // A manageable list row (wallet or category): inline rename, move up/down, archive.
-// The server actions are passed in so the same row works for both lists.
+// The server actions are passed in so the same row works for both lists. An optional
+// `remove` adds a hard-delete button (used where deletion is safe, e.g. providers).
 export default function ManageRow({
   id,
   name,
@@ -17,6 +18,9 @@ export default function ManageRow({
   rename,
   move,
   toggleArchive,
+  remove,
+  removeConfirm,
+  dragHandle,
 }: {
   id: number;
   name: string;
@@ -24,8 +28,11 @@ export default function ManageRow({
   isFirst: boolean;
   isLast: boolean;
   rename: (id: number, formData: FormData) => Promise<void>;
-  move: (id: number, dir: Dir) => Promise<void>;
+  move?: (id: number, dir: Dir) => Promise<void>; // omit to use a drag handle instead of arrows
   toggleArchive: (id: number) => Promise<void>;
+  remove?: (id: number) => Promise<void>;
+  removeConfirm?: string;
+  dragHandle?: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -66,20 +73,25 @@ export default function ManageRow({
 
   return (
     <div className="flex items-center justify-between gap-2 px-4 py-2">
+      {dragHandle}
       <span className={`min-w-0 flex-1 truncate text-sm ${archived ? "text-paper-faint line-through" : "text-paper"}`}>
         {name}
       </span>
       <div className="flex shrink-0 items-center gap-0.5">
-        <form action={move.bind(null, id, "up")}>
-          <ArrowBtn disabled={isFirst} label="Move up">
-            <ChevronUpIcon className="h-[18px] w-[18px]" />
-          </ArrowBtn>
-        </form>
-        <form action={move.bind(null, id, "down")}>
-          <ArrowBtn disabled={isLast} label="Move down">
-            <ChevronDownIcon className="h-[18px] w-[18px]" />
-          </ArrowBtn>
-        </form>
+        {move && (
+          <>
+            <form action={move.bind(null, id, "up")}>
+              <ArrowBtn disabled={isFirst} label="Move up">
+                <ChevronUpIcon className="h-[18px] w-[18px]" />
+              </ArrowBtn>
+            </form>
+            <form action={move.bind(null, id, "down")}>
+              <ArrowBtn disabled={isLast} label="Move down">
+                <ChevronDownIcon className="h-[18px] w-[18px]" />
+              </ArrowBtn>
+            </form>
+          </>
+        )}
         <button
           type="button"
           onClick={() => setEditing(true)}
@@ -93,6 +105,21 @@ export default function ManageRow({
             {archived ? "Restore" : "Archive"}
           </SubmitButton>
         </form>
+        {remove && (
+          <form
+            action={remove.bind(null, id)}
+            onSubmit={(e) => {
+              if (!confirm(removeConfirm ?? `Delete "${name}"? This can't be undone.`)) e.preventDefault();
+            }}
+          >
+            <SubmitButton
+              label="Delete"
+              className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
+            >
+              <TrashIcon className="h-[18px] w-[18px]" />
+            </SubmitButton>
+          </form>
+        )}
       </div>
     </div>
   );

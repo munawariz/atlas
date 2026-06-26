@@ -17,3 +17,23 @@ insert into categories (kind, name, sort_order) values
   ('saving', 'Trip To Japan', 1),
   ('investment', 'Stock', 1), ('investment', 'Bonds', 2), ('investment', 'Forex', 3)
 on conflict (kind, name) do nothing;
+
+-- Installment expense categories — one per provider, plus the default. Marked installment
+-- so the stats page can track them separately from normal spending.
+insert into categories (kind, name, sort_order, is_installment) values
+  ('expense', 'ShopeePaylater', 10, true),
+  ('expense', 'GoPayLater', 11, true),
+  ('expense', 'Credit Card', 12, true),
+  ('expense', 'Cicilan Paylater', 13, true)
+on conflict (kind, name) do nothing;
+
+-- Starter installment providers — group paylater items by where they're financed, each
+-- linked 1:1 to its installment category. Manage under More → Installment providers.
+insert into paylater_providers (name, sort_order) values
+  ('ShopeePaylater', 1), ('GoPayLater', 2), ('Credit Card', 3)
+on conflict (name) do nothing;
+
+update paylater_providers p
+  set category_id = c.id
+  from categories c
+  where c.kind = 'expense' and c.name = p.name and p.category_id is null;

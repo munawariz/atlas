@@ -78,6 +78,10 @@ create table if not exists recurring_budgets (
 -- versioning; the other periods use a single recurring rule whose amount is the
 -- per-period limit. Weeks run Monday→Sunday.
 alter table categories add column if not exists period text not null default 'monthly';
+-- Marks an expense category as an installment category (one per paylater provider, plus the
+-- default "Cicilan Paylater"). Lets the stats page separate installment spend from normal.
+alter table categories add column if not exists is_installment boolean not null default false;
+update categories set is_installment = true where kind = 'expense' and name = 'Cicilan Paylater' and not is_installment;
 
 -- Key/value app settings. Lets a self-hosting clone map auto-transaction categories &
 -- default wallets to their own setup instead of hardcoded names (see lib/settings.ts).
@@ -99,6 +103,29 @@ create table if not exists paylater_items (
   note              text
 );
 alter table paylater_items add column if not exists category_id bigint references categories(id) on delete set null;
+
+-- Installment providers (e.g. ShopeePaylater, GoPayLater, Credit Card) — an optional
+-- grouping label for paylater items. Deleting a provider just ungroups its items.
+create table if not exists paylater_providers (
+  id         bigint  generated always as identity primary key,
+  name       text    not null unique,
+  sort_order integer not null default 0,
+  archived   boolean not null default false,
+  category_id bigint references categories(id) on delete set null  -- the provider's installment expense category
+);
+alter table paylater_providers add column if not exists category_id bigint references categories(id) on delete set null;
+alter table paylater_items add column if not exists provider_id bigint references paylater_providers(id) on delete set null;
+
+-- Backfill: give every provider a 1:1 installment expense category (named after it), so
+-- existing providers are consistent without waiting for their first payment. Idempotent.
+insert into categories (kind, name, is_installment)
+  select 'expense', p.name, true from paylater_providers p
+  where p.category_id is null
+  on conflict (kind, name) do update set is_installment = true;
+update paylater_providers p
+  set category_id = c.id
+  from categories c
+  where c.kind = 'expense' and c.name = p.name and p.category_id is null;
 
 -- Migrate older 1..12 month-index columns (2026 only) to real dates. Runs once.
 do $$

@@ -10,6 +10,7 @@ import type {
   LoanPayment,
   PaylaterItem,
   PaylaterPayment,
+  PaylaterProvider,
   Transaction,
   TxnType,
   Wallet,
@@ -82,8 +83,12 @@ export async function getCategories(includeArchived = false): Promise<Category[]
   if (!includeArchived) q = q.eq("archived", false);
   const { data, error } = await q.order("kind").order("sort_order").order("id");
   if (error) throw error;
-  // Default `period` so the app works before the column is migrated (everything monthly).
-  return (data ?? []).map((c) => ({ ...c, period: (c as { period?: string }).period ?? "monthly" })) as Category[];
+  // Default new columns so the app works before they're migrated.
+  return (data ?? []).map((c) => ({
+    ...c,
+    period: (c as { period?: string }).period ?? "monthly",
+    is_installment: (c as { is_installment?: boolean }).is_installment ?? false,
+  })) as Category[];
 }
 
 export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[]> {
@@ -95,7 +100,11 @@ export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[
     .order("sort_order")
     .order("id");
   if (error) throw error;
-  return (data ?? []).map((c) => ({ ...c, period: (c as { period?: string }).period ?? "monthly" })) as Category[];
+  return (data ?? []).map((c) => ({
+    ...c,
+    period: (c as { period?: string }).period ?? "monthly",
+    is_installment: (c as { is_installment?: boolean }).is_installment ?? false,
+  })) as Category[];
 }
 
 export async function walletMap(): Promise<Map<number, string>> {
@@ -337,6 +346,14 @@ export async function getPaylaterPayments(): Promise<PaylaterPayment[]> {
   const { data, error } = await supabaseServer().from("paylater_payments").select("*");
   if (error) throw error;
   return (data ?? []) as PaylaterPayment[];
+}
+
+export async function getPaylaterProviders(includeArchived = false): Promise<PaylaterProvider[]> {
+  let q = supabaseServer().from("paylater_providers").select("*");
+  if (!includeArchived) q = q.eq("archived", false);
+  const { data, error } = await q.order("sort_order").order("id");
+  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
+  return (data ?? []) as PaylaterProvider[];
 }
 
 export async function getLoans(): Promise<Loan[]> {

@@ -7,6 +7,7 @@ import {
   getMonthTransactions,
   getPaylaterItems,
   getPaylaterPayments,
+  getPaylaterProviders,
   getPeriodActuals,
   getWallets,
   prevMonthKey,
@@ -18,6 +19,8 @@ import ForexToggleValue from "@/components/ForexToggleValue";
 import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
+import StatsTabs from "./StatsTabs";
+import InstallmentsTab from "./InstallmentsTab";
 import Link from "next/link";
 import { ChartIcon } from "@/components/icons";
 import PrivacyToggle from "@/components/PrivacyToggle";
@@ -41,7 +44,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const monthKey = `${selectedDay.slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, loans, payments, derivedStart, forexAccounts, forexUnits, settings] =
+  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexUnits, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
@@ -50,6 +53,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       getWallets(),
       getPaylaterItems(),
       getPaylaterPayments(),
+      getPaylaterProviders(true),
       getLoans(),
       getLoanPayments(),
       deriveWalletBalances(prevMonthKey(monthKey)), // per-wallet balance at the start of this month
@@ -127,15 +131,22 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   // active that month.
   const catList = [...cats.values()];
   const loanById = new Map(loans.map((l) => [l.id, l]));
+  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
   const hutangCatId = mappedCategoryId(settings, catList, "cat_loan", "Hutang", "income");
   const cicilanCatId = mappedCategoryId(settings, catList, "cat_paylater", "Cicilan Paylater", "expense");
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
+  // The installment expense category an item rolls up to: its provider's category, else its
+  // own, else the default paylater category.
+  const installmentCatOf = (p: (typeof paylater)[number]) => {
+    const prov = p.provider_id ? providerById.get(p.provider_id) : null;
+    return prov?.category_id ?? p.category_id ?? cicilanCatId;
+  };
   const instByCat = new Map<number, number>();
   for (const p of paylater) {
     if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.category_id ?? cicilanCatId;
+    const catId = installmentCatOf(p);
     if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
   }
 
@@ -145,7 +156,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const budgetGroups: Record<BudgetPeriod, BRow[]> = { daily: [], weekly: [], monthly: [], yearly: [] };
   const monthlyByCat = new Map<number, number>();
   for (const b of budgets) {
-    if (b.category_id === hutangCatId || b.category_id === cicilanCatId) continue; // auto rows handled below
+    // Loan + installment categories are auto-derived from schedules below, not user budgets.
+    if (b.category_id === hutangCatId || cats.get(b.category_id)?.is_installment) continue;
     const cat = cats.get(b.category_id);
     if (!cat || b.amount <= 0) continue;
     if (cat.period === "monthly") {
@@ -155,11 +167,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       budgetGroups[cat.period].push({ id: b.category_id, name: cat.name, budget: b.amount, actual, pct: b.amount ? (actual / b.amount) * 100 : 0, auto: false });
     }
   }
-  // Monthly group merges user budgets + auto values + installment additions.
+  // Monthly group merges user budgets + auto values. Loan = expected collection. An
+  // installment category is authoritative (its budget = installments active that month); a
+  // normal category an installment happens to point at just adds on top of its user budget.
   if (hutangCatId) monthlyByCat.set(hutangCatId, loanExpected);
   for (const [catId, amt] of instByCat) {
-    if (catId === cicilanCatId) monthlyByCat.set(catId, amt); // paylater category = installments only
-    else monthlyByCat.set(catId, (monthlyByCat.get(catId) ?? 0) + amt); // custom: add on top
+    if (cats.get(catId)?.is_installment) monthlyByCat.set(catId, amt);
+    else monthlyByCat.set(catId, (monthlyByCat.get(catId) ?? 0) + amt);
   }
   for (const [catId, amount] of monthlyByCat) {
     const cat = cats.get(catId);
@@ -171,7 +185,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       budget: amount,
       actual,
       pct: amount ? (actual / amount) * 100 : 0,
-      auto: catId === hutangCatId || catId === cicilanCatId,
+      auto: catId === hutangCatId || !!cat.is_installment,
     });
   }
   for (const k of ["daily", "weekly", "monthly", "yearly"] as BudgetPeriod[]) {
@@ -222,10 +236,49 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     if (p.period_month === monthKey) loanDue += loan.installment;
   }
 
+  // ---- Installments tab: this month's installments grouped by provider ----
+  type ProvItem = { id: number; item: string; amount: number; paid: boolean };
+  const activePL = paylater.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
+  const provBuckets = new Map<number, ProvItem[]>();
+  const provUngrouped: ProvItem[] = [];
+  for (const p of activePL) {
+    const it: ProvItem = { id: p.id, item: p.item, amount: p.monthly_amount, paid: paylaterPaidSet.has(`${p.id}:${monthKey}`) };
+    const prov = p.provider_id ? providerById.get(p.provider_id) : null;
+    if (prov) (provBuckets.get(prov.id) ?? provBuckets.set(prov.id, []).get(prov.id)!).push(it);
+    else provUngrouped.push(it);
+  }
+  const provGroups: { key: string; name: string; total: number; paid: number; owed: number; items: ProvItem[] }[] = [];
+  const pushGroup = (key: string, name: string, items: ProvItem[]) => {
+    const total = items.reduce((a, it) => a + it.amount, 0);
+    const paidAmt = items.filter((it) => it.paid).reduce((a, it) => a + it.amount, 0);
+    provGroups.push({ key, name, items, total, paid: paidAmt, owed: total - paidAmt });
+  };
+  for (const pr of providers) {
+    const its = provBuckets.get(pr.id);
+    if (its && its.length) pushGroup(String(pr.id), pr.name, its);
+  }
+  if (provUngrouped.length) pushGroup("none", "Other", provUngrouped);
+  const installmentsTotal = provGroups.reduce((a, g) => a + g.total, 0);
+  const installmentsPaid = provGroups.reduce((a, g) => a + g.paid, 0);
+
+  const providersTab = (
+    <InstallmentsTab
+      month={monthKey}
+      total={installmentsTotal}
+      paid={installmentsPaid}
+      groups={provGroups}
+    />
+  );
+
   return (
     <div className="privacy-scope stagger space-y-5 pt-4">
       <RefreshOnFocus />
       <DaySwitcher day={selectedDay} />
+
+      <StatsTabs
+        providers={providersTab}
+        overview={
+          <div className="stagger space-y-5">
 
       {/* Networth hero */}
       <div className="card relative overflow-hidden p-6">
@@ -468,6 +521,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           Nothing logged for {monthName(m)} {y} yet.
         </p>
       )}
+          </div>
+        }
+      />
     </div>
   );
 }

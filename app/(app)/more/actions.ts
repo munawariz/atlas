@@ -114,6 +114,32 @@ export async function renameCategory(id: number, formData: FormData) {
   revalidatePath("/more/categories");
 }
 
+// Permanently delete an ARCHIVED category. Safe by FK design: past transactions become
+// uncategorized (category_id → null), budgets/recurring budgets cascade away, and paylater
+// items/providers unlink. Only archived categories qualify (mirrors the UI gate).
+export async function deleteCategory(id: number) {
+  const sb = supabaseServer();
+  const { data } = await sb.from("categories").select("archived").eq("id", id).maybeSingle();
+  if (!data?.archived) return; // must archive first
+  await sb.from("categories").delete().eq("id", id);
+  revalidatePath("/more/categories");
+  revalidatePath("/dashboard");
+  revalidatePath("/charts");
+}
+
+// Mark/unmark an expense category as an installment category — keeps its spend separate from
+// normal expenses on the stats page (provider categories are marked automatically).
+export async function toggleCategoryInstallment(id: number) {
+  const sb = supabaseServer();
+  const { data } = await sb.from("categories").select("is_installment").eq("id", id).maybeSingle();
+  await sb
+    .from("categories")
+    .update({ is_installment: !(data as { is_installment?: boolean } | null)?.is_installment })
+    .eq("id", id);
+  revalidatePath("/more/categories");
+  revalidatePath("/dashboard");
+}
+
 // Bind a budgeting cadence to a category. Daily/weekly/monthly all share the month-scoped
 // storage, so switching among them just reinterprets the amount. Switching to YEARLY
 // collapses the budget to a single whole-year rule (latest amount) and drops per-month
@@ -151,6 +177,15 @@ export async function setCategoryPeriod(id: number, periodRaw: string) {
   revalidatePath("/more/categories");
   revalidatePath("/more/budgets");
   revalidatePath("/dashboard");
+}
+
+// Persist a drag-and-drop reorder: `orderedIds` is one kind's categories in their new order;
+// re-number that kind's sort_order 0..n to match.
+export async function reorderCategories(orderedIds: number[]) {
+  if (!orderedIds.length) return;
+  const sb = supabaseServer();
+  await Promise.all(orderedIds.map((id, i) => sb.from("categories").update({ sort_order: i }).eq("id", id)));
+  revalidatePath("/more/categories");
 }
 
 // Reorder within the category's own kind (re-numbering that kind's sort_order 0..n).
@@ -212,6 +247,124 @@ export async function setBudget(formData: FormData) {
   revalidatePath("/dashboard");
 }
 
+// The provider's installment expense category: its linked category if set & still present,
+// otherwise an expense category named after the provider (created + marked installment),
+// linked back onto the provider so the two stay 1:1.
+async function resolveProviderCategory(
+  sb: ReturnType<typeof supabaseServer>,
+  prov: { id: number; name: string; category_id: number | null }
+): Promise<number | null> {
+  if (prov.category_id) {
+    const { data: exists } = await sb.from("categories").select("id").eq("id", prov.category_id).maybeSingle();
+    if (exists) return prov.category_id;
+  }
+  let { data: cat } = await sb
+    .from("categories")
+    .select("id")
+    .eq("kind", "expense")
+    .eq("name", prov.name)
+    .maybeSingle();
+  if (cat) {
+    await sb.from("categories").update({ is_installment: true }).eq("id", cat.id);
+  } else {
+    const ins = await sb
+      .from("categories")
+      .insert({ kind: "expense", name: prov.name, is_installment: true })
+      .select("id")
+      .single();
+    cat = ins.data;
+  }
+  if (cat?.id) await sb.from("paylater_providers").update({ category_id: cat.id }).eq("id", prov.id);
+  return cat?.id ?? null;
+}
+
+// The expense category an installment payment books under: the provider's installment
+// category when the item has a provider; else the item's own category; else the default
+// "Cicilan Paylater" (marked installment).
+async function resolvePaylaterExpenseCategory(
+  sb: ReturnType<typeof supabaseServer>,
+  item: { provider_id: number | null; category_id: number | null }
+): Promise<number | null> {
+  if (item.provider_id) {
+    const { data: prov } = await sb
+      .from("paylater_providers")
+      .select("id, name, category_id")
+      .eq("id", item.provider_id)
+      .maybeSingle();
+    if (prov) return resolveProviderCategory(sb, prov as { id: number; name: string; category_id: number | null });
+  }
+  if (item.category_id) return item.category_id;
+  const id = await resolveCategoryId("cat_paylater", "Cicilan Paylater", "expense");
+  if (id) await sb.from("categories").update({ is_installment: true }).eq("id", id);
+  return id;
+}
+
+// ---- Paylater providers ----
+// A grouping label for installments (ShopeePaylater, GoPayLater, Credit Card, …) that also
+// owns a 1:1 installment expense category, so each provider's payments are tracked separately.
+// Same manage pattern as wallets/categories, plus a true delete (items fall back to "no
+// provider"; the category is kept for its history).
+export async function addPaylaterProvider(formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("paylater_providers")
+    .select("sort_order")
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  const next = (data?.[0]?.sort_order ?? 0) + 1;
+  const { data: prov } = await sb
+    .from("paylater_providers")
+    .insert({ name, sort_order: next })
+    .select("id, name, category_id")
+    .single();
+  if (prov) await resolveProviderCategory(sb, prov as { id: number; name: string; category_id: number | null });
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+  revalidatePath("/more/categories");
+}
+
+export async function renamePaylaterProvider(id: number, formData: FormData) {
+  const name = String(formData.get("name") ?? "").trim();
+  if (!name) return;
+  const sb = supabaseServer();
+  const { data: prov } = await sb.from("paylater_providers").select("category_id").eq("id", id).maybeSingle();
+  await sb.from("paylater_providers").update({ name }).eq("id", id);
+  // Keep the linked installment category's name in sync (best-effort; a name clash is ignored).
+  if (prov?.category_id) await sb.from("categories").update({ name }).eq("id", prov.category_id);
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+  revalidatePath("/more/categories");
+}
+
+export async function togglePaylaterProviderArchived(id: number) {
+  const sb = supabaseServer();
+  const { data } = await sb.from("paylater_providers").select("archived").eq("id", id).maybeSingle();
+  await sb.from("paylater_providers").update({ archived: !data?.archived }).eq("id", id);
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+}
+
+export async function movePaylaterProvider(id: number, dir: "up" | "down") {
+  const sb = supabaseServer();
+  const { data } = await sb.from("paylater_providers").select("id").order("sort_order").order("id");
+  const list = (data ?? []) as { id: number }[];
+  const i = list.findIndex((p) => p.id === id);
+  const j = dir === "up" ? i - 1 : i + 1;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  await Promise.all(list.map((p, k) => sb.from("paylater_providers").update({ sort_order: k }).eq("id", p.id)));
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+}
+
+export async function deletePaylaterProvider(id: number) {
+  await supabaseServer().from("paylater_providers").delete().eq("id", id);
+  revalidatePath("/more/providers");
+  revalidatePath("/more/paylater");
+}
+
 // ---- Paylater ----
 export async function addPaylater(formData: FormData) {
   const item = String(formData.get("item") ?? "").trim();
@@ -224,6 +377,7 @@ export async function addPaylater(formData: FormData) {
     first_month_date: first,
     last_month_date: last < first ? first : last,
     category_id: optInt(formData.get("category_id")),
+    provider_id: optInt(formData.get("provider_id")),
     note: String(formData.get("note") ?? "").trim() || null,
   });
   revalidatePath("/more/paylater");
@@ -244,6 +398,7 @@ export async function editPaylater(formData: FormData) {
       first_month_date: first,
       last_month_date: last < first ? first : last,
       category_id: optInt(formData.get("category_id")),
+      provider_id: optInt(formData.get("provider_id")),
       note: String(formData.get("note") ?? "").trim() || null,
     })
     .eq("id", id);
@@ -271,7 +426,7 @@ export async function payPaylaterMonth(
   const sb = supabaseServer();
   const { data: item } = await sb
     .from("paylater_items")
-    .select("item, monthly_amount, category_id")
+    .select("item, monthly_amount, category_id, provider_id")
     .eq("id", itemId)
     .maybeSingle();
   if (!item) return;
@@ -280,9 +435,8 @@ export async function payPaylaterMonth(
   if (!skipTxn) {
     if (!walletId) return;
     const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
-    // Book the expense under the item's custom category, or the configured paylater category.
-    let categoryId = item.category_id as number | null;
-    if (!categoryId) categoryId = await resolveCategoryId("cat_paylater", "Cicilan Paylater", "expense");
+    // Book the expense under the provider's installment category (or the item's / default one).
+    const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null; category_id: number | null });
     const txn = await sb
       .from("transactions")
       .insert({
@@ -301,6 +455,67 @@ export async function payPaylaterMonth(
   await sb
     .from("paylater_payments")
     .upsert({ item_id: itemId, month, expense_txn_id: expenseTxnId }, { onConflict: "item_id,month" });
+
+  revalidatePath("/more/paylater");
+  revalidatePath("/dashboard");
+  revalidatePath("/history");
+}
+
+// Pay every still-owed installment in one go (used by a provider group's "Pay all"):
+// books one expense per item from the chosen wallet and marks each month paid. Already-paid
+// items are skipped. skipTxn = mark paid only, no expenses. Resolves the default category once.
+export async function payPaylaterMonths(
+  itemIds: number[],
+  month: string,
+  walletId: number,
+  dateISO: string,
+  skipTxn = false
+) {
+  if (!itemIds.length) return;
+  if (!skipTxn && !walletId) return;
+  const sb = supabaseServer();
+  const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
+
+  for (const itemId of itemIds) {
+    // Skip months already marked paid so re-running never double-books.
+    const { data: already } = await sb
+      .from("paylater_payments")
+      .select("id")
+      .eq("item_id", itemId)
+      .eq("month", month)
+      .maybeSingle();
+    if (already) continue;
+
+    const { data: item } = await sb
+      .from("paylater_items")
+      .select("item, monthly_amount, category_id, provider_id")
+      .eq("id", itemId)
+      .maybeSingle();
+    if (!item) continue;
+
+    let expenseTxnId: number | null = null;
+    if (!skipTxn) {
+      // Each item books under its provider's installment category (or its own / the default).
+      const categoryId = await resolvePaylaterExpenseCategory(sb, item as { provider_id: number | null; category_id: number | null });
+      const txn = await sb
+        .from("transactions")
+        .insert({
+          occurred_on,
+          type: "expense",
+          amount: item.monthly_amount,
+          description: item.item,
+          category_id: categoryId,
+          source_wallet_id: walletId,
+        })
+        .select("id")
+        .single();
+      expenseTxnId = txn.data?.id ?? null;
+    }
+
+    await sb
+      .from("paylater_payments")
+      .upsert({ item_id: itemId, month, expense_txn_id: expenseTxnId }, { onConflict: "item_id,month" });
+  }
 
   revalidatePath("/more/paylater");
   revalidatePath("/dashboard");
