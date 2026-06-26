@@ -8,11 +8,10 @@ import {
   getPaylaterItems,
   getPaylaterPayments,
   getPaylaterProviders,
-  getPeriodActuals,
   getWallets,
   prevMonthKey,
 } from "@/lib/data";
-import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
+import { type BudgetPeriod } from "@/lib/types";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
@@ -43,11 +42,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const monthKey = `${selectedDay.slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, periodActuals, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexTxns, settings] =
+  const [txns, budgets, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexTxns, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
-      getPeriodActuals(selectedDay),
       categoryMap(),
       getWallets(),
       getPaylaterItems(),
@@ -94,15 +92,52 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .filter((a) => a.units !== 0 || a.dayDelta !== 0);
 
   const sum = (t: typeof txns) => t.reduce((a, x) => a + x.amount, 0);
-  const totalIncome = sum(dayTxns.filter((t) => t.type === "income"));
-  const totalExpense = sum(dayTxns.filter((t) => t.type === "expense"));
+  // Income / Expense / Net summarise the whole selected month (not just the day).
+  const totalIncome = sum(txns.filter((t) => t.type === "income"));
+  const totalExpense = sum(txns.filter((t) => t.type === "expense"));
   const net = totalIncome - totalExpense;
 
-  const byCat = new Map<number, number>();
-  for (const t of dayTxns) {
-    if (t.type === "expense" && t.category_id) byCat.set(t.category_id, (byCat.get(t.category_id) ?? 0) + t.amount);
+  // The selected DAY only — a focused daily spending tracker (the rest of the page is monthly).
+  const daySpent = sum(dayTxns.filter((t) => t.type === "expense"));
+  const dayEarned = sum(dayTxns.filter((t) => t.type === "income"));
+  const dayExpenses = dayTxns
+    .filter((t) => t.type === "expense")
+    .map((t) => {
+      const cat = t.category_id ? cats.get(t.category_id)?.name ?? "" : "";
+      const desc = t.description?.trim() || "";
+      return { id: t.id, primary: desc || cat || "Expense", secondary: desc && cat ? cat : "", amt: t.amount };
+    })
+    .sort((a, b) => b.amt - a.amt);
+
+  // Month actuals + per-category transactions for the WHOLE selected month — shared by the
+  // budget panel and the spending breakdown, so both stay consistent with the monthly
+  // Income/Expense above (and don't read ~0 when you switch to a past month). Transfers and
+  // withdrawals are excluded so each sum matches the budgeted category's own kind.
+  const walletName = new Map(wallets.map((w) => [w.id, w.name]));
+  const monthActual = new Map<number, number>();
+  const itemsByCat = new Map<number, { desc: string; amt: number; date: string; wallet: string }[]>();
+  for (const t of txns) {
+    if (!t.category_id || t.type === "transfer" || t.type === "withdrawal") continue;
+    monthActual.set(t.category_id, (monthActual.get(t.category_id) ?? 0) + t.amount);
+    const arr = itemsByCat.get(t.category_id) ?? [];
+    arr.push({
+      desc: t.description || "—",
+      amt: t.amount,
+      date: t.occurred_on.slice(0, 10),
+      wallet: t.source_wallet_id
+        ? walletName.get(t.source_wallet_id) ?? "—"
+        : t.dest_wallet_id
+          ? walletName.get(t.dest_wallet_id) ?? "—"
+          : "—",
+    });
+    itemsByCat.set(t.category_id, arr);
   }
-  const spendRows = [...byCat.entries()]
+  // Newest first within each category's expanded list (amount breaks ties on the same day).
+  for (const arr of itemsByCat.values()) arr.sort((a, b) => b.date.localeCompare(a.date) || b.amt - a.amt);
+
+  // Spending by category (expenses) for "Where it went".
+  const spendRows = [...monthActual.entries()]
+    .filter(([id]) => cats.get(id)?.kind === "expense")
     .map(([id, amt]) => ({ id, name: cats.get(id)?.name ?? "—", amt }))
     .sort((a, b) => b.amt - a.amt);
   const maxSpend = spendRows[0]?.amt ?? 1;
@@ -127,26 +162,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const investTotal = savInvRows.filter((r) => r.kind === "investment").reduce((a, r) => a + r.amt, 0);
   const maxSavInv = savInvRows.reduce((m, r) => Math.max(m, Math.abs(r.amt)), 0) || 1;
 
-  // Individual expenses grouped by category — listed under each row when expanded,
-  // with the wallet each was paid from.
-  const walletName = new Map(wallets.map((w) => [w.id, w.name]));
-  const itemsByCat = new Map<number, { desc: string; amt: number; wallet: string }[]>();
-  for (const t of dayTxns) {
-    if (t.type === "expense" && t.category_id) {
-      const arr = itemsByCat.get(t.category_id) ?? [];
-      arr.push({
-        desc: t.description || "—",
-        amt: t.amount,
-        wallet: t.source_wallet_id ? walletName.get(t.source_wallet_id) ?? "—" : "—",
-      });
-      itemsByCat.set(t.category_id, arr);
-    }
-  }
-  for (const arr of itemsByCat.values()) arr.sort((a, b) => b.amt - a.amt);
-
-  // Auto budgets (monthly): the configured loan-income category = total expected to collect
-  // in the selected day's month; each provider's installment category = its installments
-  // active that month. No-provider installments are uncategorized ("other") and not budgeted.
+  // Auto budget (monthly): the configured loan-income category = total expected to collect in
+  // the selected day's month. Installment categories are intentionally NOT budgeted here —
+  // they're fixed/mandatory, so they add noise without any actionable "what to do" insight
+  // (track them on the Home installments tab instead).
   const catList = [...cats.values()];
   const loanById = new Map(loans.map((l) => [l.id, l]));
   const providerById = new Map(providers.map((pr) => [pr.id, pr]));
@@ -154,60 +173,33 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const loanExpected = payments
     .filter((p) => p.period_month === monthKey)
     .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  // The installment expense category an item rolls up to: its provider's category, else none.
-  const installmentCatOf = (p: (typeof paylater)[number]) => {
-    const prov = p.provider_id ? providerById.get(p.provider_id) : null;
-    return prov?.category_id ?? null;
-  };
-  const instByCat = new Map<number, number>();
-  for (const p of paylater) {
-    if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = installmentCatOf(p);
-    if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
-  }
 
-  // Budget vs actual, grouped by cadence and measured against the period instance that
-  // contains the selected day (that day / its Mon–Sun week / its month / its year).
-  type BRow = { id: number; name: string; budget: number; actual: number; pct: number; auto: boolean };
-  const budgetGroups: Record<BudgetPeriod, BRow[]> = { daily: [], weekly: [], monthly: [], yearly: [] };
-  const monthlyByCat = new Map<number, number>();
+  // Budget vs actual for the WHOLE selected month: every budget compared as month's spend vs
+  // its monthly-equivalent limit (daily/weekly/yearly converted), so the panel is consistent
+  // regardless of which day in the month is selected. Installment categories are excluded.
+  type BudgetRow = { id: number; name: string; budget: number; actual: number; pct: number; auto: boolean; kind: string };
+  const monthlyEquiv = (amt: number, p: BudgetPeriod) =>
+    p === "daily" ? amt * 30.4 : p === "weekly" ? amt * 4.345 : p === "yearly" ? amt / 12 : amt;
+  const budgetRows: BudgetRow[] = [];
   for (const b of budgets) {
-    // Loan + installment categories are auto-derived from schedules below, not user budgets.
     if (b.category_id === hutangCatId || cats.get(b.category_id)?.is_installment) continue;
     const cat = cats.get(b.category_id);
     if (!cat || b.amount <= 0) continue;
-    if (cat.period === "monthly") {
-      monthlyByCat.set(b.category_id, b.amount);
-    } else {
-      const actual = periodActuals[cat.period].get(b.category_id) ?? 0;
-      budgetGroups[cat.period].push({ id: b.category_id, name: cat.name, budget: b.amount, actual, pct: b.amount ? (actual / b.amount) * 100 : 0, auto: false });
-    }
+    const budget = Math.round(monthlyEquiv(b.amount, cat.period));
+    const actual = monthActual.get(b.category_id) ?? 0;
+    budgetRows.push({ id: b.category_id, name: cat.name, budget, actual, pct: budget ? (actual / budget) * 100 : 0, auto: false, kind: cat.kind });
   }
-  // Monthly group merges user budgets + auto values. Loan = expected collection. An
-  // installment category is authoritative (its budget = installments active that month); a
-  // normal category an installment happens to point at just adds on top of its user budget.
-  if (hutangCatId) monthlyByCat.set(hutangCatId, loanExpected);
-  for (const [catId, amt] of instByCat) {
-    if (cats.get(catId)?.is_installment) monthlyByCat.set(catId, amt);
-    else monthlyByCat.set(catId, (monthlyByCat.get(catId) ?? 0) + amt);
+  // Loan collection auto-budget (income): expected to collect this month vs collected.
+  if (hutangCatId && loanExpected > 0) {
+    const actual = monthActual.get(hutangCatId) ?? 0;
+    budgetRows.push({ id: hutangCatId, name: cats.get(hutangCatId)?.name ?? "Hutang", budget: loanExpected, actual, pct: loanExpected ? (actual / loanExpected) * 100 : 0, auto: true, kind: "income" });
   }
-  for (const [catId, amount] of monthlyByCat) {
-    const cat = cats.get(catId);
-    if (!cat || amount <= 0) continue;
-    const actual = periodActuals.monthly.get(catId) ?? 0;
-    budgetGroups.monthly.push({
-      id: catId,
-      name: cat.name,
-      budget: amount,
-      actual,
-      pct: amount ? (actual / amount) * 100 : 0,
-      auto: catId === hutangCatId || !!cat.is_installment,
-    });
-  }
-  for (const k of ["daily", "weekly", "monthly", "yearly"] as BudgetPeriod[]) {
-    budgetGroups[k].sort((a, b) => b.budget - a.budget);
-  }
-  const hasBudgets = BUDGET_PERIODS.some((p) => budgetGroups[p.value].length > 0);
+  const hasBudgets = budgetRows.length > 0;
+  const kindRows = (kind: string) => budgetRows.filter((r) => r.kind === kind).sort((a, b) => b.pct - a.pct);
+  const monthlyTotal = (kind: string) => {
+    const rs = budgetRows.filter((r) => r.kind === kind);
+    return { a: rs.reduce((s, r) => s + r.actual, 0), b: rs.reduce((s, r) => s + r.budget, 0) };
+  };
 
   // Net worth as of the END of the selected day: start-of-month balances + this month's
   // wallet moves up to & including the day. (IDR wallets only — forex is its own module.)
@@ -285,6 +277,127 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       groups={provGroups}
     />
   );
+
+  // One budget row: status dot, name (+ auto badge), % used, actual/budget, bar, and its
+  // transactions when expanded. `target` flips the meaning for income/saving (reaching 100%
+  // is good) vs expense limits (over is bad).
+  const renderBudgetRow = (r: BudgetRow, target: boolean) => {
+    const items = itemsByCat.get(r.id) ?? [];
+    const tone = target
+      ? r.pct >= 100 ? "bg-green" : "bg-sky"
+      : r.pct > 100 ? "bg-clay" : r.pct >= 80 ? "bg-amber" : "bg-green";
+    const pctTone = target
+      ? r.pct >= 100 ? "text-green" : "text-sky"
+      : r.pct > 100 ? "text-clay" : r.pct >= 80 ? "text-amber" : "text-paper-dim";
+    const header = (
+      <>
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
+          <span className="flex min-w-0 items-center gap-1.5 text-paper">
+            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone}`} />
+            {items.length > 0 && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+              </svg>
+            )}
+            <span className="truncate">{r.name}</span>
+            {r.auto && (
+              <span className="rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">auto</span>
+            )}
+          </span>
+          <span className="shrink-0 tabular-nums">
+            <span className={pctTone}>{Math.round(r.pct)}%</span>
+            <span className="text-paper-faint"> · {formatRupiahShort(r.actual)}/{formatRupiahShort(r.budget)}</span>
+          </span>
+        </div>
+        <Bar pct={r.pct} color={tone} />
+      </>
+    );
+    return items.length > 0 ? (
+      <details key={r.id} className="group">
+        <summary className="cursor-pointer">{header}</summary>
+        <div className="mt-2 space-y-1 border-l border-line/70 pl-3">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+              <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
+              <span className="shrink-0 text-paper-faint">{formatDateShort(it.date)}</span>
+              <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
+            </div>
+          ))}
+        </div>
+      </details>
+    ) : (
+      <div key={r.id}>{header}</div>
+    );
+  };
+
+  // One card per kind: a summary (counts + this month's bar), then the rows that matter.
+  // Expense hides on-track rows behind "Show all"; income/saving targets list all of theirs.
+  const budgetKindCard = (kind: "expense" | "income" | "saving", title: string) => {
+    const rows = kindRows(kind);
+    if (rows.length === 0) return null;
+    const target = kind !== "expense";
+    const { a, b } = monthlyTotal(kind);
+    const pct = b ? (a / b) * 100 : 0;
+    const over = rows.filter((r) => r.pct > 100).length;
+    const near = rows.filter((r) => r.pct >= 80 && r.pct <= 100).length;
+    const ok = rows.length - over - near;
+    const met = rows.filter((r) => r.pct >= 100).length;
+    const attention = target ? rows : rows.filter((r) => r.pct >= 80);
+    const hidden = target ? [] : rows.filter((r) => r.pct < 80);
+    const barColor = target ? (pct >= 100 ? "bg-green" : "bg-sky") : pct > 100 ? "bg-clay" : "bg-green";
+    return (
+      <div className="card space-y-3.5 p-4">
+        <div>
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-sm font-medium text-paper">{title}</span>
+              <span className="flex flex-wrap items-center gap-x-2 text-[11px] font-medium">
+                {target ? (
+                  <span className="text-paper-dim">{met} of {rows.length} met</span>
+                ) : (
+                  <>
+                    {over > 0 && <span className="text-clay">{over} over</span>}
+                    {near > 0 && <span className="text-amber">{near} near</span>}
+                    <span className="text-paper-dim">{ok} on track</span>
+                  </>
+                )}
+              </span>
+            </span>
+            {b > 0 && (
+              <span className="shrink-0 tabular-nums text-paper-faint">
+                {formatRupiahShort(a)} / {formatRupiahShort(b)} · {monthName(m)}
+              </span>
+            )}
+          </div>
+          {b > 0 && (
+            <div className="mt-1.5">
+              <Bar pct={pct} color={barColor} />
+            </div>
+          )}
+        </div>
+
+        {attention.length > 0 ? (
+          <div className="space-y-3.5 border-t border-line/40 pt-3.5">
+            {attention.map((r) => renderBudgetRow(r, target))}
+          </div>
+        ) : (
+          <p className="border-t border-line/40 pt-3 text-xs text-green">✓ All {rows.length} on track.</p>
+        )}
+
+        {hidden.length > 0 && (
+          <details className="group">
+            <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-paper-dim active:text-paper">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+              </svg>
+              Show all ({hidden.length} on track)
+            </summary>
+            <div className="mt-3 space-y-3.5">{hidden.map((r) => renderBudgetRow(r, target))}</div>
+          </details>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="privacy-scope stagger space-y-5 pt-4">
@@ -366,86 +479,75 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         )}
       </div>
 
-      {/* Income / Expense / Net */}
-      <div className="grid grid-cols-3 gap-2.5">
-        {[
-          { label: "Income", val: totalIncome, color: "text-green", ring: "bg-green/12 text-green", icon: "M12 19V5M5 12l7-7 7 7" },
-          { label: "Expense", val: totalExpense, color: "text-red", ring: "bg-red/12 text-red", icon: "M12 5v14M5 12l7 7 7-7" },
-          { label: "Net", val: net, color: net >= 0 ? "text-green" : "text-red", ring: "bg-amber/12 text-amber", icon: "M8 7l4-4 4 4M8 17l4 4 4-4M12 3v18" },
-        ].map((s) => (
-          <div key={s.label} className="card flex flex-col items-center p-3 text-center">
-            <span className={`mb-1.5 flex h-7 w-7 items-center justify-center rounded-full ${s.ring}`}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                <path d={s.icon} />
-              </svg>
-            </span>
-            <div className={`priv-center font-display text-[13px] font-bold leading-tight tabular-nums ${s.color}`}>
-              {formatRupiah(s.val)}
+      {/* Spent this day — the only day-scoped spending view (follows the day stepper) */}
+      <section>
+        <h2 className="label mb-2.5 text-amber">Spent this day</h2>
+        <div className="card p-4">
+          {dayExpenses.length > 0 ? (
+            <details className="group">
+              <summary className="flex cursor-pointer items-center justify-between gap-2">
+                <span className="priv-left font-display text-2xl font-bold tabular-nums text-red">{formatRupiah(daySpent)}</span>
+                <span className="flex shrink-0 items-center gap-2 text-xs">
+                  {dayEarned > 0 && <span className="text-green">+{formatRupiah(dayEarned)} in</span>}
+                  <span className="flex items-center gap-1 text-paper-dim">
+                    {dayExpenses.length} {dayExpenses.length === 1 ? "txn" : "txns"}
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 text-paper-faint transition-transform">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+                    </svg>
+                  </span>
+                </span>
+              </summary>
+              <div className="mt-3 space-y-1.5 border-t border-line/40 pt-3">
+                {dayExpenses.map((t) => (
+                  <div key={t.id} className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-paper">{t.primary}</span>
+                    {t.secondary && <span className="shrink-0 text-paper-faint">{t.secondary}</span>}
+                    <span className="shrink-0 tabular-nums text-paper-dim">{formatNumber(t.amt)}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ) : (
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="priv-left font-display text-2xl font-bold tabular-nums text-red">{formatRupiah(daySpent)}</span>
+              <span className="shrink-0 text-xs text-paper-faint">Nothing spent this day</span>
             </div>
-            <div className="label mt-1">{s.label}</div>
-          </div>
-        ))}
-      </div>
+          )}
+        </div>
+      </section>
 
-      {/* Budget vs actual — grouped by period, measured against the current day/week/month/year */}
+      {/* Income / Expense / Net — for the whole selected month */}
+      <section>
+        <h2 className="label mb-2.5 text-amber">Income &amp; expense · {monthName(m)}</h2>
+        <div className="grid grid-cols-3 gap-2.5">
+          {[
+            { label: "Income", val: totalIncome, color: "text-green", ring: "bg-green/12 text-green", icon: "M12 19V5M5 12l7-7 7 7" },
+            { label: "Expense", val: totalExpense, color: "text-red", ring: "bg-red/12 text-red", icon: "M12 5v14M5 12l7 7 7-7" },
+            { label: "Net", val: net, color: net >= 0 ? "text-green" : "text-red", ring: "bg-amber/12 text-amber", icon: "M8 7l4-4 4 4M8 17l4 4 4-4M12 3v18" },
+          ].map((s) => (
+            <div key={s.label} className="card flex flex-col items-center p-3 text-center">
+              <span className={`mb-1.5 flex h-7 w-7 items-center justify-center rounded-full ${s.ring}`}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                  <path d={s.icon} />
+                </svg>
+              </span>
+              <div className={`priv-center font-display text-[13px] font-bold leading-tight tabular-nums ${s.color}`}>
+                {formatRupiah(s.val)}
+              </div>
+              <div className="label mt-1">{s.label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Budget vs actual — split into expense limits and income/saving targets */}
       {hasBudgets && (
         <section>
           <h2 className="label mb-2.5 text-amber">Budget vs actual</h2>
           <div className="space-y-3">
-            {BUDGET_PERIODS.map((p) =>
-              budgetGroups[p.value].length === 0 ? null : (
-                <div key={p.value} className="card p-4">
-                  <div className="mb-2.5 flex items-baseline justify-between">
-                    <span className="text-sm font-medium text-paper">{p.label}</span>
-                    <span className="text-[10px] uppercase tracking-wider text-paper-faint">this {p.per}</span>
-                  </div>
-                  <div className="space-y-3.5">
-                    {budgetGroups[p.value].map((r) => {
-                      const items = periodActuals.items[p.value].get(r.id) ?? [];
-                      const header = (
-                        <>
-                          <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
-                            <span className="flex min-w-0 items-center gap-1.5 text-paper">
-                              {items.length > 0 && (
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
-                                </svg>
-                              )}
-                              <span className="truncate">{r.name}</span>
-                              {r.auto && (
-                                <span className="rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
-                                  auto
-                                </span>
-                              )}
-                            </span>
-                            <span className="shrink-0 tabular-nums text-paper-dim">
-                              {formatRupiahShort(r.actual)} / {formatRupiahShort(r.budget)}
-                            </span>
-                          </div>
-                          <Bar pct={r.pct} color={r.pct > 100 ? "bg-clay" : "bg-green"} />
-                        </>
-                      );
-                      return items.length > 0 ? (
-                        <details key={r.id} className="group">
-                          <summary className="cursor-pointer">{header}</summary>
-                          <div className="mt-2 space-y-1 border-l border-line/70 pl-3">
-                            {items.map((it, i) => (
-                              <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
-                                <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
-                                <span className="shrink-0 text-paper-faint">{formatDateShort(it.date)}</span>
-                                <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      ) : (
-                        <div key={r.id}>{header}</div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )
-            )}
+            {budgetKindCard("expense", "Expense")}
+            {budgetKindCard("income", "Income")}
+            {budgetKindCard("saving", "Saving")}
           </div>
         </section>
       )}
@@ -453,7 +555,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       {/* Spending by category */}
       {spendRows.length > 0 && (
         <section>
-          <h2 className="label mb-2.5 text-amber">Where it went</h2>
+          <h2 className="label mb-2.5 text-amber">Where it went · {monthName(m)}</h2>
           <div className="card space-y-3.5 p-4">
             {spendRows.map((r) => {
               const items = itemsByCat.get(r.id) ?? [];
