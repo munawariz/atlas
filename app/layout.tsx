@@ -1,19 +1,17 @@
 import type { Metadata, Viewport } from "next";
-import { Exo_2, Inter } from "next/font/google";
+import { JetBrains_Mono, Hanken_Grotesk } from "next/font/google";
 import "./globals.css";
 import RegisterSW from "@/components/RegisterSW";
 
-// Brand typography: Exo 2 (modern, technical, confident) for display; Inter for body.
-const display = Exo_2({
+const display = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-exo2",
-  weight: ["500", "600", "700"],
+  variable: "--font-jetbrains",
   display: "swap",
 });
 
-const sans = Inter({
+const sans = Hanken_Grotesk({
   subsets: ["latin"],
-  variable: "--font-inter",
+  variable: "--font-hanken",
   display: "swap",
 });
 
@@ -28,6 +26,8 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icons/icon-16.png", sizes: "16x16", type: "image/png" },
       { url: "/icons/icon-32.png", sizes: "32x32", type: "image/png" },
       { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
     ],
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b1210",
+  themeColor: "#0b0e14",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,

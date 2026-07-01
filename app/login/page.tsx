@@ -10,7 +10,7 @@ export default function LoginPage() {
     <main className="min-h-full flex flex-col items-center justify-center px-7 safe-top safe-bottom">
       <div className="w-full max-w-sm reveal">
         <div className="mb-10 text-center">
-          <div className="mx-auto mb-5 h-20 w-20 overflow-hidden rounded-[22px] shadow-[0_14px_40px_-12px_rgba(29,181,106,0.55)]">
+          <div className="mx-auto mb-5 h-20 w-20 shadow-[0_14px_40px_-12px_rgba(63,185,80,0.5)]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/icons/icon-192.png" alt="Atlas" className="h-full w-full" />
           </div>

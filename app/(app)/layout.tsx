@@ -9,7 +9,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/dashboard" className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/icons/icon-192.png" alt="" className="h-7 w-7 rounded-[8px]" />
-            <span className="font-display text-[19px] font-semibold lowercase leading-none tracking-tight text-paper">
+            <span className="font-display text-[19px] font-semibold capitalize leading-none tracking-tight text-paper">
               atlas
             </span>
           </Link>

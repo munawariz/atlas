@@ -1,41 +1,40 @@
 @import "tailwindcss";
 
 /* ============================================================
-   Atlas — green-forward "financial clarity" brand theme
-   Palette: #0B1210 #14342A #1DB56A #3ED88E #A7F0C6
+   Atlas — deep navy stats theme
    ============================================================ */
 @theme {
-  /* surfaces — deep green-black */
-  --color-ink: #0b1210;
-  --color-ink-2: #0f1b15;
-  --color-ink-3: #16261e;
-  --color-line: #244033;
+  /* surfaces — deep navy / slate */
+  --color-ink: #0b0e14;
+  --color-ink-2: #11151d;
+  --color-ink-3: #161c27;
+  --color-line: #232c3a;
 
-  /* text — warm-neutral with a faint green cast */
-  --color-paper: #e7f1eb;
-  --color-paper-dim: #8aa095;
-  --color-paper-faint: #55675c;
+  /* text — cool */
+  --color-paper: #e6edf3;
+  --color-paper-dim: #8a939e;
+  --color-paper-faint: #586069;
 
-  /* accents — brand green + functional hues kept for the ledger semantics */
-  --color-green: #1db56a;
+  /* accents — terminal/gaming palette */
+  --color-green: #3fb950;
   --color-red: #f85149;
   --color-amber: #e3b341;
   --color-blue: #58a6ff;
   --color-purple: #a371f7;
   --color-teal: #39d3c6;
 
-  /* primary action = brand green; legacy aliases keep older utilities working */
-  --color-gold: #1db56a;
-  --color-gold-soft: #3ed88e;
-  --color-jade: #1db56a; /* income  */
+  /* primary action = green; legacy aliases keep older utilities working */
+  --color-gold: #3fb950;
+  --color-gold-soft: #56d364;
+  --color-jade: #3fb950; /* income  */
   --color-clay: #f85149; /* expense */
   --color-sky: #58a6ff; /* saving  */
   --color-plum: #a371f7; /* invest  */
   --color-sand: #e3b341; /* transfer*/
 
-  --font-display: var(--font-exo2), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-exo2), ui-monospace, monospace;
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -67,9 +66,9 @@ body {
   z-index: -2;
   pointer-events: none;
   background:
-    radial-gradient(120% 70% at 50% -12%, rgba(62, 216, 142, 0.10), transparent 55%),
-    radial-gradient(90% 55% at 102% 0%, rgba(29, 181, 106, 0.07), transparent 55%),
-    radial-gradient(85% 55% at -8% 12%, rgba(20, 52, 42, 0.55), transparent 60%);
+    radial-gradient(120% 70% at 50% -12%, rgba(63, 185, 80, 0.07), transparent 55%),
+    radial-gradient(90% 50% at 102% 2%, rgba(88, 166, 255, 0.05), transparent 55%),
+    radial-gradient(80% 50% at -6% 8%, rgba(163, 113, 247, 0.04), transparent 55%);
 }
 
 .bg-grain {
