@@ -10,14 +10,15 @@ export default function LoginPage() {
     <main className="min-h-full flex flex-col items-center justify-center px-7 safe-top safe-bottom">
       <div className="w-full max-w-sm reveal">
         <div className="mb-10 text-center">
-          <div className="mx-auto mb-6 h-16 w-16 overflow-hidden rounded-2xl border border-green/30 shadow-[0_8px_30px_-10px_rgba(63,185,80,0.45)]">
+          <div className="mx-auto mb-5 h-20 w-20 overflow-hidden rounded-[22px] shadow-[0_14px_40px_-12px_rgba(29,181,106,0.55)]">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-192.png" alt="Atlas" className="h-full w-full object-cover" />
+            <img src="/icons/icon-192.png" alt="Atlas" className="h-full w-full" />
           </div>
-          <p className="label mb-2.5 text-green">Personal finance</p>
-          <h1 className="font-display text-4xl font-bold uppercase leading-tight tracking-[0.1em] text-paper">
-            Atlas
+          <h1 className="font-display text-5xl font-semibold lowercase leading-none tracking-tight text-paper">
+            atlas
           </h1>
+          <p className="label mt-3 text-green" style={{ letterSpacing: "0.34em" }}>Financial Tracker</p>
+          <p className="mt-4 text-sm text-paper-dim">Track your finances. Gain clarity.</p>
         </div>
 
         <form action={formAction} className="space-y-3">

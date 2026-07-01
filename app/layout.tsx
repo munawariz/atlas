@@ -1,17 +1,19 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Hanken_Grotesk } from "next/font/google";
+import { Exo_2, Inter } from "next/font/google";
 import "./globals.css";
 import RegisterSW from "@/components/RegisterSW";
 
-const display = JetBrains_Mono({
+// Brand typography: Exo 2 (modern, technical, confident) for display; Inter for body.
+const display = Exo_2({
   subsets: ["latin"],
-  variable: "--font-jetbrains",
+  variable: "--font-exo2",
+  weight: ["500", "600", "700"],
   display: "swap",
 });
 
-const sans = Hanken_Grotesk({
+const sans = Inter({
   subsets: ["latin"],
-  variable: "--font-hanken",
+  variable: "--font-inter",
   display: "swap",
 });
 
@@ -25,13 +27,16 @@ export const metadata: Metadata = {
     title: "Atlas",
   },
   icons: {
-    icon: "/icons/icon-192.png",
-    apple: "/icons/icon-192.png",
+    icon: [
+      { url: "/icons/icon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: "/icons/apple-touch-icon.png",
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0e14",
+  themeColor: "#0b1210",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,

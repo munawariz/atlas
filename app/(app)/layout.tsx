@@ -8,9 +8,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex items-center justify-between px-4 py-3">
           <Link href="/dashboard" className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-192.png" alt="" className="h-6 w-6 rounded-md" />
-            <span className="font-display text-[12px] font-bold uppercase tracking-[0.28em] text-paper">
-              Atlas
+            <img src="/icons/icon-192.png" alt="" className="h-7 w-7 rounded-[8px]" />
+            <span className="font-display text-[19px] font-semibold lowercase leading-none tracking-tight text-paper">
+              atlas
             </span>
           </Link>
           <Link
