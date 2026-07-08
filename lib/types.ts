@@ -131,6 +131,7 @@ export interface LoanPayment {
   period_month: string; // YYYY-MM-01
   paid: boolean;
   income_txn_id: number | null;
+  amount: number | null; // amount collected (may be partial); null = full installment
 }
 
 // Which category kind feeds which transaction type's category picker.

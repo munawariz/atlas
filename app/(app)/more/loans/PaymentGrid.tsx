@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { formatMonth, formatMonthShort, formatRupiah, todayISO } from "@/lib/format";
+import { formatMonth, formatMonthShort, formatNumber, formatRupiah, todayISO } from "@/lib/format";
 import {
   collectLoanPayment,
   scheduleMonth,
@@ -10,7 +10,13 @@ import {
 } from "../actions";
 import { CheckIcon, PencilIcon } from "@/components/icons";
 
-export type Cell = { month: string; state: "paid" | "unpaid"; hasIncome?: boolean };
+export type Cell = {
+  month: string;
+  state: "paid" | "unpaid";
+  hasIncome?: boolean;
+  collected?: number | null; // amount received for a paid month
+  partial?: boolean; // paid but less than the full installment
+};
 
 export default function PaymentGrid({
   loanId,
@@ -29,6 +35,7 @@ export default function PaymentGrid({
   const [modal, setModal] = useState<{ type: "collect" | "uncollect"; month: string } | null>(null);
   const [walletId, setWalletId] = useState<number | null>(wallets[0]?.id ?? null);
   const [skipTxn, setSkipTxn] = useState(false);
+  const [amount, setAmount] = useState(""); // raw digits collected for the month
   const [newMonth, setNewMonth] = useState("");
   const [pending, startTransition] = useTransition();
 
@@ -41,6 +48,7 @@ export default function PaymentGrid({
     }
     if (state === "unpaid") {
       setSkipTxn(false);
+      setAmount(String(installment)); // default to the full installment; edit for a partial
       try {
         const last = Number(localStorage.getItem("ft_collect_wallet"));
         setWalletId(last && wallets.some((w) => w.id === last) ? last : wallets[0]?.id ?? null);
@@ -71,7 +79,8 @@ export default function PaymentGrid({
             localStorage.setItem("ft_collect_wallet", String(walletId));
           } catch {}
         }
-        await collectLoanPayment(loanId, month, walletId ?? 0, todayISO(), skipTxn);
+        const amt = parseInt(amount || "0", 10);
+        await collectLoanPayment(loanId, month, walletId ?? 0, todayISO(), skipTxn, amt > 0 ? amt : installment);
       } else {
         await uncollectLoanPayment(loanId, month);
       }
@@ -89,6 +98,7 @@ export default function PaymentGrid({
             <>
               <span className="text-amber">◼ owed</span>
               <span className="text-green">◼ collected</span>
+              <span className="text-green">◪ partial</span>
             </>
           )}
         </div>
@@ -111,15 +121,20 @@ export default function PaymentGrid({
         <div className="mt-2 flex flex-wrap gap-1.5">
           {schedule.map((c) => {
             const locked = editing && c.state === "paid";
+            const tone =
+              c.state === "paid"
+                ? c.partial
+                  ? "bg-green/55 text-ink ring-1 ring-inset ring-amber"
+                  : "bg-green text-ink"
+                : "bg-amber text-ink";
             return (
               <button
                 key={c.month}
                 type="button"
                 disabled={locked}
                 onClick={() => onCell(c.month, c.state)}
-                className={`rounded-md px-2 py-1.5 text-[11px] font-semibold tracking-wide ${
-                  c.state === "paid" ? "bg-green text-ink" : "bg-amber text-ink"
-                } ${locked ? "opacity-50" : "active:scale-95"}`}
+                title={c.state === "paid" && c.collected != null ? `Collected ${formatRupiah(c.collected)}` : undefined}
+                className={`rounded-md px-2 py-1.5 text-[11px] font-semibold tracking-wide ${tone} ${locked ? "opacity-50" : "active:scale-95"}`}
               >
                 {formatMonthShort(c.month)}
               </button>
@@ -157,7 +172,22 @@ export default function PaymentGrid({
               <>
                 <h3 className="font-display text-lg font-medium text-paper">Collect payment</h3>
                 <p className="mt-1 text-sm text-paper-dim">{person} · {formatMonth(modal.month)}</p>
-                <p className="mt-2 font-display text-2xl font-bold text-green">+ {formatRupiah(installment)}</p>
+                <p className="label mb-1.5 mt-4">Amount received</p>
+                <div className="flex items-center gap-2 rounded-xl border border-line/70 bg-ink-3 px-3 py-2.5">
+                  <span className="text-sm text-paper-faint">Rp</span>
+                  <input
+                    inputMode="numeric"
+                    value={amount ? formatNumber(parseInt(amount, 10)) : ""}
+                    onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
+                    placeholder={formatNumber(installment)}
+                    className="w-full flex-1 bg-transparent font-display text-xl font-bold tabular-nums text-green outline-none placeholder:text-paper-faint"
+                  />
+                </div>
+                {amount !== "" && parseInt(amount, 10) !== installment && (
+                  <p className="mt-1.5 text-[11px] text-amber">
+                    {parseInt(amount, 10) < installment ? "Partial payment" : "Over the installment"} · full is {formatRupiah(installment)}
+                  </p>
+                )}
                 <div className={skipTxn ? "pointer-events-none opacity-40" : ""}>
                   <p className="label mt-4 mb-2">Where did it go?</p>
                   {wallets.length === 0 ? (
@@ -207,7 +237,10 @@ export default function PaymentGrid({
                   ) : (
                     <>
                       Marks it <span className="font-semibold text-amber">owed</span> again and deletes the{" "}
-                      <span className="font-semibold">{formatRupiah(installment)}</span> income record.
+                      <span className="font-semibold">
+                        {formatRupiah(schedule.find((c) => c.month === modal.month)?.collected ?? installment)}
+                      </span>{" "}
+                      income record.
                     </>
                   )}
                 </p>

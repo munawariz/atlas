@@ -229,6 +229,8 @@ create table if not exists loan_payments (
 
 alter table loan_payments
   add column if not exists income_txn_id bigint references transactions(id) on delete set null;
+-- Actual amount collected for the month (may be partial). Null on legacy rows = full installment.
+alter table loan_payments add column if not exists amount bigint;
 
 -- Migrate older period_index (1 = Jan 2026 …) to a real month date. Runs once.
 do $$

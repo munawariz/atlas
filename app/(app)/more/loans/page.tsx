@@ -19,22 +19,26 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
 
   const forLoan = (loanId: number) =>
     payments.filter((p) => p.loan_id === loanId).sort((a, b) => a.period_month.localeCompare(b.period_month));
-  const scheduleOf = (loanId: number): Cell[] =>
+  const scheduleOf = (loanId: number, installment: number): Cell[] =>
     forLoan(loanId).map((p) => ({
       month: p.period_month,
       state: p.paid ? "paid" : "unpaid",
       hasIncome: p.income_txn_id != null,
+      collected: p.paid ? p.amount ?? installment : null, // amount received (null = still owed)
+      partial: p.paid && (p.amount ?? installment) < installment,
     }));
+  // What's still to collect: each month's installment minus what was actually received.
   const outstanding = (loanId: number, installment: number) =>
-    forLoan(loanId).filter((p) => !p.paid).length * installment;
-  const loanStatus = (loanId: number): "finished" | "unfinished" | "empty" => {
+    forLoan(loanId).reduce((s, p) => s + Math.max(0, installment - (p.paid ? p.amount ?? installment : 0)), 0);
+  const loanStatus = (loanId: number, installment: number): "finished" | "unfinished" | "empty" => {
     const sched = forLoan(loanId);
     if (sched.length === 0) return "empty";
-    return sched.some((p) => !p.paid) ? "unfinished" : "finished";
+    // Finished only when every scheduled month has been fully collected.
+    return sched.every((p) => p.paid && (p.amount ?? installment) >= installment) ? "finished" : "unfinished";
   };
 
   const totalOutstanding = loans.reduce((a, l) => a + outstanding(l.id, l.installment), 0);
-  const shownLoans = loans.filter((l) => (status === "all" ? true : loanStatus(l.id) === status));
+  const shownLoans = loans.filter((l) => (status === "all" ? true : loanStatus(l.id, l.installment) === status));
 
   const tabs: { key: Status; label: string }[] = [
     { key: "unfinished", label: "Unfinished" },
@@ -101,7 +105,11 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
           <p className="pt-6 text-center text-sm text-paper-faint">No {status === "all" ? "" : status} loans.</p>
         ) : (
           shownLoans.map((l) => {
-            const done = loanStatus(l.id) === "finished";
+            const done = loanStatus(l.id, l.installment) === "finished";
+            const sched = forLoan(l.id);
+            const collected = sched.reduce((s, p) => s + (p.paid ? p.amount ?? l.installment : 0), 0);
+            const expected = sched.length * l.installment;
+            const pct = expected ? Math.round((collected / expected) * 100) : 0;
             return (
               <div key={l.id} className="card p-4">
                 <div className="flex items-start justify-between">
@@ -128,16 +136,31 @@ export default async function LoansPage({ searchParams }: { searchParams: Promis
                   </form>
                 </div>
 
-                <div className={`mt-2 font-display text-sm ${done ? "text-paper-faint" : "text-green"}`}>
-                  {done ? "All collected" : `${formatRupiah(outstanding(l.id, l.installment))} to collect`}
-                </div>
+                {expected > 0 ? (
+                  <div className="mt-2.5">
+                    <div className="flex items-baseline justify-between gap-2 text-sm">
+                      <span className={`font-display ${done ? "text-paper-faint" : "text-green"}`}>
+                        {done ? "All collected" : `${formatRupiah(outstanding(l.id, l.installment))} to collect`}
+                      </span>
+                      <span className="tabular-nums text-xs text-paper-dim">{pct}% paid</span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line/40">
+                      <div className="h-full rounded-full bg-green" style={{ width: `${Math.min(100, pct)}%` }} />
+                    </div>
+                    <div className="mt-1 text-[11px] tabular-nums text-paper-faint">
+                      {formatRupiah(collected)} of {formatRupiah(expected)} collected
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-2 font-display text-sm text-paper-faint">No promised months yet</div>
+                )}
 
                 <PaymentGrid
                   loanId={l.id}
                   person={l.person}
                   installment={l.installment}
                   wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-                  schedule={scheduleOf(l.id)}
+                  schedule={scheduleOf(l.id, l.installment)}
                 />
               </div>
             );

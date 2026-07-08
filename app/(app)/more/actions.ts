@@ -892,26 +892,30 @@ export async function uncollectLoanPayment(loanId: number, periodMonth: string) 
     .maybeSingle();
   if (data) {
     if (data.income_txn_id) await sb.from("transactions").delete().eq("id", data.income_txn_id);
-    await sb.from("loan_payments").update({ paid: false, income_txn_id: null }).eq("id", data.id);
+    await sb.from("loan_payments").update({ paid: false, income_txn_id: null, amount: null }).eq("id", data.id);
   }
   revalidatePath("/more/loans");
   revalidatePath("/dashboard");
   revalidatePath("/history");
 }
 
-// Mark a month as collected and, unless skipTxn is set, book it as Hutang income into
-// the chosen wallet (skipTxn = "I already received this manually elsewhere").
+// Mark a month as collected and, unless skipTxn is set, book it as Hutang income into the
+// chosen wallet (skipTxn = "I already received this manually elsewhere"). `amount` is the
+// actual amount received (may be partial); 0 / omitted falls back to the full installment.
 export async function collectLoanPayment(
   loanId: number,
   periodMonth: string,
   walletId: number,
   dateISO: string,
-  skipTxn = false
+  skipTxn = false,
+  amount = 0
 ) {
   const sb = supabaseServer();
   const occurred_on = /^\d{4}-\d{2}-\d{2}$/.test(dateISO) ? dateISO : new Date().toISOString().slice(0, 10);
+  const { data: loan } = await sb.from("loans").select("person, installment").eq("id", loanId).maybeSingle();
+  const amt = amount > 0 ? amount : loan?.installment ?? 0;
 
-  // 1) ensure the cell exists and is marked paid; get its id
+  // 1) ensure the cell exists, mark it paid, and record the collected amount
   const { data: existing } = await sb
     .from("loan_payments")
     .select("id")
@@ -920,18 +924,17 @@ export async function collectLoanPayment(
     .maybeSingle();
   let paymentId = existing?.id;
   if (paymentId) {
-    await sb.from("loan_payments").update({ paid: true }).eq("id", paymentId);
+    await sb.from("loan_payments").update({ paid: true, amount: amt }).eq("id", paymentId);
   } else {
     const ins = await sb
       .from("loan_payments")
-      .insert({ loan_id: loanId, period_month: periodMonth, paid: true })
+      .insert({ loan_id: loanId, period_month: periodMonth, paid: true, amount: amt })
       .select("id")
       .single();
     paymentId = ins.data?.id;
   }
 
   // 2) book the collected amount as Hutang income and link it to the cell (unless skipped)
-  const { data: loan } = await sb.from("loans").select("person, installment").eq("id", loanId).maybeSingle();
   if (!skipTxn && loan && walletId) {
     const catId = await resolveCategoryId("cat_loan", "Hutang", "income");
     const txn = await sb
@@ -939,7 +942,7 @@ export async function collectLoanPayment(
       .insert({
         occurred_on,
         type: "income",
-        amount: loan.installment,
+        amount: amt,
         description: loan.person,
         category_id: catId,
         dest_wallet_id: walletId,
