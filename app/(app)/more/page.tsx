@@ -5,6 +5,7 @@ type Item = { href: string; label: string; desc: string };
 
 const TOP: Item[] = [
   { href: "/charts", label: "Charts", desc: "Trends & drilldown into your money" },
+  { href: "/more/cashflow", label: "Expected cashflow", desc: "Planned income, expense, saving & investment for a month" },
   { href: "/balances", label: "Starting balances", desc: "Opening balance per wallet → live networth" },
   { href: "/savings", label: "Savings", desc: "Balance in each saving & investment bucket" },
 ];
