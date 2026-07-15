@@ -165,9 +165,10 @@ export async function saveStockTarget(formData: FormData) {
   const lots = digits(formData.get("lots"));
   const price = digits(formData.get("price"));
   if (!ticker || lots <= 0) return;
-  await supabaseServer()
+  const { error } = await supabaseServer()
     .from("stock_targets")
     .upsert({ ticker, lots, price: price > 0 ? price : null }, { onConflict: "ticker" });
+  if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
   revalidatePath("/stocks");
 }
 
