@@ -3,7 +3,7 @@
 // transient 404/500 can never poison the cache. Navigations are network-first so data
 // is never stale, falling back to an offline page only when truly offline.
 // Bump CACHE whenever this file changes — `activate` purges every older cache.
-const CACHE = "ft-v2";
+const CACHE = "ft-v3";
 const ASSETS = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

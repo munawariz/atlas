@@ -41,9 +41,13 @@
   color-scheme: dark;
 }
 
-html,
-body {
+html {
   height: 100%;
+}
+/* min-height (not height) so the body GROWS with content and the document itself scrolls.
+   A fixed-height flex body would cap its children, breaking sticky headers past one screen. */
+body {
+  min-height: 100%;
 }
 
 body {

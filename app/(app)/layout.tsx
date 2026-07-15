@@ -3,8 +3,10 @@ import BottomNav from "@/components/BottomNav";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-md flex-1 flex-col">
-      <header className="sticky top-0 z-30 border-b border-line/60 bg-ink/85 backdrop-blur-xl safe-top">
+    <div className="mx-auto flex min-h-dvh w-full max-w-md flex-1 flex-col">
+      {/* Solid bg (no backdrop-blur): a sticky element that also has backdrop-filter silently
+          stops sticking in Chromium — that was breaking the header on every page. */}
+      <header className="sticky top-0 z-30 border-b border-line/60 bg-ink safe-top">
         <div className="flex items-center justify-between px-4 py-3">
           <Link href="/dashboard" className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
