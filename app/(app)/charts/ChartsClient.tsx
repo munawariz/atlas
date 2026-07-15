@@ -17,6 +17,7 @@ const C = {
   dim: "#8b949e",
 };
 const KIND_COLOR: Record<Kind, string> = { expense: C.red, income: C.green, saving: C.sky, investment: C.plum };
+const KIND_TEXT: Record<Kind, string> = { expense: "text-red", income: "text-green", saving: "text-sky", investment: "text-plum" };
 const PALETTE = [C.red, C.amber, C.sky, C.plum, C.green, "#db61a2", "#f0883e", "#56d364", "#79c0ff", "#d2a8ff"];
 
 const RANGES = [
@@ -47,6 +48,7 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
   const [highlight, setHighlight] = useState<Kind | null>(null); // a cash-flow line to isolate
   const [kind, setKind] = useState<Kind>("expense");
   const [selCat, setSelCat] = useState<number | null>(null);
+  const [trendCat, setTrendCat] = useState<number | null>(null); // a category to trace month-by-month
 
   const catName = useMemo(() => {
     const m = new Map(categories.map((c) => [c.id, c.name]));
@@ -171,6 +173,38 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
     return { total, avg: activeMonths ? total / activeMonths : 0, pie, pieTotal, entryCount, biggest, mostOften };
   }, [selCat, kind, data.catTotals, data.catEntries, visMonths]);
 
+  // ----- category-over-time: one category's total per visible month -----
+  // Dropdown lists only categories that have activity, grouped by kind (skip uncategorized,
+  // whose id 0 spans kinds).
+  const trendOptions = useMemo(() => {
+    const ids = new Set(data.catTotals.filter((c) => c.categoryId !== 0).map((c) => c.categoryId));
+    const order: Kind[] = ["expense", "income", "saving", "investment"];
+    return order
+      .map((k) => ({
+        kind: k,
+        items: categories.filter((c) => c.kind === k && ids.has(c.id)).sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [data.catTotals, categories]);
+
+  const trend = useMemo(() => {
+    if (trendCat === null) return null;
+    const cat = categories.find((c) => c.id === trendCat) ?? null;
+    const kindOf = (cat?.kind ?? "expense") as Kind;
+    const byMonth = new Map<string, number>();
+    for (const c of data.catTotals) {
+      if (c.categoryId !== trendCat || !visMonths.has(c.month)) continue;
+      byMonth.set(c.month, (byMonth.get(c.month) ?? 0) + c.total);
+    }
+    // Zero-fill every visible month so lean months show as empty bars.
+    const pts = [...visMonths].sort().map((m) => ({ month: m, value: byMonth.get(m) ?? 0 }));
+    const total = pts.reduce((s, p) => s + p.value, 0);
+    const activeMonths = pts.filter((p) => p.value > 0).length;
+    const avg = activeMonths ? total / activeMonths : 0;
+    const max = pts.reduce((a, p) => (p.value > a.value ? p : a), { month: "", value: -1 });
+    return { cat, kind: kindOf, pts, total, avg, activeMonths, max };
+  }, [trendCat, data.catTotals, visMonths, categories]);
+
   const selRow = selCat !== null ? breakdown.rows.find((r) => r.id === selCat) ?? null : null;
   const selPct = selRow && breakdown.sum ? (selRow.total / breakdown.sum) * 100 : 0;
 
@@ -180,7 +214,12 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
 
   return (
     <div className="space-y-4">
-      {/* range selector */}
+      {/* range selector — pinned just below the app header while scrolling. Solid bg (no
+          backdrop-blur): two overlapping backdrop-filter sticky layers break sticking in Chromium. */}
+      <div
+        className="sticky z-20 -mx-4 space-y-2 border-b border-line/60 bg-ink px-4 py-2.5"
+        style={{ top: "calc(env(safe-area-inset-top) + 3.25rem)" }}
+      >
       <div className="flex gap-1.5">
         {RANGES.map((r) => (
           <button
@@ -247,6 +286,7 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
           </select>
         </div>
       )}
+      </div>
 
       {/* ---------- Net worth ---------- */}
       <section className="card p-4">
@@ -467,6 +507,55 @@ export default function ChartsClient({ data, categories }: { data: ChartData; ca
           </>
         )}
       </section>
+
+      {/* ---------- Category over time ---------- */}
+      <section className="card p-4">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="label">Category over time</p>
+          {trend?.cat && (
+            <span className="flex items-center gap-1.5 text-[11px] capitalize text-paper-dim">
+              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: KIND_COLOR[trend.kind] }} />
+              {trend.kind}
+            </span>
+          )}
+        </div>
+
+        <select
+          value={trendCat ?? ""}
+          onChange={(e) => setTrendCat(e.target.value ? Number(e.target.value) : null)}
+          className="field w-full py-1.5 text-xs [color-scheme:dark]"
+          aria-label="Category to compare across months"
+        >
+          <option value="" className="bg-ink-2">Pick a category…</option>
+          {trendOptions.map((g) => (
+            <optgroup key={g.kind} label={g.kind[0].toUpperCase() + g.kind.slice(1)}>
+              {g.items.map((c) => (
+                <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+
+        {!trend ? (
+          <p className="py-6 text-center text-sm text-paper-faint">Pick a category to see its month-by-month trend.</p>
+        ) : trend.activeMonths === 0 ? (
+          <p className="py-6 text-center text-sm text-paper-faint">No {trend.cat?.name} activity in this range.</p>
+        ) : (
+          <>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+              <Stat label="Total" value={trend.total} color={KIND_TEXT[trend.kind]} />
+              <Stat label="Avg / mo" value={trend.avg} color="text-paper" />
+              <Stat label="Peak" value={trend.max.value} color="text-paper" />
+            </div>
+            <div className="mt-3">
+              <CategoryTrend key={`${trendCat}-${trend.pts.length}`} points={trend.pts} color={KIND_COLOR[trend.kind]} />
+            </div>
+            <p className="mt-1 text-center text-[11px] text-paper-faint">
+              peak {mShort(trend.max.month)} · active {trend.activeMonths} of {trend.pts.length} months
+            </p>
+          </>
+        )}
+      </section>
     </div>
   );
 }
@@ -665,6 +754,52 @@ function MultiLineChart({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ---- One category's monthly bars (tap a bar to read its month/value) ----
+function CategoryTrend({ points, color }: { points: { month: string; value: number }[]; color: string }) {
+  const [sel, setSel] = useState<number | null>(null);
+  const n = points.length;
+  if (n === 0) return null;
+  const max = points.reduce((m, p) => Math.max(m, p.value), 0) || 1;
+  const cur = sel !== null && sel < n ? sel : n - 1;
+  const step = Math.max(1, Math.ceil(n / 8));
+
+  return (
+    <div>
+      <div className="flex items-end gap-1" style={{ height: 132 }}>
+        {points.map((p, i) => (
+          <button
+            key={p.month}
+            type="button"
+            onClick={() => setSel(i)}
+            aria-label={`${mLong(p.month)}: ${p.value}`}
+            className="flex h-full flex-1 flex-col justify-end"
+          >
+            <div
+              className="w-full rounded-t transition-opacity"
+              style={{
+                height: `${(p.value / max) * 100}%`,
+                minHeight: p.value > 0 ? 3 : 0,
+                backgroundColor: color,
+                opacity: i === cur ? 1 : 0.45,
+              }}
+            />
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 flex">
+        {points.map((p, i) => (
+          <span key={p.month} className="flex-1 text-center text-[9px] text-paper-faint">
+            {i % step === 0 || i === n - 1 ? mShort(p.month) : ""}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-center text-[11px] text-paper-dim">
+        {mLong(points[cur].month)}: <span className="tabular-nums text-paper">{formatRupiah(points[cur].value)}</span>
+      </p>
     </div>
   );
 }
