@@ -28,6 +28,26 @@ export async function getStockTargets(): Promise<StockTarget[]> {
   return (data ?? []) as StockTarget[];
 }
 
+export interface StockDividend {
+  id: number;
+  ticker: string;
+  idr: number; // cash dividend received
+  occurred_on: string;
+  wallet_id: number | null;
+  txn_id: number | null;
+  note: string | null;
+}
+
+export async function getStockDividends(): Promise<StockDividend[]> {
+  const { data, error } = await supabaseServer()
+    .from("stock_dividends")
+    .select("*")
+    .order("occurred_on", { ascending: false })
+    .order("id", { ascending: false });
+  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
+  return (data ?? []) as StockDividend[];
+}
+
 export async function getStockTrades(): Promise<StockTrade[]> {
   const { data, error } = await supabaseServer()
     .from("stock_trades")

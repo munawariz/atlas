@@ -281,6 +281,20 @@ create table if not exists stock_targets (
 );
 alter table stock_targets add column if not exists price bigint;
 
+-- Dividends received from a stock, booked as income ("Dividen") into a wallet. Kept in its
+-- own table so lifetime dividends per ticker can be totalled independently of holdings
+-- (you keep the history even after selling all shares).
+create table if not exists stock_dividends (
+  id          bigint generated always as identity primary key,
+  ticker      text   not null,
+  idr         bigint not null check (idr > 0),   -- cash dividend received
+  occurred_on date   not null,
+  wallet_id   bigint references wallets(id) on delete set null,
+  txn_id      bigint references transactions(id) on delete set null,  -- the income row
+  note        text
+);
+create index if not exists idx_stock_dividends_ticker on stock_dividends (ticker);
+
 -- Bond trades — buys/sells move principal in/out of the "Bonds" investment bucket
 -- (buy = investment from a wallet, sell = withdrawal into it); coupons are interest
 -- income booked under "Kupon". Each row books a matching transactions row.

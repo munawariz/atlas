@@ -158,6 +158,63 @@ export async function addStockTrade(_prev: StockState, formData: FormData): Prom
   return { ok: true, nonce: Date.now(), savedLabel };
 }
 
+// Log a cash dividend received from a stock: books it as income ("Dividen") into the
+// chosen wallet and records it in stock_dividends for the per-ticker lifetime total.
+export async function addStockDividend(_prev: StockState, formData: FormData): Promise<StockState> {
+  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const idr = digits(formData.get("idr"));
+  const walletId = optInt(formData.get("wallet_id"));
+  const date = String(formData.get("date") ?? "");
+  const note = String(formData.get("note") ?? "").trim() || null;
+
+  if (!ticker) return { error: "Enter a ticker." };
+  if (!idr) return { error: "Enter the dividend amount." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Pick a date." };
+  if (!walletId) return { error: "Choose a wallet." };
+
+  const sb = supabaseServer();
+  const divCat = await resolveCategoryId("cat_stock_dividend", "Dividen", "income");
+
+  const { data: txn, error } = await sb
+    .from("transactions")
+    .insert({
+      occurred_on: date,
+      type: "income",
+      amount: idr,
+      description: `Dividen ${ticker}`,
+      category_id: divCat,
+      source_wallet_id: null,
+      dest_wallet_id: walletId,
+    })
+    .select("id")
+    .single();
+  if (error) return { error: error.message };
+
+  const { error: dErr } = await sb.from("stock_dividends").insert({
+    ticker,
+    idr,
+    occurred_on: date,
+    wallet_id: walletId,
+    txn_id: txn?.id ?? null,
+    note,
+  });
+  if (dErr) {
+    if (txn?.id) await sb.from("transactions").delete().eq("id", txn.id); // don't orphan the income row
+    return { error: dErr.message };
+  }
+
+  revalidate();
+  return { ok: true, nonce: Date.now(), savedLabel: `Dividend ${ticker}` };
+}
+
+export async function deleteStockDividend(id: number) {
+  const sb = supabaseServer();
+  const { data: d } = await sb.from("stock_dividends").select("txn_id").eq("id", id).maybeSingle();
+  await sb.from("stock_dividends").delete().eq("id", id);
+  if (d?.txn_id) await sb.from("transactions").delete().eq("id", d.txn_id);
+  revalidate();
+}
+
 // Set (or update) a recurring monthly buy target of `lots` for a ticker, with an optional
 // speculative price per share used for the cashflow estimate.
 export async function saveStockTarget(formData: FormData) {

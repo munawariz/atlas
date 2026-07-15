@@ -1,24 +1,35 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
-import { getStockPortfolio, getStockTargets, getStockTrades, type StockTarget } from "@/lib/stocks";
+import { getStockDividends, getStockPortfolio, getStockTargets, getStockTrades, type StockDividend, type StockTarget, type StockTrade } from "@/lib/stocks";
 import { getSettings, mappedWalletId } from "@/lib/settings";
 import { formatMonth, formatRupiah, formatRupiahShort, formatDateShort, todayISO } from "@/lib/format";
 import SubmitButton from "@/components/SubmitButton";
 import MoneyInput from "@/components/MoneyInput";
 import { TrashIcon } from "@/components/icons";
 import StockTradeForm from "./StockTradeForm";
-import { deleteStockTarget, deleteStockTrade, saveStockTarget } from "./actions";
+import StockDividendForm from "./StockDividendForm";
+import { deleteStockDividend, deleteStockTarget, deleteStockTrade, saveStockTarget } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 const pct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 
+function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-paper-faint">{label}</span>
+      <span className={`tabular-nums ${tone ?? "text-paper"}`}>{value}</span>
+    </div>
+  );
+}
+
 export default async function StocksPage() {
-  const [portfolio, wallets, trades, targets, settings] = await Promise.all([
+  const [portfolio, wallets, trades, targets, dividends, settings] = await Promise.all([
     getStockPortfolio(),
     getWallets(),
     getStockTrades(),
     getStockTargets(),
+    getStockDividends(),
     getSettings(),
   ]);
   const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
@@ -46,6 +57,30 @@ export default async function StocksPage() {
     return p != null ? tg.lots * 100 * p : null;
   };
   const totalMonthly = targets.reduce((s, tg) => s + (targetCost(tg) ?? 0), 0);
+
+  // Lifetime dividends per ticker (kept even after you sell out) + this-year total.
+  const divByTicker = new Map<string, number>();
+  for (const d of dividends) divByTicker.set(d.ticker, (divByTicker.get(d.ticker) ?? 0) + d.idr);
+  const totalDividends = dividends.reduce((s, d) => s + d.idr, 0);
+  const yearNow = ymNow.slice(0, 4);
+  const dividendsThisYear = dividends.filter((d) => d.occurred_on.slice(0, 4) === yearNow).reduce((s, d) => s + d.idr, 0);
+  const divTickerRows = [...divByTicker.entries()].sort((a, b) => b[1] - a[1]);
+
+  // Per-ticker trade & dividend history, for the expandable holding cards.
+  const tradesByTicker = new Map<string, StockTrade[]>();
+  for (const t of trades) {
+    const k = t.ticker.toUpperCase();
+    const arr = tradesByTicker.get(k) ?? [];
+    arr.push(t);
+    tradesByTicker.set(k, arr);
+  }
+  const divsByTicker = new Map<string, StockDividend[]>();
+  for (const d of dividends) {
+    const k = d.ticker.toUpperCase();
+    const arr = divsByTicker.get(k) ?? [];
+    arr.push(d);
+    divsByTicker.set(k, arr);
+  }
 
   return (
     <div className="space-y-4 pt-4">
@@ -164,9 +199,23 @@ export default async function StocksPage() {
           <h2 className="label text-plum">Holdings</h2>
           {holdings.map((h) => {
             const hUp = (h.pl ?? 0) >= 0;
+            const dv = divByTicker.get(h.ticker) ?? 0;
+            const tks = tradesByTicker.get(h.ticker) ?? [];
+            const dvs = divsByTicker.get(h.ticker) ?? [];
+            const invested = tks.filter((t) => t.side === "buy").reduce((s, t) => s + t.idr, 0);
+            const proceeds = tks.filter((t) => t.side === "sell").reduce((s, t) => s + t.idr, 0);
+            const realized = tks.reduce((s, t) => s + (t.realized_pl ?? 0), 0);
+            const hasSells = tks.some((t) => t.side === "sell");
+            // Merged buy/sell/dividend timeline, newest first.
+            type Ev = { date: string; kind: "buy" | "sell" | "dividend"; lots?: number; idr: number; pl?: number | null; note?: string | null };
+            const events: Ev[] = [
+              ...tks.map((t) => ({ date: t.occurred_on, kind: t.side, lots: t.lots, idr: t.idr, pl: t.realized_pl, note: t.opening ? "opening" : null })),
+              ...dvs.map((d) => ({ date: d.occurred_on, kind: "dividend" as const, idr: d.idr, note: d.note })),
+            ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
             return (
-              <div key={h.ticker} className="card p-4">
-                <div className="flex items-start justify-between gap-3">
+              <details key={h.ticker} className="card group overflow-hidden">
+                <summary className="flex cursor-pointer items-center justify-between gap-3 p-4 transition-colors active:bg-ink-3">
                   <div className="min-w-0">
                     <div className="flex items-baseline gap-2">
                       <span className="font-display text-base font-semibold text-paper">{h.ticker}</span>
@@ -176,20 +225,75 @@ export default async function StocksPage() {
                       avg Rp {Math.round(h.avgPerShare).toLocaleString("id-ID")}
                       {h.price != null && <> → now Rp {h.price.toLocaleString("id-ID")}</>}
                     </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-display text-sm font-bold tabular-nums text-paper">
-                      {h.value != null ? formatRupiah(h.value) : "—"}
-                    </div>
-                    {h.pl != null && h.plPct != null && (
-                      <div className={`text-xs font-medium ${hUp ? "text-green" : "text-red"}`}>
-                        {hUp ? "+" : ""}
-                        {formatRupiahShort(h.pl)} ({pct(h.plPct)})
+                    {dv > 0 && (
+                      <div className="mt-0.5 text-[11px] text-green">
+                        ◈ dividends {formatRupiah(dv)}
+                        {h.cost ? <span className="text-paper-faint"> · {((dv / h.cost) * 100).toFixed(1)}% on cost</span> : null}
                       </div>
                     )}
                   </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <div className="text-right">
+                      <div className="font-display text-sm font-bold tabular-nums text-paper">
+                        {h.value != null ? formatRupiah(h.value) : "—"}
+                      </div>
+                      {h.pl != null && h.plPct != null && (
+                        <div className={`text-xs font-medium ${hUp ? "text-green" : "text-red"}`}>
+                          {hUp ? "+" : ""}
+                          {formatRupiahShort(h.pl)} ({pct(h.plPct)})
+                        </div>
+                      )}
+                    </div>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-4 w-4 text-plum/70 transition-transform">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+                    </svg>
+                  </div>
+                </summary>
+
+                <div className="border-t border-line/40 px-4 py-3">
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                    <Stat label="Invested" value={formatRupiah(invested)} />
+                    <Stat label="Cost basis now" value={formatRupiah(h.cost)} />
+                    {dv > 0 && <Stat label="Dividends" value={formatRupiah(dv)} tone="text-green" />}
+                    {hasSells && <Stat label="Sold (proceeds)" value={formatRupiah(proceeds)} />}
+                    {hasSells && (
+                      <Stat label="Realized P/L" value={`${realized >= 0 ? "+" : ""}${formatRupiah(realized)}`} tone={realized >= 0 ? "text-green" : "text-red"} />
+                    )}
+                  </div>
+
+                  <div className="mt-3 border-t border-line/30 pt-2">
+                    <div className="label mb-1.5">History</div>
+                    <div className="space-y-1.5">
+                      {events.map((e, i) => (
+                        <div key={i} className="flex items-baseline justify-between gap-2 text-xs">
+                          <span className="min-w-0">
+                            <span
+                              className={
+                                e.kind === "buy" ? "font-medium text-plum" : e.kind === "sell" ? "font-medium text-green" : "font-medium text-green"
+                              }
+                            >
+                              {e.kind === "buy" ? "Buy" : e.kind === "sell" ? "Sell" : "Dividend"}
+                            </span>{" "}
+                            {e.lots != null && <span className="text-paper-dim">{e.lots} lot </span>}
+                            <span className="text-paper-faint">{formatDateShort(e.date)}</span>
+                            {e.note && <span className="text-paper-faint"> · {e.note}</span>}
+                          </span>
+                          <span className="shrink-0 text-right tabular-nums">
+                            <span className="text-paper">{formatRupiah(e.idr)}</span>
+                            {e.kind === "sell" && e.pl != null && (
+                              <span className={e.pl >= 0 ? "text-green" : "text-red"}>
+                                {" "}
+                                ({e.pl >= 0 ? "+" : ""}
+                                {formatRupiahShort(e.pl)})
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </details>
             );
           })}
           <p className="px-1 text-[11px] text-paper-faint">
@@ -197,6 +301,60 @@ export default async function StocksPage() {
           </p>
         </section>
       )}
+
+      {/* Dividends */}
+      <section className="space-y-2">
+        <h2 className="label text-green">Dividends</h2>
+
+        {dividends.length > 0 && (
+          <div className="card p-4">
+            <div className="label">Total received</div>
+            <div className="mt-1 font-display text-2xl font-bold tabular-nums text-green">{formatRupiah(totalDividends)}</div>
+            <div className="mt-0.5 text-[11px] text-paper-faint">
+              {dividends.length} payment{dividends.length > 1 ? "s" : ""}
+              {dividendsThisYear > 0 && <> · {formatRupiah(dividendsThisYear)} in {yearNow}</>}
+            </div>
+            {divTickerRows.length > 0 && (
+              <div className="mt-3 space-y-1.5 border-t border-line/40 pt-3">
+                {divTickerRows.map(([tk, amt]) => (
+                  <div key={tk} className="flex items-baseline justify-between text-sm">
+                    <span className="text-paper">{tk}</span>
+                    <span className="tabular-nums text-paper-dim">{formatRupiah(amt)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <StockDividendForm wallets={walletOpts} defaultWalletId={defaultWalletId} tickers={holdings.map((h) => h.ticker)} />
+
+        {dividends.length > 0 && (
+          <div className="card overflow-hidden">
+            {dividends.slice(0, 30).map((d, i) => (
+              <div key={d.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-paper">
+                    <span className="text-green">{d.ticker}</span> {formatRupiah(d.idr)}
+                  </div>
+                  <div className="text-xs text-paper-faint">
+                    {formatDateShort(d.occurred_on)}
+                    {d.note ? ` · ${d.note}` : ""}
+                  </div>
+                </div>
+                <form action={deleteStockDividend.bind(null, d.id)}>
+                  <SubmitButton label="Delete dividend" className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10">
+                    <TrashIcon className="h-[18px] w-[18px]" />
+                  </SubmitButton>
+                </form>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="px-1 text-[11px] text-paper-faint">
+          Logged as income (Dividen) into the chosen wallet. Lifetime total is tracked per ticker, even after you sell out.
+        </p>
+      </section>
 
       {/* Recent trades */}
       {trades.length > 0 && (

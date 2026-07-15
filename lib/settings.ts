@@ -9,6 +9,7 @@ export const CATEGORY_SETTINGS = [
   { key: "cat_stock", label: "Stock holding", kind: "investment", default: "Stock", help: "Bucket money moves into when buying/selling stocks" },
   { key: "cat_stock_profit", label: "Stock realized profit", kind: "income", default: "Trading", help: "Income when a stock is sold at a gain" },
   { key: "cat_stock_loss", label: "Stock realized loss", kind: "expense", default: "Cut Loss", help: "Expense when a stock is sold at a loss" },
+  { key: "cat_stock_dividend", label: "Stock dividend", kind: "income", default: "Dividen", help: "Income when you log a stock dividend" },
   { key: "cat_bond", label: "Bond holding", kind: "investment", default: "Bonds", help: "Bucket money moves into when buying/selling bonds" },
   { key: "cat_bond_coupon", label: "Bond coupon", kind: "income", default: "Kupon", help: "Income when you log a bond coupon" },
   { key: "cat_forex", label: "Forex holding", kind: "investment", default: "Forex", help: "Bucket money moves into when buying/selling forex" },
