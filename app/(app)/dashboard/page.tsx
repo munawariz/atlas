@@ -33,6 +33,35 @@ function Bar({ pct, color }: { pct: number; color: string }) {
   );
 }
 
+// A small progress ring for a daily budget (over = red, near = amber, else green).
+function Ring({ pct, size = 48 }: { pct: number; size?: number }) {
+  const sw = 5;
+  const r = (size - sw) / 2;
+  const c = size / 2;
+  const CIRC = 2 * Math.PI * r;
+  const dash = (Math.min(pct, 100) / 100) * CIRC;
+  const stroke = pct > 100 ? "var(--color-clay)" : pct >= 80 ? "var(--color-sand)" : "var(--color-green)";
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size }} className="shrink-0">
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--color-line)" strokeWidth={sw} opacity={0.6} />
+      <circle
+        cx={c}
+        cy={c}
+        r={r}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeDasharray={`${dash} ${CIRC - dash}`}
+        transform={`rotate(-90 ${c} ${c})`}
+      />
+      <text x={c} y={c} textAnchor="middle" dominantBaseline="central" fill="var(--color-paper)" style={{ fontSize: size * 0.3, fontWeight: 700 }} className="font-display tabular-nums">
+        {Math.round(pct)}
+      </text>
+    </svg>
+  );
+}
+
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ d?: string }> }) {
   const sp = await searchParams;
   const today = todayISO();
@@ -108,6 +137,20 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       return { id: t.id, primary: desc || cat || "Expense", secondary: desc && cat ? cat : "", amt: t.amount };
     })
     .sort((a, b) => b.amt - a.amt);
+
+  // Daily-budgeted categories: today's spend vs the daily limit, as clickable progress rings.
+  const dailyBudgets = budgets
+    .filter((b) => cats.get(b.category_id)?.period === "daily" && b.amount > 0)
+    .map((b) => {
+      const cat = cats.get(b.category_id)!;
+      const items = dayTxns
+        .filter((t) => t.type === "expense" && t.category_id === b.category_id)
+        .map((t) => ({ id: t.id, desc: t.description?.trim() || cat.name, amt: t.amount }))
+        .sort((a, z) => z.amt - a.amt);
+      const spent = items.reduce((s, it) => s + it.amt, 0);
+      return { id: b.category_id, name: cat.name, budget: b.amount, spent, pct: b.amount ? (spent / b.amount) * 100 : 0, items };
+    })
+    .sort((a, z) => z.pct - a.pct);
 
   // Month actuals + per-category transactions for the WHOLE selected month — shared by the
   // budget panel and the spending breakdown, so both stay consistent with the monthly
@@ -515,6 +558,47 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           )}
         </div>
       </section>
+
+      {/* Daily budgets — today's spend vs each daily-limit category, as clickable rings */}
+      {dailyBudgets.length > 0 && (
+        <section>
+          <h2 className="label mb-2.5 text-amber">Daily budgets · today</h2>
+          <div className="card divide-y divide-line/50 p-1">
+            {dailyBudgets.map((d) => (
+              <details key={d.id} className="group">
+                <summary className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 active:bg-ink-3">
+                  <Ring pct={d.pct} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-paper">{d.name}</span>
+                    <span className="block text-xs text-paper-dim tabular-nums">
+                      <span className={d.pct > 100 ? "text-clay" : d.pct >= 80 ? "text-sand" : "text-green"}>{formatRupiah(d.spent)}</span>
+                      {" / "}{formatRupiah(d.budget)}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-paper-faint">
+                    {d.budget - d.spent >= 0 ? `${formatRupiahShort(d.budget - d.spent)} left` : `${formatRupiahShort(d.spent - d.budget)} over`}
+                  </span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3.5 w-3.5 shrink-0 text-paper-faint transition-transform">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+                  </svg>
+                </summary>
+                <div className="space-y-1 px-3 pb-3 pl-[3.9rem]">
+                  {d.items.length > 0 ? (
+                    d.items.map((it) => (
+                      <div key={it.id} className="flex items-baseline justify-between gap-2 text-xs">
+                        <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
+                        <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-paper-faint">Nothing spent on this today.</p>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Income / Expense / Net — for the whole selected month */}
       <section>
