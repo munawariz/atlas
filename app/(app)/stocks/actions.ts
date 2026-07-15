@@ -158,6 +158,24 @@ export async function addStockTrade(_prev: StockState, formData: FormData): Prom
   return { ok: true, nonce: Date.now(), savedLabel };
 }
 
+// Set (or update) a recurring monthly buy target of `lots` for a ticker, with an optional
+// speculative price per share used for the cashflow estimate.
+export async function saveStockTarget(formData: FormData) {
+  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const lots = digits(formData.get("lots"));
+  const price = digits(formData.get("price"));
+  if (!ticker || lots <= 0) return;
+  await supabaseServer()
+    .from("stock_targets")
+    .upsert({ ticker, lots, price: price > 0 ? price : null }, { onConflict: "ticker" });
+  revalidatePath("/stocks");
+}
+
+export async function deleteStockTarget(id: number) {
+  await supabaseServer().from("stock_targets").delete().eq("id", id);
+  revalidatePath("/stocks");
+}
+
 export async function deleteStockTrade(id: number) {
   const sb = supabaseServer();
   const { data: t } = await sb.from("stock_trades").select("txn_id, pl_txn_id").eq("id", id).maybeSingle();

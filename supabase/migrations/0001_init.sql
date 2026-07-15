@@ -271,6 +271,16 @@ create index if not exists idx_stock_trades_ticker on stock_trades (ticker);
 alter table stock_trades add column if not exists pl_txn_id bigint references transactions(id) on delete set null;
 alter table stock_trades add column if not exists realized_pl bigint;
 
+-- Recurring monthly buy target: aim to buy `lots` of `ticker` each month. Progress is this
+-- month's buys from stock_trades; the target itself recurs every month.
+create table if not exists stock_targets (
+  id     bigint  generated always as identity primary key,
+  ticker text    not null unique,
+  lots   integer not null default 1 check (lots > 0),
+  price  bigint  -- speculative price per share, for cashflow estimates (lots × 100 × price)
+);
+alter table stock_targets add column if not exists price bigint;
+
 -- Bond trades — buys/sells move principal in/out of the "Bonds" investment bucket
 -- (buy = investment from a wallet, sell = withdrawal into it); coupons are interest
 -- income booked under "Kupon". Each row books a matching transactions row.

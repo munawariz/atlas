@@ -15,6 +15,19 @@ export interface StockTrade {
   realized_pl: number | null; // proceeds − cost basis (sells only)
 }
 
+export interface StockTarget {
+  id: number;
+  ticker: string;
+  lots: number; // target lots to buy each month
+  price: number | null; // speculative price per share, for the cashflow estimate
+}
+
+export async function getStockTargets(): Promise<StockTarget[]> {
+  const { data, error } = await supabaseServer().from("stock_targets").select("*").order("ticker");
+  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
+  return (data ?? []) as StockTarget[];
+}
+
 export async function getStockTrades(): Promise<StockTrade[]> {
   const { data, error } = await supabaseServer()
     .from("stock_trades")

@@ -1,22 +1,24 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
-import { getStockPortfolio, getStockTrades } from "@/lib/stocks";
+import { getStockPortfolio, getStockTargets, getStockTrades, type StockTarget } from "@/lib/stocks";
 import { getSettings, mappedWalletId } from "@/lib/settings";
-import { formatRupiah, formatRupiahShort, formatDateShort } from "@/lib/format";
+import { formatMonth, formatRupiah, formatRupiahShort, formatDateShort, todayISO } from "@/lib/format";
 import SubmitButton from "@/components/SubmitButton";
+import MoneyInput from "@/components/MoneyInput";
 import { TrashIcon } from "@/components/icons";
 import StockTradeForm from "./StockTradeForm";
-import { deleteStockTrade } from "./actions";
+import { deleteStockTarget, deleteStockTrade, saveStockTarget } from "./actions";
 
 export const dynamic = "force-dynamic";
 
 const pct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
 
 export default async function StocksPage() {
-  const [portfolio, wallets, trades, settings] = await Promise.all([
+  const [portfolio, wallets, trades, targets, settings] = await Promise.all([
     getStockPortfolio(),
     getWallets(),
     getStockTrades(),
+    getStockTargets(),
     getSettings(),
   ]);
   const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
@@ -26,6 +28,24 @@ export default async function StocksPage() {
   const up = totalPL >= 0;
   const realizedTotal = trades.reduce((s, t) => s + (t.realized_pl ?? 0), 0);
   const hasRealized = trades.some((t) => t.side === "sell");
+
+  // This month's lots bought per ticker, for progress against the monthly targets.
+  const ymNow = todayISO().slice(0, 7);
+  const boughtThisMonth = new Map<string, number>();
+  for (const t of trades) {
+    if (t.side === "buy" && t.occurred_on.slice(0, 7) === ymNow) {
+      const k = t.ticker.toUpperCase();
+      boughtThisMonth.set(k, (boughtThisMonth.get(k) ?? 0) + t.lots);
+    }
+  }
+  // Estimated monthly cash needed = Σ lots × 100 shares × price. Uses the target's speculative
+  // price if set, else the live price when the ticker is already held.
+  const heldPrice = new Map(holdings.filter((h) => h.price != null).map((h) => [h.ticker, h.price as number]));
+  const targetCost = (tg: StockTarget) => {
+    const p = tg.price ?? heldPrice.get(tg.ticker) ?? null;
+    return p != null ? tg.lots * 100 * p : null;
+  };
+  const totalMonthly = targets.reduce((s, tg) => s + (targetCost(tg) ?? 0), 0);
 
   return (
     <div className="space-y-4 pt-4">
@@ -62,6 +82,79 @@ export default async function StocksPage() {
       </div>
 
       <StockTradeForm wallets={walletOpts} defaultWalletId={defaultWalletId} />
+
+      {/* Monthly buy targets */}
+      <section className="space-y-2">
+        <h2 className="label text-plum">Monthly buy target · {formatMonth(`${ymNow}-01`)}</h2>
+
+        {targets.length > 0 && (
+          <div className="card p-4">
+            <div className="label">Est. monthly buying</div>
+            <div className="mt-1 font-display text-2xl font-bold tabular-nums text-plum">{formatRupiah(totalMonthly)}</div>
+            <div className="mt-0.5 text-[11px] text-paper-faint">
+              {targets.length} target{targets.length > 1 ? "s" : ""} · at your speculative prices — budget this into cashflow
+            </div>
+          </div>
+        )}
+
+        <form action={saveStockTarget} className="card space-y-2 p-3">
+          <div className="flex gap-2">
+            <input name="ticker" placeholder="Ticker" maxLength={6} className="field w-24 uppercase" />
+            <input name="lots" inputMode="numeric" placeholder="Lots/mo" className="field w-24 text-center" />
+            <MoneyInput name="price" placeholder="Price/share" className="field flex-1" />
+          </div>
+          <SubmitButton pendingText="…" className="w-full rounded-2xl bg-plum py-2.5 font-semibold text-ink">
+            Set target
+          </SubmitButton>
+        </form>
+
+        {targets.length > 0 && (
+          <div className="space-y-2">
+            {targets.map((tg) => {
+              const bought = boughtThisMonth.get(tg.ticker) ?? 0;
+              const pctT = tg.lots ? (bought / tg.lots) * 100 : 0;
+              const done = bought >= tg.lots;
+              const cost = targetCost(tg);
+              const priceSource = tg.price != null ? null : heldPrice.has(tg.ticker) ? "live" : "no price";
+              return (
+                <div key={tg.id} className="card p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2">
+                      <span className="font-display text-sm font-semibold text-paper">{tg.ticker}</span>
+                      {done && (
+                        <span className="rounded bg-green/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">✓ met</span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-2.5">
+                      <span className="text-xs tabular-nums text-paper-dim">
+                        <span className={done ? "text-green" : "text-paper"}>{bought}</span> / {tg.lots} lot{tg.lots > 1 ? "s" : ""}
+                      </span>
+                      <form action={deleteStockTarget.bind(null, tg.id)}>
+                        <SubmitButton label="Remove target" className="grid h-7 w-7 place-items-center rounded-lg text-clay active:bg-clay/10">
+                          <TrashIcon className="h-4 w-4" />
+                        </SubmitButton>
+                      </form>
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-line/40">
+                    <div className={`h-full rounded-full ${done ? "bg-green" : "bg-plum"}`} style={{ width: `${Math.min(100, pctT)}%` }} />
+                  </div>
+                  <div className="mt-1.5 text-[11px] tabular-nums text-paper-faint">
+                    {cost != null ? (
+                      <>≈ {formatRupiah(cost)}/mo{priceSource === "live" && <span className="text-paper-dim"> · live price</span>}</>
+                    ) : (
+                      <span className="text-amber">Set a price/share to include in the estimate</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="px-1 text-[11px] text-paper-faint">
+          A recurring goal per ticker — progress counts this month&apos;s buys and resets each month.
+        </p>
+      </section>
 
       {/* Holdings */}
       {holdings.length === 0 ? (
