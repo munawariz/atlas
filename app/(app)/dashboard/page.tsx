@@ -13,12 +13,14 @@ import {
 } from "@/lib/data";
 import { type BudgetPeriod } from "@/lib/types";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
+import { getStockTargets, getStockTrades } from "@/lib/stocks";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
 import StatsTabs from "./StatsTabs";
 import InstallmentsTab from "./InstallmentsTab";
+import SavingInvestmentTab from "./SavingInvestmentTab";
 import Link from "next/link";
 import { ChartIcon } from "@/components/icons";
 import PrivacyToggle from "@/components/PrivacyToggle";
@@ -71,7 +73,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const monthKey = `${selectedDay.slice(0, 7)}-01`;
   const [y, m] = monthKey.split("-").map(Number);
 
-  const [txns, budgets, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexTxns, settings] =
+  const [txns, budgets, cats, wallets, paylater, paylaterPaid, providers, loans, payments, derivedStart, forexAccounts, forexTxns, stockTargets, stockTrades, settings] =
     await Promise.all([
       getMonthTransactions(monthKey),
       getBudgetsForMonth(monthKey),
@@ -85,6 +87,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       deriveWalletBalances(prevMonthKey(monthKey)), // per-wallet balance at the start of this month
       getForexAccounts(),
       getForexTransactions(),
+      getStockTargets(),
+      getStockTrades(),
       getSettings(),
     ]);
 
@@ -184,6 +188,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .map(([id, amt]) => ({ id, name: cats.get(id)?.name ?? "—", amt }))
     .sort((a, b) => b.amt - a.amt);
   const maxSpend = spendRows[0]?.amt ?? 1;
+  const spendTotal = spendRows.reduce((s, r) => s + r.amt, 0);
 
   // Net flow into each saving/investment bucket this month: contributions minus
   // Withdrawals (which draw from the same buckets). Category-tagged
@@ -204,6 +209,43 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const savingTotal = savInvRows.filter((r) => r.kind === "saving").reduce((a, r) => a + r.amt, 0);
   const investTotal = savInvRows.filter((r) => r.kind === "investment").reduce((a, r) => a + r.amt, 0);
   const maxSavInv = savInvRows.reduce((m, r) => Math.max(m, Math.abs(r.amt)), 0) || 1;
+
+  // Monthly stock buying (Saving & Investment tab): each target's lots bought in the selected
+  // month vs its goal. The estimate uses the target's speculative price, else the ticker's
+  // all-time average buy price from trades (no live lookup needed on the home page).
+  const ym = monthKey.slice(0, 7);
+  const stockBought = new Map<string, number>();
+  const buyAgg = new Map<string, { lots: number; idr: number }>();
+  for (const t of stockTrades) {
+    if (t.side !== "buy") continue;
+    const k = t.ticker.toUpperCase();
+    if (t.occurred_on.slice(0, 7) === ym) stockBought.set(k, (stockBought.get(k) ?? 0) + t.lots);
+    const a = buyAgg.get(k) ?? { lots: 0, idr: 0 };
+    a.lots += t.lots;
+    a.idr += t.idr;
+    buyAgg.set(k, a);
+  }
+  const avgSharePrice = (tk: string) => {
+    const a = buyAgg.get(tk);
+    return a && a.lots ? a.idr / (a.lots * 100) : null;
+  };
+  const stockRows = stockTargets.map((tg) => {
+    const bought = stockBought.get(tg.ticker) ?? 0;
+    const price = tg.price ?? avgSharePrice(tg.ticker);
+    const est = price != null ? Math.round(tg.lots * 100 * price) : null;
+    return {
+      id: tg.id,
+      ticker: tg.ticker,
+      lots: tg.lots,
+      bought,
+      pct: tg.lots ? (bought / tg.lots) * 100 : 0,
+      met: bought >= tg.lots,
+      est,
+      priced: (tg.price != null ? "own" : price != null ? "avg" : "none") as "own" | "avg" | "none",
+    };
+  });
+  const stockEstTotal = stockRows.reduce((s, r) => s + (r.est ?? 0), 0);
+  const stockMet = stockRows.filter((r) => r.met).length;
 
   // Auto budget (monthly): the configured loan-income category = total expected to collect in
   // the selected day's month. Installment categories are intentionally NOT budgeted here —
@@ -269,23 +311,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const hasAnyBalance = netWorthNow !== 0 || forexLines.length > 0;
 
   const paylaterPaidSet = new Set(paylaterPaid.map((p) => `${p.item_id}:${p.month}`));
-  const paylaterDue = paylater.filter(
-    (p) =>
-      p.first_month_date <= monthKey &&
-      monthKey <= p.last_month_date &&
-      !paylaterPaidSet.has(`${p.id}:${monthKey}`)
-  );
-  const paylaterDueTotal = paylaterDue.reduce((a, p) => a + p.monthly_amount, 0);
-
-  let loanOutstanding = 0;
-  let loanDue = 0;
-  for (const p of payments) {
-    if (p.paid) continue;
-    const loan = loanById.get(p.loan_id);
-    if (!loan) continue;
-    loanOutstanding += loan.installment;
-    if (p.period_month === monthKey) loanDue += loan.installment;
-  }
 
   // ---- Installments tab: this month's installments grouped by provider ----
   type ProvItem = { id: number; item: string; amount: number; paid: boolean };
@@ -318,6 +343,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       total={installmentsTotal}
       paid={installmentsPaid}
       groups={provGroups}
+    />
+  );
+
+  const savInvTab = (
+    <SavingInvestmentTab
+      month={monthKey}
+      stockRows={stockRows}
+      estTotal={stockEstTotal}
+      met={stockMet}
+      savingTotal={savingTotal}
+      investTotal={investTotal}
+      savInvRows={savInvRows}
+      maxSavInv={maxSavInv}
     />
   );
 
@@ -449,6 +487,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       <StatsTabs
         providers={providersTab}
+        savingInvestment={savInvTab}
         overview={
           <div className="stagger space-y-5">
 
@@ -638,8 +677,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {/* Spending by category */}
       {spendRows.length > 0 && (
-        <section>
-          <h2 className="label mb-2.5 text-amber">Where it went · {monthName(m)}</h2>
+        <details className="group" open>
+          <summary className="mb-2.5 flex cursor-pointer items-center gap-1.5">
+            <span className="label text-amber">Where it went · {monthName(m)}</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
+            </svg>
+            <span className="priv-left ml-auto text-xs tabular-nums text-paper-dim">{formatRupiahShort(spendTotal)}</span>
+          </summary>
           <div className="card space-y-3.5 p-4">
             {spendRows.map((r) => {
               const items = itemsByCat.get(r.id) ?? [];
@@ -672,59 +717,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               );
             })}
           </div>
-        </section>
+        </details>
       )}
-
-      {/* Saved & invested (net of withdrawals) */}
-      {savInvRows.length > 0 && (
-        <section>
-          <div className="mb-2.5 flex items-center justify-between">
-            <h2 className="label text-amber">Saved &amp; invested · {monthName(m)}</h2>
-            <Link href="/savings" className="text-[11px] text-paper-dim active:text-paper">Balances ›</Link>
-          </div>
-          <div className="mb-2.5 grid grid-cols-2 gap-2.5">
-            <div className="card p-3.5 text-center">
-              <div className="label">Saved</div>
-              <div className="priv-center mt-1 font-display text-base font-bold tabular-nums text-sky">{formatRupiah(savingTotal)}</div>
-            </div>
-            <div className="card p-3.5 text-center">
-              <div className="label">Invested</div>
-              <div className="priv-center mt-1 font-display text-base font-bold tabular-nums text-plum">{formatRupiah(investTotal)}</div>
-            </div>
-          </div>
-          {savInvRows.length > 0 && (
-            <div className="card space-y-3.5 p-4">
-              {savInvRows.map((r) => (
-                <div key={r.name}>
-                  <div className="mb-1.5 flex justify-between text-xs">
-                    <span className="text-paper">{r.name}</span>
-                    <span className={`tabular-nums ${r.amt < 0 ? "text-amber" : "text-paper-dim"}`}>
-                      {formatRupiahShort(r.amt)}
-                    </span>
-                  </div>
-                  <Bar pct={(Math.abs(r.amt) / maxSavInv) * 100} color={r.kind === "saving" ? "bg-sky/85" : "bg-plum/85"} />
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Obligations */}
-      <div className="grid grid-cols-2 gap-2.5">
-        <div className="card p-4">
-          <div className="label">Paylater due</div>
-          <div className="priv-left mt-1.5 font-display text-base font-bold tabular-nums text-sand">{formatRupiah(paylaterDueTotal)}</div>
-          <div className="mt-0.5 text-xs text-paper-faint">{paylaterDue.length} item(s) this month</div>
-        </div>
-        <div className="card p-4">
-          <div className="label">Loan to collect</div>
-          <div className="priv-left mt-1.5 font-display text-base font-bold tabular-nums text-green">{formatRupiah(loanOutstanding)}</div>
-          <div className="mt-0.5 text-xs text-paper-faint">
-            <span className="priv-left tabular-nums">{formatRupiah(loanDue)}</span> this month
-          </div>
-        </div>
-      </div>
 
       {txns.length === 0 && !hasAnyBalance && (
         <p className="pt-6 text-center text-sm text-paper-faint">
