@@ -18,13 +18,20 @@ export function formatNumber(n: number | null | undefined): string {
   return idrPlain.format(Math.round(n ?? 0));
 }
 
-/** Compact form for tight UI: "Rp 7,8jt", "Rp 950rb". */
+/** Compact form for tight UI: "Rp 7,8jt", "Rp 950rb", "Rp 1jt". */
 export function formatRupiahShort(n: number | null | undefined): string {
   const v = Math.round(n ?? 0);
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
-  if (abs >= 1_000_000_000) return `${sign}Rp ${(abs / 1_000_000_000).toFixed(1).replace(".", ",")}M`;
-  if (abs >= 1_000_000) return `${sign}Rp ${(abs / 1_000_000).toFixed(1).replace(".", ",")}jt`;
+  // One decimal, dropping a trailing ",0" so 1_000_000 → "1jt" (not "1,0jt").
+  const dec = (x: number) => {
+    const s = x.toFixed(1);
+    return (s.endsWith(".0") ? s.slice(0, -2) : s).replace(".", ",");
+  };
+  // Thresholds sit at 999.5×unit so a value that rounds up (e.g. 999.900) carries into the
+  // next unit ("1jt") instead of overflowing its own ("1000rb").
+  if (abs >= 999_500_000) return `${sign}Rp ${dec(abs / 1_000_000_000)}M`;
+  if (abs >= 999_500) return `${sign}Rp ${dec(abs / 1_000_000)}jt`;
   if (abs >= 1_000) return `${sign}Rp ${Math.round(abs / 1_000)}rb`;
   return `${sign}Rp ${abs}`;
 }
