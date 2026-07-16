@@ -150,9 +150,9 @@ export default async function BudgetsPage({ searchParams }: { searchParams: Prom
       </div>
 
       <p className="px-1 text-xs text-paper-faint">
-        Each category's <span className="text-paper-dim">period</span> (daily, weekly Mon→Sun, monthly, or yearly) is set on
-        the <Link href="/more/categories" className="underline">Categories</Link> page. The amount here is the limit per that
-        period; non-monthly ones are converted to a monthly estimate for the cashflow above.
+        Change each category's <span className="text-paper-dim">period</span> (daily, weekly Mon→Sun, monthly, or yearly) right
+        here or on the <Link href="/more/categories" className="underline">Categories</Link> page. The amount is the limit per
+        that period; non-monthly ones are converted to a monthly estimate for the cashflow above.
       </p>
 
       <p className="px-1 text-xs text-paper-faint">
