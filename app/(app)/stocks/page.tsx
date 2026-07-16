@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getWallets } from "@/lib/data";
-import { getStockDividends, getStockPortfolio, getStockTargets, getStockTrades, type StockDividend, type StockTarget, type StockTrade } from "@/lib/stocks";
+import { getStockDividends, getStockPortfolio, getStockTargetsForMonth, getStockTrades, type MonthStockTarget, type StockDividend, type StockTrade } from "@/lib/stocks";
 import { getSettings, mappedWalletId } from "@/lib/settings";
 import { formatRupiah, formatRupiahShort, formatDateShort, todayISO } from "@/lib/format";
 import SubmitButton from "@/components/SubmitButton";
@@ -27,7 +27,7 @@ export default async function StocksPage() {
     getStockPortfolio(),
     getWallets(),
     getStockTrades(),
-    getStockTargets(),
+    getStockTargetsForMonth(`${todayISO().slice(0, 7)}-01`),
     getStockDividends(),
     getSettings(),
   ]);
@@ -43,7 +43,7 @@ export default async function StocksPage() {
   // Estimated monthly cash needed = Σ lots × 100 shares × price. Uses the target's speculative
   // price if set, else the live price when the ticker is already held.
   const heldPrice = new Map(holdings.filter((h) => h.price != null).map((h) => [h.ticker, h.price as number]));
-  const targetCost = (tg: StockTarget) => {
+  const targetCost = (tg: MonthStockTarget) => {
     const p = tg.price ?? heldPrice.get(tg.ticker) ?? null;
     return p != null ? tg.lots * 100 * p : null;
   };

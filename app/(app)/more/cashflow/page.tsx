@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems, getPaylaterProviders } from "@/lib/data";
-import { getStockPortfolio, getStockTargets } from "@/lib/stocks";
+import { getStockPortfolio, getStockTargetsForMonth } from "@/lib/stocks";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatMonth, formatNumber, formatRupiah, todayISO } from "@/lib/format";
 import type { BudgetPeriod } from "@/lib/types";
@@ -30,7 +30,7 @@ export default async function CashflowPage({ searchParams }: { searchParams: Pro
     getLoanPayments(),
     getPaylaterItems(),
     getPaylaterProviders(true),
-    getStockTargets(),
+    getStockTargetsForMonth(monthKey),
     getStockPortfolio(),
     getSettings(),
   ]);

@@ -280,6 +280,25 @@ create table if not exists stock_targets (
   price  bigint  -- speculative price per share, for cashflow estimates (lots × 100 × price)
 );
 alter table stock_targets add column if not exists price bigint;
+-- Version the base target by effective_from (like recurring_budgets) so it can be set for
+-- "this month onward". Existing rows apply from the beginning (every month). The old
+-- unique(ticker) is replaced by unique(ticker, effective_from) to allow multiple rules.
+alter table stock_targets add column if not exists effective_from date not null default '1900-01-01';
+alter table stock_targets drop constraint if exists stock_targets_ticker_key;
+create unique index if not exists stock_targets_ticker_eff_key on stock_targets (ticker, effective_from);
+
+-- Per-month override of a stock buy target — mirrors how the `budgets` table overrides a
+-- category's recurring amount. When a month has no override row, stock_targets (the base,
+-- "every month" default) applies for that month.
+create table if not exists stock_target_months (
+  id     bigint  generated always as identity primary key,
+  ticker text    not null,
+  month  date    not null,                 -- first day of the month
+  lots   integer not null check (lots > 0),
+  price  bigint,                           -- speculative price per share (null = fall back)
+  unique (ticker, month)
+);
+create index if not exists idx_stock_target_months_month on stock_target_months (month);
 
 -- Dividends received from a stock, booked as income ("Dividen") into a wallet. Kept in its
 -- own table so lifetime dividends per ticker can be totalled independently of holdings

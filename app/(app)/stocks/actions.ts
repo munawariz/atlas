@@ -215,23 +215,64 @@ export async function deleteStockDividend(id: number) {
   revalidate();
 }
 
-// Set (or update) a recurring monthly buy target of `lots` for a ticker, with an optional
-// speculative price per share used for the cashflow estimate.
+function revalidateStockTargets() {
+  revalidatePath("/stocks");
+  revalidatePath("/stocks/targets");
+  revalidatePath("/dashboard");
+  revalidatePath("/more/cashflow");
+}
+
+// Set a buy target of `lots` (optional speculative price) for a ticker. Same scopes as
+// category budgets: "month" = this month only (per-month override); "forward" = this month
+// and every month after (a base rule, clearing later rules/overrides); "all" = every month
+// (a single base rule from the beginning, clearing all rules/overrides).
 export async function saveStockTarget(formData: FormData) {
   const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   const lots = digits(formData.get("lots"));
   const price = digits(formData.get("price"));
+  const month = String(formData.get("month") ?? "");
+  const scope = String(formData.get("scope") ?? "forward");
   if (!ticker || lots <= 0) return;
-  const { error } = await supabaseServer()
-    .from("stock_targets")
-    .upsert({ ticker, lots, price: price > 0 ? price : null }, { onConflict: "ticker" });
-  if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
-  revalidatePath("/stocks");
+  const priceVal = price > 0 ? price : null;
+  const validMonth = /^\d{4}-\d{2}-01$/.test(month);
+  const sb = supabaseServer();
+
+  if (scope === "all") {
+    // One base rule from the dawn of time; wipe every override and other rule.
+    await sb.from("stock_targets").delete().eq("ticker", ticker);
+    await sb.from("stock_target_months").delete().eq("ticker", ticker);
+    const { error } = await sb.from("stock_targets").insert({ ticker, lots, price: priceVal, effective_from: "1900-01-01" });
+    if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
+  } else if (scope === "month" && validMonth) {
+    const { error } = await sb
+      .from("stock_target_months")
+      .upsert({ ticker, month, lots, price: priceVal }, { onConflict: "ticker,month" });
+    if (error) throw new Error(`Couldn't save this month's target: ${error.message}`);
+  } else if (validMonth) {
+    // Authoritative from this month on: drop later rules + overrides, set the rule here.
+    await sb.from("stock_targets").delete().eq("ticker", ticker).gt("effective_from", month);
+    await sb.from("stock_target_months").delete().eq("ticker", ticker).gte("month", month);
+    const { error } = await sb
+      .from("stock_targets")
+      .upsert({ ticker, lots, price: priceVal, effective_from: month }, { onConflict: "ticker,effective_from" });
+    if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
+  }
+  revalidateStockTargets();
 }
 
-export async function deleteStockTarget(id: number) {
-  await supabaseServer().from("stock_targets").delete().eq("id", id);
-  revalidatePath("/stocks");
+// Remove a target entirely: the base and every per-month override for the ticker.
+export async function deleteStockTarget(ticker: string) {
+  const sb = supabaseServer();
+  await sb.from("stock_targets").delete().eq("ticker", ticker);
+  await sb.from("stock_target_months").delete().eq("ticker", ticker);
+  revalidateStockTargets();
+}
+
+// Drop just one month's override so the ticker reverts to its every-month base.
+export async function clearStockTargetMonth(ticker: string, month: string) {
+  if (!/^\d{4}-\d{2}-01$/.test(month)) return;
+  await supabaseServer().from("stock_target_months").delete().eq("ticker", ticker).eq("month", month);
+  revalidateStockTargets();
 }
 
 export async function deleteStockTrade(id: number) {

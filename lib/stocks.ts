@@ -20,12 +20,59 @@ export interface StockTarget {
   ticker: string;
   lots: number; // target lots to buy each month
   price: number | null; // speculative price per share, for the cashflow estimate
+  effective_from: string; // first month (YYYY-MM-01) this rule applies from
 }
 
 export async function getStockTargets(): Promise<StockTarget[]> {
-  const { data, error } = await supabaseServer().from("stock_targets").select("*").order("ticker");
+  const { data, error } = await supabaseServer()
+    .from("stock_targets")
+    .select("*")
+    .order("ticker")
+    .order("effective_from", { ascending: true });
   if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
   return (data ?? []) as StockTarget[];
+}
+
+// A per-month override of a target's lots/price (mirrors the `budgets` table for categories).
+export interface StockTargetMonth {
+  id: number;
+  ticker: string;
+  month: string; // YYYY-MM-01
+  lots: number;
+  price: number | null;
+}
+
+export async function getStockTargetMonths(monthKey: string): Promise<StockTargetMonth[]> {
+  const { data, error } = await supabaseServer().from("stock_target_months").select("*").eq("month", monthKey);
+  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
+  return (data ?? []) as StockTargetMonth[];
+}
+
+// A target resolved for a specific month: the per-month override if present, else the base.
+export interface MonthStockTarget {
+  ticker: string;
+  lots: number;
+  price: number | null;
+  source: "month" | "base"; // "month" = this month is customised, "base" = recurring default
+  hasBase: boolean; // a base (every-month) target exists — so it can revert to it
+}
+
+// Resolve every ticker's target for `monthKey`: a per-month override wins, else the base
+// rule with the greatest effective_from <= monthKey (same precedence as getBudgetsForMonth).
+export async function getStockTargetsForMonth(monthKey: string): Promise<MonthStockTarget[]> {
+  const [rules, months] = await Promise.all([getStockTargets(), getStockTargetMonths(monthKey)]);
+  const baseByT = new Map<string, { lots: number; price: number | null }>();
+  for (const r of rules) if (r.effective_from <= monthKey) baseByT.set(r.ticker, { lots: r.lots, price: r.price }); // ascending => greatest wins
+  const ovByT = new Map(months.map((m) => [m.ticker, m]));
+  const tickers = new Set<string>([...baseByT.keys(), ...ovByT.keys()]);
+  const out: MonthStockTarget[] = [];
+  for (const t of tickers) {
+    const ov = ovByT.get(t);
+    const b = baseByT.get(t);
+    if (ov) out.push({ ticker: t, lots: ov.lots, price: ov.price, source: "month", hasBase: !!b });
+    else out.push({ ticker: t, lots: b!.lots, price: b!.price, source: "base", hasBase: true });
+  }
+  return out.sort((a, b) => a.ticker.localeCompare(b.ticker));
 }
 
 export interface StockDividend {
