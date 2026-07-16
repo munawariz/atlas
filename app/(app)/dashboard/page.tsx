@@ -13,7 +13,7 @@ import {
 } from "@/lib/data";
 import { type BudgetPeriod } from "@/lib/types";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
-import { getStockTargets, getStockTrades } from "@/lib/stocks";
+import { getStockTargetsForMonth, getStockTrades } from "@/lib/stocks";
 import { getSettings, mappedCategoryId } from "@/lib/settings";
 import { formatDateShort, formatNumber, formatRupiah, formatRupiahShort, monthName, todayISO } from "@/lib/format";
 import DaySwitcher from "@/components/DaySwitcher";
@@ -21,6 +21,7 @@ import RefreshOnFocus from "@/components/RefreshOnFocus";
 import StatsTabs from "./StatsTabs";
 import InstallmentsTab from "./InstallmentsTab";
 import SavingInvestmentTab from "./SavingInvestmentTab";
+import SpendBreakdown from "./SpendBreakdown";
 import Link from "next/link";
 import { ChartIcon } from "@/components/icons";
 import PrivacyToggle from "@/components/PrivacyToggle";
@@ -57,8 +58,9 @@ function Ring({ pct, size = 48 }: { pct: number; size?: number }) {
         strokeDasharray={`${dash} ${CIRC - dash}`}
         transform={`rotate(-90 ${c} ${c})`}
       />
-      <text x={c} y={c} textAnchor="middle" dominantBaseline="central" fill="var(--color-paper)" style={{ fontSize: size * 0.3, fontWeight: 700 }} className="font-display tabular-nums">
-        {Math.round(pct)}
+      <text x={c} y={c} textAnchor="middle" dominantBaseline="central" fill="var(--color-paper)" style={{ fontWeight: 700 }} className="font-display tabular-nums">
+        <tspan style={{ fontSize: size * 0.3 }}>{Math.round(pct)}</tspan>
+        <tspan style={{ fontSize: size * 0.19 }} dy={-size * 0.03}>%</tspan>
       </text>
     </svg>
   );
@@ -87,7 +89,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       deriveWalletBalances(prevMonthKey(monthKey)), // per-wallet balance at the start of this month
       getForexAccounts(),
       getForexTransactions(),
-      getStockTargets(),
+      getStockTargetsForMonth(monthKey),
       getStockTrades(),
       getSettings(),
     ]);
@@ -187,8 +189,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     .filter(([id]) => cats.get(id)?.kind === "expense")
     .map(([id, amt]) => ({ id, name: cats.get(id)?.name ?? "—", amt }))
     .sort((a, b) => b.amt - a.amt);
-  const maxSpend = spendRows[0]?.amt ?? 1;
   const spendTotal = spendRows.reduce((s, r) => s + r.amt, 0);
+  // Rows for the interactive spend donut/legend: each category with its transactions.
+  const spendBreakdown = spendRows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    amt: r.amt,
+    items: (itemsByCat.get(r.id) ?? []).map((it) => ({ desc: it.desc, wallet: it.wallet, amt: it.amt })),
+  }));
 
   // Net flow into each saving/investment bucket this month: contributions minus
   // Withdrawals (which draw from the same buckets). Category-tagged
@@ -234,7 +242,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     const price = tg.price ?? avgSharePrice(tg.ticker);
     const est = price != null ? Math.round(tg.lots * 100 * price) : null;
     return {
-      id: tg.id,
       ticker: tg.ticker,
       lots: tg.lots,
       bought,
@@ -685,37 +692,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             </svg>
             <span className="priv-left ml-auto text-xs tabular-nums text-paper-dim">{formatRupiahShort(spendTotal)}</span>
           </summary>
-          <div className="card space-y-3.5 p-4">
-            {spendRows.map((r) => {
-              const items = itemsByCat.get(r.id) ?? [];
-              return (
-                <details key={r.id} className="group">
-                  <summary className="cursor-pointer">
-                    <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
-                      <span className="flex min-w-0 items-center gap-1.5 text-paper">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-3 w-3 shrink-0 text-paper-faint transition-transform">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
-                        </svg>
-                        <span className="truncate">{r.name}</span>
-                      </span>
-                      <span className="shrink-0 tabular-nums text-paper-dim">{formatRupiahShort(r.amt)}</span>
-                    </div>
-                    <Bar pct={(r.amt / maxSpend) * 100} color="bg-clay/85" />
-                  </summary>
-                  {items.length > 0 && (
-                    <div className="mt-2 space-y-1 border-l border-line/70 pl-3">
-                      {items.map((it, i) => (
-                        <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
-                          <span className="min-w-0 flex-1 truncate text-paper-dim">{it.desc}</span>
-                          <span className="shrink-0 text-paper-faint">{it.wallet}</span>
-                          <span className="shrink-0 tabular-nums text-paper-faint">{formatNumber(it.amt)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </details>
-              );
-            })}
+          <div className="card p-4">
+            <SpendBreakdown rows={spendBreakdown} total={spendTotal} />
           </div>
         </details>
       )}

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { formatMonth, formatRupiah, formatRupiahShort } from "@/lib/format";
 
-type StockRow = { id: number; ticker: string; lots: number; bought: number; pct: number; met: boolean; est: number | null; priced: "own" | "avg" | "none" };
+type StockRow = { ticker: string; lots: number; bought: number; pct: number; met: boolean; est: number | null; priced: "own" | "avg" | "none" };
 type SavInvRow = { name: string; kind: string | undefined; amt: number };
 
 // Saving & Investment tab on the home page: the monthly stock buying targets with each
@@ -52,7 +52,7 @@ export default function SavingInvestmentTab({
 
             <div className="mt-2.5 space-y-2">
               {stockRows.map((r) => (
-                <div key={r.id} className="card p-3.5">
+                <div key={r.ticker} className="card p-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
                       <span className="font-display text-sm font-semibold text-paper">{r.ticker}</span>
