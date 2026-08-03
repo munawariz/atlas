@@ -4,8 +4,8 @@ import { useState } from "react";
 import { formatNumber } from "@/lib/format";
 
 // A rupiah input that formats with thousand separators as you type (e.g. 1500000 → 1.500.000)
-// so amounts are readable while entering them. Submits the formatted text; server helpers
-// (digits()/parseAmount()) strip the separators back to an integer.
+// so amounts are readable while entering them. Submits the formatted text; the server actions'
+// digits() helper strips the separators back to an integer.
 export default function MoneyInput({
   name,
   defaultValue,

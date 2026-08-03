@@ -36,29 +36,6 @@ export function formatRupiahShort(n: number | null | undefined): string {
   return `${sign}Rp ${abs}`;
 }
 
-/** Parse a free-typed amount ("25.000", "25000", "25rb", "1,5jt") into integer rupiah. */
-export function parseAmount(raw: string): number {
-  if (!raw) return 0;
-  let s = raw.toLowerCase().trim().replace(/\s/g, "");
-  let mult = 1;
-  if (s.endsWith("jt") || s.endsWith("m")) {
-    mult = 1_000_000;
-    s = s.replace(/(jt|m)$/, "");
-  } else if (s.endsWith("rb") || s.endsWith("k")) {
-    mult = 1_000;
-    s = s.replace(/(rb|k)$/, "");
-  }
-  if (mult > 1) {
-    // decimal allowed with multiplier, e.g. "1,5jt"
-    const num = parseFloat(s.replace(/\./g, "").replace(",", "."));
-    return Math.round((isNaN(num) ? 0 : num) * mult);
-  }
-  // plain rupiah: strip thousands separators (both . and ,)
-  const digits = s.replace(/[.,]/g, "");
-  const num = parseInt(digits, 10);
-  return isNaN(num) ? 0 : num;
-}
-
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -73,11 +50,6 @@ export function todayISO(): string {
   const d = new Date();
   const tz = d.getTimezoneOffset() * 60000;
   return new Date(d.getTime() - tz).toISOString().slice(0, 10);
-}
-
-/** First day of a month as "YYYY-MM-01". */
-export function monthKey(year: number, month1to12: number): string {
-  return `${year}-${String(month1to12).padStart(2, "0")}-01`;
 }
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

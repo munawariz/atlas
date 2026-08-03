@@ -189,26 +189,6 @@ export async function reorderCategories(orderedIds: number[]) {
   revalidatePath("/more/categories");
 }
 
-// Reorder within the category's own kind (re-numbering that kind's sort_order 0..n).
-export async function moveCategory(id: number, dir: "up" | "down") {
-  const sb = supabaseServer();
-  const { data: cat } = await sb.from("categories").select("kind").eq("id", id).maybeSingle();
-  if (!cat) return;
-  const { data } = await sb
-    .from("categories")
-    .select("id")
-    .eq("kind", cat.kind)
-    .order("sort_order")
-    .order("id");
-  const list = (data ?? []) as { id: number }[];
-  const i = list.findIndex((c) => c.id === id);
-  const j = dir === "up" ? i - 1 : i + 1;
-  if (i < 0 || j < 0 || j >= list.length) return;
-  [list[i], list[j]] = [list[j], list[i]];
-  await Promise.all(list.map((c, k) => sb.from("categories").update({ sort_order: k }).eq("id", c.id)));
-  revalidatePath("/more/categories");
-}
-
 // ---- Budgets ----
 // scope: "month" = this month only (a per-month override); "forward" = this month and
 // every month after (a recurring rule, clearing later rules/overrides); "all" = every
@@ -340,19 +320,6 @@ export async function togglePaylaterProviderArchived(id: number) {
   const sb = supabaseServer();
   const { data } = await sb.from("paylater_providers").select("archived").eq("id", id).maybeSingle();
   await sb.from("paylater_providers").update({ archived: !data?.archived }).eq("id", id);
-  revalidatePath("/more/providers");
-  revalidatePath("/more/paylater");
-}
-
-export async function movePaylaterProvider(id: number, dir: "up" | "down") {
-  const sb = supabaseServer();
-  const { data } = await sb.from("paylater_providers").select("id").order("sort_order").order("id");
-  const list = (data ?? []) as { id: number }[];
-  const i = list.findIndex((p) => p.id === id);
-  const j = dir === "up" ? i - 1 : i + 1;
-  if (i < 0 || j < 0 || j >= list.length) return;
-  [list[i], list[j]] = [list[j], list[i]];
-  await Promise.all(list.map((p, k) => sb.from("paylater_providers").update({ sort_order: k }).eq("id", p.id)));
   revalidatePath("/more/providers");
   revalidatePath("/more/paylater");
 }

@@ -2,7 +2,6 @@ import "server-only";
 import { supabaseServer } from "./supabaseServer";
 import { todayISO } from "./format";
 import type {
-  BudgetPeriod,
   EffectiveBudget,
   Category,
   CategoryKind,
@@ -91,22 +90,6 @@ export async function getCategories(includeArchived = false): Promise<Category[]
   })) as Category[];
 }
 
-export async function getCategoriesByKind(kind: CategoryKind): Promise<Category[]> {
-  const { data, error } = await supabaseServer()
-    .from("categories")
-    .select("*")
-    .eq("kind", kind)
-    .eq("archived", false)
-    .order("sort_order")
-    .order("id");
-  if (error) throw error;
-  return (data ?? []).map((c) => ({
-    ...c,
-    period: (c as { period?: string }).period ?? "monthly",
-    is_installment: (c as { is_installment?: boolean }).is_installment ?? false,
-  })) as Category[];
-}
-
 export async function walletMap(): Promise<Map<number, string>> {
   const ws = await getWallets(true);
   return new Map(ws.map((w) => [w.id, w.name]));
@@ -115,30 +98,6 @@ export async function walletMap(): Promise<Map<number, string>> {
 export async function categoryMap(): Promise<Map<number, Category>> {
   const cs = await getCategories(true);
   return new Map(cs.map((c) => [c.id, c]));
-}
-
-/** Distinct recent descriptions for a transaction type (for autocomplete chips). */
-export async function recentDescriptions(type: TxnType, limit = 8): Promise<string[]> {
-  const { data, error } = await supabaseServer()
-    .from("transactions")
-    .select("description")
-    .eq("type", type)
-    .not("description", "is", null)
-    .order("occurred_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(60);
-  if (error) throw error;
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const r of data ?? []) {
-    const d = (r as { description: string | null }).description?.trim();
-    if (d && !seen.has(d.toLowerCase())) {
-      seen.add(d.toLowerCase());
-      out.push(d);
-      if (out.length >= limit) break;
-    }
-  }
-  return out;
 }
 
 export async function getMonthTransactions(monthKey: string): Promise<Transaction[]> {
@@ -209,131 +168,6 @@ export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBud
     amount: ovByCat.has(category_id) ? ovByCat.get(category_id)! : recByCat.get(category_id)!,
     recurring: !ovByCat.has(category_id),
   }));
-}
-
-// One transaction backing a budget's actual, for the expandable detail on the dashboard.
-export interface BudgetActualItem {
-  desc: string;
-  amt: number;
-  walletId: number | null;
-  date: string; // YYYY-MM-DD
-}
-
-export interface PeriodActuals {
-  daily: Map<number, number>;
-  weekly: Map<number, number>;
-  monthly: Map<number, number>;
-  yearly: Map<number, number>;
-  // The individual transactions behind each (period, category) total, so a budget row can
-  // expand into its entries. Same windows as the totals above; a single txn can appear in
-  // several periods (e.g. today is in daily/weekly/monthly/yearly).
-  items: Record<BudgetPeriod, Map<number, BudgetActualItem[]>>;
-}
-
-// Boundaries of the period windows that contain `todayIso`. Week runs Monday→Sunday.
-function periodBounds(todayIso: string) {
-  const [y, m, d] = todayIso.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  const mondayOffset = (dt.getUTCDay() + 6) % 7; // 0 = Monday
-  const ws = new Date(dt);
-  ws.setUTCDate(dt.getUTCDate() - mondayOffset);
-  const we = new Date(ws);
-  we.setUTCDate(ws.getUTCDate() + 6);
-  const iso = (x: Date) => x.toISOString().slice(0, 10);
-  return {
-    today: todayIso,
-    weekStart: iso(ws),
-    weekEnd: iso(we),
-    monthStart: `${todayIso.slice(0, 7)}-01`,
-    yearStart: `${todayIso.slice(0, 4)}-01-01`,
-  };
-}
-
-// Per-category actual in each current period window (anchored to today), plus the
-// individual transactions behind each total. Transfers and withdrawals are excluded so
-// each sum matches the budgeted category's own kind.
-export async function getPeriodActuals(todayIso: string): Promise<PeriodActuals> {
-  const b = periodBounds(todayIso);
-  const windowStart = b.weekStart < b.yearStart ? b.weekStart : b.yearStart;
-  const sb = supabaseServer();
-  type Row = {
-    occurred_on: string;
-    type: TxnType;
-    amount: number;
-    category_id: number | null;
-    description: string | null;
-    source_wallet_id: number | null;
-    dest_wallet_id: number | null;
-  };
-  const rows: Row[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
-      .from("transactions")
-      .select("occurred_on, type, amount, category_id, description, source_wallet_id, dest_wallet_id")
-      .gte("occurred_on", windowStart)
-      .lte("occurred_on", b.today)
-      .order("id")
-      .range(from, from + 999);
-    if (error) throw error;
-    const batch = (data ?? []) as Row[];
-    rows.push(...batch);
-    if (batch.length < 1000) break;
-  }
-  const daily = new Map<number, number>();
-  const weekly = new Map<number, number>();
-  const monthly = new Map<number, number>();
-  const yearly = new Map<number, number>();
-  const items: Record<BudgetPeriod, Map<number, BudgetActualItem[]>> = {
-    daily: new Map(),
-    weekly: new Map(),
-    monthly: new Map(),
-    yearly: new Map(),
-  };
-  const add = (mp: Map<number, number>, id: number, amt: number) => mp.set(id, (mp.get(id) ?? 0) + amt);
-  const addItem = (period: BudgetPeriod, id: number, it: BudgetActualItem) => {
-    const arr = items[period].get(id) ?? [];
-    arr.push(it);
-    items[period].set(id, arr);
-  };
-  for (const r of rows) {
-    if (!r.category_id || r.type === "transfer" || r.type === "withdrawal") continue;
-    const d = r.occurred_on.slice(0, 10);
-    const it: BudgetActualItem = {
-      desc: r.description?.trim() || "—",
-      amt: r.amount,
-      walletId: r.source_wallet_id ?? r.dest_wallet_id ?? null,
-      date: d,
-    };
-    if (d >= b.yearStart) { add(yearly, r.category_id, r.amount); addItem("yearly", r.category_id, it); }
-    if (d >= b.monthStart) { add(monthly, r.category_id, r.amount); addItem("monthly", r.category_id, it); }
-    if (d >= b.weekStart && d <= b.weekEnd) { add(weekly, r.category_id, r.amount); addItem("weekly", r.category_id, it); }
-    if (d === b.today) { add(daily, r.category_id, r.amount); addItem("daily", r.category_id, it); }
-  }
-  // Biggest entries first within each list (matches the rest of the dashboard).
-  for (const period of ["daily", "weekly", "monthly", "yearly"] as BudgetPeriod[]) {
-    for (const arr of items[period].values()) arr.sort((x, y) => y.amt - x.amt);
-  }
-  return { daily, weekly, monthly, yearly, items };
-}
-
-export async function getWalletBalances(monthKey: string): Promise<WalletBalance[]> {
-  const { data, error } = await supabaseServer().from("wallet_balances").select("*").eq("month", monthKey);
-  if (error) throw error;
-  return (data ?? []) as WalletBalance[];
-}
-
-/** All monthly networth points: month -> total balance, ascending by month. */
-export async function getNetworthSeries(): Promise<{ month: string; total: number }[]> {
-  const { data, error } = await supabaseServer()
-    .from("wallet_balances")
-    .select("month, balance")
-    .order("month", { ascending: true });
-  if (error) throw error;
-  const totals = new Map<string, number>();
-  for (const r of (data ?? []) as { month: string; balance: number }[]) {
-    totals.set(r.month, (totals.get(r.month) ?? 0) + r.balance);
-  }
-  return [...totals.entries()].map(([month, total]) => ({ month, total }));
 }
 
 export async function getPaylaterItems(): Promise<PaylaterItem[]> {

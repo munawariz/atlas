@@ -37,22 +37,6 @@ export interface WalletBalance {
   balance: number;
 }
 
-export interface Budget {
-  id: number;
-  category_id: number;
-  month: string;
-  amount: number;
-}
-
-// A recurring monthly budget: `amount` applies to every month from `effective_from`
-// onward (until a later rule or a per-month override supersedes it).
-export interface RecurringBudget {
-  id: number;
-  category_id: number;
-  amount: number;
-  effective_from: string;
-}
-
 export type BudgetPeriod = "daily" | "weekly" | "monthly" | "yearly";
 
 export const BUDGET_PERIODS: { value: BudgetPeriod; label: string; per: string }[] = [
