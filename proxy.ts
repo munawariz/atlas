@@ -9,7 +9,7 @@ export async function proxy(req: NextRequest) {
   const authed = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
 
   if (pathname === "/login") {
-    if (authed) return NextResponse.redirect(new URL("/add", req.url));
+    if (authed) return NextResponse.redirect(new URL("/dashboard", req.url));
     return NextResponse.next();
   }
 

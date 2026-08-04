@@ -23,9 +23,10 @@ function revalidateManage() {
   revalidatePath("/more/categories");
   revalidatePath("/more/providers");
   revalidatePath("/more/budgets");
-  revalidatePath("/add");
   revalidatePath("/dashboard");
   revalidatePath("/history");
+  // The app layout feeds the Add sheet its wallets and categories — refresh it too.
+  revalidatePath("/", "layout");
 }
 
 // =============================================================================

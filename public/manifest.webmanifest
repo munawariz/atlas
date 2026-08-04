@@ -2,7 +2,7 @@
   "name": "Atlas",
   "short_name": "Atlas",
   "description": "A mobile-first personal finance tracker. Log every movement of your money; Atlas derives the rest.",
-  "start_url": "/add",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

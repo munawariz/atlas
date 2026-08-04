@@ -28,7 +28,7 @@ export async function login(
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, COOKIE_OPTIONS);
 
-  redirect("/add");
+  redirect("/dashboard");
 }
 
 export async function logout() {

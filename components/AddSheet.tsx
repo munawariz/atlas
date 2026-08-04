@@ -11,7 +11,7 @@ import {
   categoryLabel,
   walletLabel,
 } from "@/components/TxnFields";
-import { addTransaction, type AddState } from "@/app/(app)/add/actions";
+import { addTransaction, type AddState } from "@/app/(app)/actions";
 import { formatNumber, todayISO } from "@/lib/format";
 import {
   TXN_TYPES,
@@ -29,8 +29,7 @@ import {
  * answers exactly one question. The date sits as a small row at the top because it is
  * almost always "today" and only occasionally edited.
  *
- * Submits the same `addTransaction` action as the /add page, which stays available as a
- * direct URL.
+ * This sheet IS the add flow — there is no /add page.
  */
 
 const INITIAL: AddState = {};
@@ -99,8 +98,8 @@ export default function AddSheet({
     return () => cancelAnimationFrame(raf);
   }, [open, type, categoryId, sourceWalletId, destWalletId]);
 
-  // Success: toast, close, and refresh the page underneath — unlike the /add flow there is
-  // no navigation to re-render the numbers this row just changed.
+  // Success: toast, close, and refresh the page underneath — there is no navigation to
+  // re-render the numbers this row just changed.
   useEffect(() => {
     if (!state.ok || !state.nonce || state.nonce === lastNonce.current) return;
     lastNonce.current = state.nonce;
