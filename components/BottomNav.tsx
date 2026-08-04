@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
+import { useState, type ComponentType } from "react";
+import AddSheet from "./AddSheet";
+import type { Category, Wallet } from "@/lib/types";
 import {
   House,
   FileText,
@@ -37,8 +39,15 @@ const SLOTS: Slot[] = [
   { href: "/more", label: "More", Icon: Grid, match: ["/more"] },
 ];
 
-export default function BottomNav() {
+export default function BottomNav({
+  wallets,
+  categories,
+}: {
+  wallets: Wallet[];
+  categories: Category[];
+}) {
   const pathname = usePathname() || "";
+  const [addOpen, setAddOpen] = useState(false);
 
   // Longest match wins, so /more/budgets lights Budget rather than More.
   const activeHref = SLOTS.reduce<string | null>((best, slot) => {
@@ -51,18 +60,22 @@ export default function BottomNav() {
   }, null);
 
   return (
-    <nav className="sticky bottom-0 z-30 mt-auto border-t border-[var(--border-subtle)] bg-white safe-bottom">
+    <>
+      <nav className="sticky bottom-0 z-30 mt-auto border-t border-[var(--border-subtle)] bg-white safe-bottom">
       <div className="mx-auto flex max-w-md items-start justify-around px-3 pt-3 pb-2">
         {SLOTS.map((slot) => {
           const active = activeHref === slot.href;
 
           if (slot.href === "/add") {
             return (
-              <Link
+              <button
                 key={slot.href}
-                href="/add"
+                type="button"
+                onClick={() => setAddOpen(true)}
                 aria-label="Add a transaction"
-                className="-mt-7 flex flex-col items-center gap-1.5 no-underline"
+                aria-haspopup="dialog"
+                aria-expanded={addOpen}
+                className="-mt-7 flex flex-col items-center gap-1.5"
               >
                 <span
                   className="flex h-16 w-16 items-center justify-center rounded-full bg-lime-500 text-forest-800 ring-4 ring-white transition-colors hover:bg-lime-600"
@@ -73,7 +86,7 @@ export default function BottomNav() {
                 <span className="text-[11px] font-semibold text-forest-800">
                   {slot.label}
                 </span>
-              </Link>
+              </button>
             );
           }
 
@@ -103,7 +116,15 @@ export default function BottomNav() {
             </Link>
           );
         })}
-      </div>
-    </nav>
+        </div>
+      </nav>
+
+      <AddSheet
+        wallets={wallets}
+        categories={categories}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+      />
+    </>
   );
 }
