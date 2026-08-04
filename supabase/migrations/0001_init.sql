@@ -43,6 +43,24 @@ alter table categories add column if not exists period text not null default 'mo
 -- Marks an expense category as an installment category (one per paylater provider), so the
 -- stats page can separate installment spend from normal spend.
 alter table categories add column if not exists is_installment boolean not null default false;
+-- Favorites float to their own tab in the Add sheet's category picker.
+alter table categories add column if not exists is_favorite boolean not null default false;
+
+-- Groups: user-named collections of categories that drive the Add sheet. A group can mix
+-- kinds (e.g. "Daily Life" holding an expense, an income and a saving category), and a
+-- category can belong to any number of groups.
+create table if not exists category_groups (
+  id bigint generated always as identity primary key,
+  name text not null unique,
+  sort_order int not null default 0,
+  archived boolean not null default false
+);
+
+create table if not exists category_group_members (
+  group_id bigint not null references category_groups(id) on delete cascade,
+  category_id bigint not null references categories(id) on delete cascade,
+  primary key (group_id, category_id)
+);
 
 -- ---------------------------------------------------------------------------
 -- The single ledger

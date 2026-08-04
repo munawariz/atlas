@@ -1,16 +1,26 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import BottomNav from "@/components/BottomNav";
-import { getCategories, getWallets } from "@/lib/data";
+import {
+  getCategories,
+  getCategoryGroups,
+  getGroupMembers,
+  getRecentCategoryIds,
+  getWallets,
+} from "@/lib/data";
 
 export default async function AppLayout({
   children,
 }: Readonly<{ children: ReactNode }>) {
   // The Add sheet lives in the tab bar, so every page needs its options at hand.
-  const [wallets, categories] = await Promise.all([
-    getWallets(),
-    getCategories(),
-  ]);
+  const [wallets, categories, groups, members, recentCategoryIds] =
+    await Promise.all([
+      getWallets(),
+      getCategories(),
+      getCategoryGroups(),
+      getGroupMembers(),
+      getRecentCategoryIds(),
+    ]);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
@@ -47,7 +57,13 @@ export default async function AppLayout({
 
       <main className="flex-1 px-4 pt-4 pb-6">{children}</main>
 
-      <BottomNav wallets={wallets} categories={categories} />
+      <BottomNav
+        wallets={wallets}
+        categories={categories}
+        groups={groups}
+        members={members}
+        recentCategoryIds={recentCategoryIds}
+      />
     </div>
   );
 }

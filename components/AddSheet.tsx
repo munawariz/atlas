@@ -1,54 +1,80 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import {
+  useActionState,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
-import MoneyInput from "@/components/MoneyInput";
 import SubmitButton from "@/components/SubmitButton";
 import { X } from "@/components/icons";
 import {
   TYPE_ACCENT,
   amountFontSize,
-  categoryLabel,
   walletLabel,
 } from "@/components/TxnFields";
 import { addTransaction, type AddState } from "@/app/(app)/actions";
 import { formatNumber, todayISO } from "@/lib/format";
-import {
-  TXN_TYPES,
-  TYPE_TO_CATEGORY_KIND,
-  type Category,
-  type TxnType,
-  type Wallet,
+import type {
+  Category,
+  CategoryGroup,
+  CategoryGroupMember,
+  CategoryKind,
+  TxnType,
+  Wallet,
 } from "@/lib/types";
 
 /**
  * The staged Add flow, as a bottom sheet over whatever page you are on.
  *
- * The sheet grows one step at a time — type, then category (or the From wallet for a
- * transfer), then the wallet (or the To wallet), and only then the amount — so each tap
- * answers exactly one question. The date sits as a small row at the top because it is
- * almost always "today" and only occasionally edited.
+ * Right under the date sits a horizontally scrollable TAB row over the category picker:
+ * Recent (the categories of the last few entries — the default, because most spending is
+ * habitual) · Favorite (starred categories) · one tab per user group · All. Tapping a
+ * category derives the transaction type from its kind (expense/income/saving/investment),
+ * which decides whether the next step asks for the paying wallet (money out) or the
+ * receiving wallet (income). Then the amount.
+ *
+ * Transfers and withdrawals are deliberately NOT here — they move money rather than record
+ * it, and live as their own feature.
  *
  * This sheet IS the add flow — there is no /add page.
  */
 
 const INITIAL: AddState = {};
 
+const KIND_ORDER: CategoryKind[] = ["expense", "income", "saving", "investment"];
+
+interface PickerTab {
+  key: string;
+  label: string;
+  categories: Category[];
+  emptyMessage: string;
+}
+
 export default function AddSheet({
   wallets,
   categories,
+  groups,
+  members,
+  recentCategoryIds,
   open,
   onClose,
 }: {
   wallets: Wallet[];
   categories: Category[];
+  groups: CategoryGroup[];
+  members: CategoryGroupMember[];
+  recentCategoryIds: number[];
   open: boolean;
   onClose: () => void;
 }) {
   const router = useRouter();
   const [state, formAction] = useActionState(addTransaction, INITIAL);
 
-  const [type, setType] = useState<TxnType | null>(null);
+  const [tabKey, setTabKey] = useState("recent");
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [sourceWalletId, setSourceWalletId] = useState<number | null>(null);
   const [destWalletId, setDestWalletId] = useState<number | null>(null);
@@ -60,10 +86,21 @@ export default function AddSheet({
   const lastNonce = useRef<number | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // The active-tab pill is one element that GLIDES between tabs: each button registers
+  // itself here, and on every tab change the pill is re-measured to the active button's
+  // offset/width. `animate` is false only for the first paint after the sheet opens, so
+  // the pill starts in place instead of sliding in from the edge.
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [pill, setPill] = useState<{
+    left: number;
+    width: number;
+    animate: boolean;
+  } | null>(null);
+
   // A fresh flow every time the sheet opens — staged reveal only works from a blank slate.
   useEffect(() => {
     if (!open) return;
-    setType(null);
+    setTabKey("recent");
     setCategoryId(null);
     setSourceWalletId(null);
     setDestWalletId(null);
@@ -96,7 +133,7 @@ export default function AddSheet({
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     );
     return () => cancelAnimationFrame(raf);
-  }, [open, type, categoryId, sourceWalletId, destWalletId]);
+  }, [open, categoryId, sourceWalletId, destWalletId]);
 
   // Success: toast, close, and refresh the page underneath — there is no navigation to
   // re-render the numbers this row just changed.
@@ -110,38 +147,93 @@ export default function AddSheet({
     return () => clearTimeout(timer);
   }, [state, router, onClose]);
 
+  // --- Step 1's tabs: Recent · Favorite · one per group · All ----------------
+  const tabs = useMemo<PickerTab[]>(() => {
+    const active = categories.filter((c) => !c.archived);
+    const byId = new Map(active.map((c) => [c.id, c]));
+
+    const result: PickerTab[] = [
+      {
+        key: "recent",
+        label: "Recent",
+        categories: recentCategoryIds
+          .map((id) => byId.get(id))
+          .filter((c): c is Category => Boolean(c)),
+        emptyMessage: "Nothing yet — your latest entries' categories will show here.",
+      },
+      {
+        key: "favorite",
+        label: "Favorite",
+        categories: active.filter((c) => c.is_favorite),
+        emptyMessage:
+          "No favorites yet. Star categories under More → Categories.",
+      },
+    ];
+
+    for (const group of groups) {
+      if (group.archived) continue;
+      const children = members
+        .filter((m) => m.group_id === group.id)
+        .map((m) => byId.get(m.category_id))
+        .filter((c): c is Category => Boolean(c));
+      if (children.length === 0) continue;
+      result.push({
+        key: `group-${group.id}`,
+        label: group.name,
+        categories: children,
+        emptyMessage: "This group is empty.",
+      });
+    }
+
+    // "All" keeps kinds together so a long mixed list still scans.
+    const all = [...active].sort(
+      (a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind)
+    );
+    result.push({
+      key: "all",
+      label: "All",
+      categories: all,
+      emptyMessage: "No categories yet. Add one under More → Categories.",
+    });
+
+    return result;
+  }, [categories, groups, members, recentCategoryIds]);
+
+  const activeTab = tabs.find((t) => t.key === tabKey) ?? tabs[0];
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPill(null);
+      return;
+    }
+    const el = tabRefs.current.get(tabKey);
+    if (!el) return;
+    setPill((prev) => ({
+      left: el.offsetLeft,
+      width: el.offsetWidth,
+      animate: prev !== null,
+    }));
+  }, [open, tabKey, tabs]);
+
   // --- Steps -----------------------------------------------------------------
-  const isTransfer = type === "transfer";
-  const kind = type ? TYPE_TO_CATEGORY_KIND[type] : null;
-  const visibleCategories =
-    !type || isTransfer
-      ? []
-      : type === "withdrawal"
-        ? categories.filter((c) => c.kind === "saving" || c.kind === "investment")
-        : categories.filter((c) => c.kind === kind);
+  // The category decides everything: its kind IS the transaction type, which decides
+  // whether the wallet step asks where the money came from or where it landed.
+  const selected = categoryId
+    ? categories.find((c) => c.id === categoryId) ?? null
+    : null;
+  const type: TxnType | null = selected ? selected.kind : null;
+  const walletIsDest = type === "income";
 
-  const showCategoryStep = type !== null && !isTransfer;
-  const walletIsDest = type === "income" || type === "withdrawal";
-  const showWalletStep = isTransfer || (showCategoryStep && categoryId !== null);
-  const showToStep = isTransfer && sourceWalletId !== null;
+  const showWalletStep = selected !== null;
   const detailsReady =
-    type !== null &&
-    (isTransfer
-      ? sourceWalletId !== null && destWalletId !== null
-      : categoryId !== null &&
-        (walletIsDest ? destWalletId !== null : sourceWalletId !== null));
+    selected !== null &&
+    (walletIsDest ? destWalletId !== null : sourceWalletId !== null);
 
-  function changeType(next: TxnType) {
-    setType(next);
-    // Everything downstream almost certainly belongs to the wrong type now.
-    setCategoryId(null);
+  function chooseCategory(id: number) {
+    setCategoryId(id);
+    // A different category may flip the wallet direction — downstream answers are stale.
     setSourceWalletId(null);
     setDestWalletId(null);
-  }
-
-  function chooseFrom(id: number) {
-    setSourceWalletId(id);
-    if (destWalletId === id) setDestWalletId(null);
   }
 
   const amountText = amount || "0";
@@ -170,7 +262,9 @@ export default function AddSheet({
               animation: "rise 0.34s var(--ease-standard) both",
             }}
           >
-            <div className="flex items-center gap-2 px-5 pb-2 pt-4">
+            {/* Header + tabs must never shrink — when "All" overfills the sheet, flex would
+                otherwise compress these fixed-height rows into the grid below. */}
+            <div className="flex shrink-0 items-center gap-2 px-5 pb-2 pt-4">
               <h2 className="min-w-0 flex-1 truncate font-display text-[18px] font-bold text-ink-900">
                 Add a transaction
               </h2>
@@ -192,69 +286,141 @@ export default function AddSheet({
               </button>
             </div>
 
+            {/* --- The picker tabs, right below the date ------------------- */}
+            <div
+              className="shrink-0 overflow-x-auto px-5 pb-2 no-scrollbar"
+              onWheel={(e) => {
+                // Desktop mice only wheel vertically; steer it sideways so the row pans
+                // without a visible scrollbar. Touch swiping is untouched.
+                if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+                  e.currentTarget.scrollLeft += e.deltaY;
+                }
+              }}
+            >
+              <div
+                className="relative flex w-max items-center gap-1"
+                role="tablist"
+                aria-label="Category lists"
+              >
+                {/* The one pill, sliding underneath the labels. */}
+                {pill && (
+                  <span
+                    aria-hidden
+                    className="absolute top-0 left-0 h-[38px] rounded-full bg-forest-800"
+                    style={{
+                      width: pill.width,
+                      transform: `translateX(${pill.left}px)`,
+                      transition: pill.animate
+                        ? "transform 0.28s var(--ease-standard), width 0.28s var(--ease-standard)"
+                        : "none",
+                    }}
+                  />
+                )}
+                {tabs.map((tab) => {
+                  const active = tab.key === activeTab.key;
+                  return (
+                    <button
+                      key={tab.key}
+                      ref={(el) => {
+                        if (el) tabRefs.current.set(tab.key, el);
+                        else tabRefs.current.delete(tab.key);
+                      }}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setTabKey(tab.key)}
+                      className={`relative z-10 inline-flex h-[38px] items-center whitespace-nowrap px-4 text-[14px] transition-colors duration-200 ${
+                        active
+                          ? "font-semibold text-white"
+                          : "font-medium text-ink-500 hover:text-forest-800"
+                      }`}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {/* --- Step 1: type ------------------------------------------ */}
+              {/* --- Step 1: pick the category from the active tab --------- */}
               <section className="mb-4">
-                <div className="label mb-2">What is it?</div>
-                <div className="flex flex-wrap gap-2">
-                  {TXN_TYPES.map((option) => {
-                    const active = option.value === type;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => changeType(option.value)}
-                        aria-pressed={active}
-                        className={`chip ${active ? TYPE_ACCENT[option.value].on : ""}`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                {activeTab.categories.length === 0 ? (
+                  <p className="text-[14px] text-ink-500">
+                    {activeTab.emptyMessage}
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {activeTab.categories.map((category) => {
+                      const active = categoryId === category.id;
+                      return (
+                        <button
+                          key={category.id}
+                          type="button"
+                          onClick={() => chooseCategory(category.id)}
+                          aria-pressed={active}
+                          className={`flex h-11 items-center justify-center gap-1.5 rounded-[var(--radius-input)] border px-3 text-[14px] transition-colors ${
+                            active
+                              ? `font-semibold ${TYPE_ACCENT[category.kind].on}`
+                              : "border-[var(--border-default)] bg-white font-medium text-ink-700 hover:border-forest-800 hover:text-forest-800"
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              active ? "bg-white/70" : TYPE_ACCENT[category.kind].dot
+                            }`}
+                          />
+                          <span className="truncate">{category.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
 
-              {/* --- Step 2: category (or From wallet for transfers) ------- */}
-              {showCategoryStep && (
-                <ChoiceGrid
-                  label={categoryLabel(type!)}
-                  options={visibleCategories}
-                  selected={categoryId}
-                  onSelect={setCategoryId}
-                  emptyMessage="No categories yet. Add one under More → Categories."
-                />
-              )}
-              {isTransfer && (
-                <ChoiceGrid
-                  label="From"
-                  options={wallets}
-                  selected={sourceWalletId}
-                  onSelect={chooseFrom}
-                  emptyMessage="No wallets yet. Add one under More → Wallets."
-                />
+              {/* --- Step 2: the wallet the money left, or landed in ------- */}
+              {showWalletStep && (
+                <section
+                  className="mb-4"
+                  style={{ animation: "pop 0.22s var(--ease-standard) both" }}
+                >
+                  <div className="label mb-2">{walletLabel(type!)}</div>
+                  {wallets.length === 0 ? (
+                    <p className="text-[14px] text-ink-500">
+                      No wallets yet. Add one under More → Wallets.
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      {wallets.map((wallet) => {
+                        const active = walletIsDest
+                          ? destWalletId === wallet.id
+                          : sourceWalletId === wallet.id;
+                        return (
+                          <button
+                            key={wallet.id}
+                            type="button"
+                            onClick={() =>
+                              walletIsDest
+                                ? setDestWalletId(wallet.id)
+                                : setSourceWalletId(wallet.id)
+                            }
+                            aria-pressed={active}
+                            className={`flex h-11 items-center justify-center rounded-[var(--radius-input)] border px-3 text-[14px] transition-colors ${
+                              active
+                                ? "border-forest-800 bg-forest-800 font-semibold text-white"
+                                : "border-[var(--border-default)] bg-white font-medium text-ink-700 hover:border-forest-800 hover:text-forest-800"
+                            }`}
+                          >
+                            <span className="truncate">{wallet.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </section>
               )}
 
-              {/* --- Step 3: wallet (or To wallet for transfers) ----------- */}
-              {showWalletStep && !isTransfer && (
-                <ChoiceGrid
-                  label={walletLabel(type!)}
-                  options={wallets}
-                  selected={walletIsDest ? destWalletId : sourceWalletId}
-                  onSelect={walletIsDest ? setDestWalletId : setSourceWalletId}
-                  emptyMessage="No wallets yet. Add one under More → Wallets."
-                />
-              )}
-              {showToStep && (
-                <ChoiceGrid
-                  label="To"
-                  options={wallets.filter((w) => w.id !== sourceWalletId)}
-                  selected={destWalletId}
-                  onSelect={setDestWalletId}
-                  emptyMessage="No other wallet to move to. Add one under More → Wallets."
-                />
-              )}
-
-              {/* --- Step 4: the amount, last ------------------------------ */}
+              {/* --- Step 3: the amount, last ------------------------------ */}
               {detailsReady && (
                 <div style={{ animation: "pop 0.22s var(--ease-standard) both" }}>
                   <section className="mb-4 rounded-[var(--radius-card)] bg-cream-100 px-5 py-5 text-center">
@@ -280,29 +446,9 @@ export default function AddSheet({
                     </div>
                   </section>
 
-                  {isTransfer && (
-                    <section className="mb-4">
-                      <label htmlFor="sheet-admin-fee" className="label mb-2 block">
-                        Admin fee
-                      </label>
-                      <MoneyInput
-                        id="sheet-admin-fee"
-                        name="admin_fee"
-                        placeholder="Optional"
-                        ariaLabel="Admin fee in rupiah"
-                      />
-                      <p className="mt-1.5 text-[12px] text-ink-500">
-                        Booked as a separate expense from the “From” wallet, using
-                        your admin-fee category (More → Settings).
-                      </p>
-                    </section>
-                  )}
-
                   <section className="mb-4">
                     <label htmlFor="sheet-description" className="label mb-2 block">
-                      {type === "saving" ||
-                      type === "investment" ||
-                      type === "withdrawal"
+                      {type === "saving" || type === "investment"
                         ? "Note"
                         : "Description"}
                     </label>
@@ -367,53 +513,5 @@ export default function AddSheet({
         </div>
       )}
     </>
-  );
-}
-
-/** One step's options: a tidy two-column grid, selected item in solid forest. */
-function ChoiceGrid({
-  label,
-  options,
-  selected,
-  onSelect,
-  emptyMessage,
-}: {
-  label: string;
-  options: { id: number; name: string }[];
-  selected: number | null;
-  onSelect: (id: number) => void;
-  emptyMessage: string;
-}) {
-  return (
-    <section
-      className="mb-4"
-      style={{ animation: "pop 0.22s var(--ease-standard) both" }}
-    >
-      <div className="label mb-2">{label}</div>
-      {options.length === 0 ? (
-        <p className="text-[14px] text-ink-500">{emptyMessage}</p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          {options.map((option) => {
-            const active = selected === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => onSelect(option.id)}
-                aria-pressed={active}
-                className={`flex h-11 items-center justify-center rounded-[var(--radius-input)] border px-3 text-[14px] transition-colors ${
-                  active
-                    ? "border-forest-800 bg-forest-800 font-semibold text-white"
-                    : "border-[var(--border-default)] bg-white font-medium text-ink-700 hover:border-forest-800 hover:text-forest-800"
-                }`}
-              >
-                <span className="truncate">{option.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </section>
   );
 }

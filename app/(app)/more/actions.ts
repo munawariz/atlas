@@ -166,6 +166,17 @@ export async function setCategoryPeriod(
   revalidatePath("/more/cashflow");
 }
 
+export async function setCategoryFavorite(
+  id: number,
+  isFavorite: boolean
+): Promise<void> {
+  await supabaseServer()
+    .from("categories")
+    .update({ is_favorite: isFavorite })
+    .eq("id", id);
+  revalidateManage();
+}
+
 export async function setCategoryInstallment(
   id: number,
   isInstallment: boolean
@@ -205,6 +216,122 @@ export async function reorderCategories(ids: number[]): Promise<void> {
       sb.from("categories").update({ sort_order: index }).eq("id", id)
     )
   );
+  revalidateManage();
+}
+
+// =============================================================================
+// Category groups — mixed-kind collections that drive the Add sheet
+// =============================================================================
+
+export async function addGroup(formData: FormData): Promise<void> {
+  const name = text(formData.get("name"));
+  if (!name) return;
+
+  const sb = supabaseServer();
+  const { data: last } = await sb
+    .from("category_groups")
+    .select("sort_order")
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  await sb.from("category_groups").insert({
+    name,
+    sort_order: Number(last?.sort_order ?? -1) + 1,
+  });
+  revalidateManage();
+}
+
+export async function renameGroup(id: number, formData: FormData): Promise<void> {
+  const name = text(formData.get("name"));
+  if (!name) return;
+  await supabaseServer().from("category_groups").update({ name }).eq("id", id);
+  revalidateManage();
+}
+
+export async function toggleGroupArchived(
+  id: number,
+  archived: boolean
+): Promise<void> {
+  await supabaseServer().from("category_groups").update({ archived }).eq("id", id);
+  revalidateManage();
+}
+
+export async function moveGroup(id: number, delta: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("category_groups")
+    .select("id")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  const list = (data ?? []) as { id: number }[];
+  const from = list.findIndex((g) => g.id === id);
+  const to = from + delta;
+  if (from < 0 || to < 0 || to >= list.length) return;
+
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+
+  await Promise.all(
+    list.map((g, index) =>
+      sb.from("category_groups").update({ sort_order: index }).eq("id", g.id)
+    )
+  );
+  revalidateManage();
+}
+
+/** Hard delete, permitted only once archived. Memberships cascade; categories survive. */
+export async function deleteGroup(id: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data: group } = await sb
+    .from("category_groups")
+    .select("archived")
+    .eq("id", id)
+    .maybeSingle();
+  if (!group?.archived) return;
+
+  await sb.from("category_groups").delete().eq("id", id);
+  revalidateManage();
+}
+
+/** Add one category to a group — fed by the "Add a category…" select on the manage page. */
+export async function addGroupMember(
+  groupId: number,
+  formData: FormData
+): Promise<void> {
+  const categoryId = optInt(formData.get("category_id"));
+  if (!categoryId) return;
+  await supabaseServer()
+    .from("category_group_members")
+    .upsert(
+      { group_id: groupId, category_id: categoryId },
+      { onConflict: "group_id,category_id" }
+    );
+  revalidateManage();
+}
+
+/** Put a category into, or take it out of, one group. */
+export async function toggleGroupMember(
+  groupId: number,
+  categoryId: number,
+  member: boolean
+): Promise<void> {
+  const sb = supabaseServer();
+  if (member) {
+    await sb
+      .from("category_group_members")
+      .upsert(
+        { group_id: groupId, category_id: categoryId },
+        { onConflict: "group_id,category_id" }
+      );
+  } else {
+    await sb
+      .from("category_group_members")
+      .delete()
+      .eq("group_id", groupId)
+      .eq("category_id", categoryId);
+  }
   revalidateManage();
 }
 

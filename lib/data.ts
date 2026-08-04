@@ -6,6 +6,8 @@ import { todayISO } from "./format";
 import type {
   Budget,
   Category,
+  CategoryGroup,
+  CategoryGroupMember,
   CategoryKind,
   EffectiveBudget,
   Loan,
@@ -199,12 +201,67 @@ export const getCategories = cache(
         name: String(row.name),
         sort_order: Number(row.sort_order ?? 0),
         archived: Boolean(row.archived),
+        is_favorite: Boolean(row.is_favorite ?? false),
         period: (row.period as Category["period"]) ?? "monthly",
         is_installment: Boolean(row.is_installment ?? false),
       })
     );
   }
 );
+
+/**
+ * The distinct categories of the latest ledger entries, newest first — the Add sheet's
+ * "Recent" tab. "Latest" means latest ENTERED (id order), not latest dated, so what you
+ * just added is always at the front.
+ */
+export const getRecentCategoryIds = cache(async (limit = 5): Promise<number[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("transactions")
+    .select("category_id")
+    .not("category_id", "is", null)
+    .order("id", { ascending: false })
+    .limit(60);
+  if (error) throw error;
+
+  const ids: number[] = [];
+  for (const row of (data ?? []) as { category_id: number }[]) {
+    if (ids.includes(row.category_id)) continue;
+    ids.push(row.category_id);
+    if (ids.length >= limit) break;
+  }
+  return ids;
+});
+
+// Both group readers tolerate a missing table so the app keeps working against a database
+// that has not had the groups migration run yet — the Add sheet just shows no groups.
+export const getCategoryGroups = cache(
+  async (includeArchived = false): Promise<CategoryGroup[]> => {
+    const sb = supabaseServer();
+    let query = sb.from("category_groups").select("*");
+    if (!includeArchived) query = query.eq("archived", false);
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true });
+    if (error) {
+      if (isMissingTable(error)) return [];
+      throw error;
+    }
+    return (data ?? []) as CategoryGroup[];
+  }
+);
+
+export const getGroupMembers = cache(async (): Promise<CategoryGroupMember[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("category_group_members")
+    .select("group_id, category_id");
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as CategoryGroupMember[];
+});
 
 export function walletMap(wallets: Wallet[]): Map<number, Wallet> {
   return new Map(wallets.map((w) => [w.id, w]));

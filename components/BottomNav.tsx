@@ -4,12 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ComponentType } from "react";
 import AddSheet from "./AddSheet";
-import type { Category, Wallet } from "@/lib/types";
+import MoveSheet from "./MoveSheet";
+import type {
+  Category,
+  CategoryGroup,
+  CategoryGroupMember,
+  Wallet,
+} from "@/lib/types";
 import {
   House,
   FileText,
   Plus,
-  SlidersHorizontal,
+  ArrowUpDown,
   Grid,
   type IconProps,
 } from "./icons";
@@ -26,28 +32,32 @@ type Slot = {
   match: string[];
 };
 
+// "/add" and "/move" are not routes — those slots open their bottom sheets in place.
+// Budgets lives under More.
 const SLOTS: Slot[] = [
   { href: "/dashboard", label: "Home", Icon: House, match: ["/dashboard"] },
   { href: "/history", label: "History", Icon: FileText, match: ["/history"] },
   { href: "/add", label: "Add", Icon: Plus, match: ["/add"] },
-  {
-    href: "/more/budgets",
-    label: "Budget",
-    Icon: SlidersHorizontal,
-    match: ["/more/budgets"],
-  },
+  { href: "/move", label: "Move", Icon: ArrowUpDown, match: [] },
   { href: "/more", label: "More", Icon: Grid, match: ["/more"] },
 ];
 
 export default function BottomNav({
   wallets,
   categories,
+  groups,
+  members,
+  recentCategoryIds,
 }: {
   wallets: Wallet[];
   categories: Category[];
+  groups: CategoryGroup[];
+  members: CategoryGroupMember[];
+  recentCategoryIds: number[];
 }) {
   const pathname = usePathname() || "";
   const [addOpen, setAddOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
 
   // Longest match wins, so /more/budgets lights Budget rather than More.
   const activeHref = SLOTS.reduce<string | null>((best, slot) => {
@@ -90,6 +100,26 @@ export default function BottomNav({
             );
           }
 
+          if (slot.href === "/move") {
+            return (
+              <button
+                key={slot.href}
+                type="button"
+                onClick={() => setMoveOpen(true)}
+                aria-label="Move money"
+                aria-haspopup="dialog"
+                aria-expanded={moveOpen}
+                className="flex flex-col items-center gap-1.5 px-2.5 py-0.5"
+              >
+                <slot.Icon size={22} className="text-ink-300" />
+                <span className="text-[11px] font-semibold text-ink-500">
+                  {slot.label}
+                </span>
+                <span className="h-[3px] w-[18px] rounded-[3px] bg-transparent" />
+              </button>
+            );
+          }
+
           return (
             <Link
               key={slot.href}
@@ -122,8 +152,18 @@ export default function BottomNav({
       <AddSheet
         wallets={wallets}
         categories={categories}
+        groups={groups}
+        members={members}
+        recentCategoryIds={recentCategoryIds}
         open={addOpen}
         onClose={() => setAddOpen(false)}
+      />
+
+      <MoveSheet
+        wallets={wallets}
+        categories={categories}
+        open={moveOpen}
+        onClose={() => setMoveOpen(false)}
       />
     </>
   );

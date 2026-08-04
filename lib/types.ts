@@ -26,12 +26,27 @@ export interface Wallet {
   archived: boolean;
 }
 
+/** A user-named collection of categories, free to mix kinds. Drives the Add sheet. */
+export interface CategoryGroup {
+  id: number;
+  name: string;
+  sort_order: number;
+  archived: boolean;
+}
+
+/** One membership row — a category can live in any number of groups. */
+export interface CategoryGroupMember {
+  group_id: number;
+  category_id: number;
+}
+
 export interface Category {
   id: number;
   kind: CategoryKind;
   name: string;
   sort_order: number;
   archived: boolean;
+  is_favorite: boolean;
   period: BudgetPeriod;
   is_installment: boolean;
 }

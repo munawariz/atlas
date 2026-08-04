@@ -1,5 +1,6 @@
 "use client";
 
+import { Star } from "@/components/icons";
 import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
 
 /**
@@ -35,6 +36,31 @@ export function CategoryPeriodSelect({
           ))}
         </select>
       </label>
+    </form>
+  );
+}
+
+export function CategoryFavoriteToggle({
+  isFavorite,
+  onToggle,
+}: {
+  isFavorite: boolean;
+  onToggle: () => void | Promise<void>;
+}) {
+  return (
+    <form action={onToggle}>
+      <button
+        type="submit"
+        aria-pressed={isFavorite}
+        aria-label={isFavorite ? "Remove from favorites" : "Mark as favorite"}
+        title="Favorites get their own tab in the Add sheet."
+        className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition-colors ${
+          isFavorite ? "bg-lime-200 text-forest-800" : "bg-cream-200 text-ink-500"
+        }`}
+      >
+        <Star size={14} fill={isFavorite ? "currentColor" : "none"} />
+        Favorite
+      </button>
     </form>
   );
 }

@@ -147,6 +147,23 @@ direction is implied by `type`. Six types:
 `withdrawal` is the inverse of `saving`/`investment` — it is *not* income. In the UI it is
 labeled **"Withdraw"**.
 
+### 3.1b Category groups — what the Add sheet leads with
+
+Categories keep their hard `kind` (income/expense/saving/investment), but users also organize
+them into **groups** — named collections free to mix kinds ("Daily Life" can hold Groceries
+(expense), Cashback (income) and Emergency Fund (saving)). A category can belong to **any
+number of groups**; membership lives in a `category_group_members` join table.
+
+The Add sheet's picker is a horizontally scrollable **tab row right below the date**:
+**Recent** (distinct categories of the latest entries by id, max 5 — the default tab) ·
+**Favorite** (categories with `is_favorite`, starred on More → Categories) · one tab per
+user group · **All** (every active category, kinds kept together). Tapping a category
+**derives the transaction type from its kind** — so the user never picks a type — and the
+wallet step follows the money: expense/saving/investment ask for the **From** wallet, income
+asks for the **To** wallet. Transfers and withdrawals are not in the Add sheet — they live in
+their own **Move sheet** (`components/MoveSheet.tsx`), opened from the tab bar's fourth slot
+(which replaced Budget; Budgets is reached via More).
+
 ### 3.2 Wallets vs buckets
 
 - **Wallets** hold real cash (Cash, Bank, E-Wallet, Broker). Their sum is **net worth**.
@@ -266,6 +283,21 @@ alter table categories add column if not exists period text not null default 'mo
 -- Marks an expense category as an installment category (one per paylater provider), so the
 -- stats page can separate installment spend from normal spend.
 alter table categories add column if not exists is_installment boolean not null default false;
+-- Favorites float to their own tab in the Add sheet's category picker (§3.1b).
+alter table categories add column if not exists is_favorite boolean not null default false;
+
+-- Groups: user-named, mixed-kind collections of categories that drive the Add sheet (§3.1b).
+create table if not exists category_groups (
+  id bigint generated always as identity primary key,
+  name text not null unique,
+  sort_order int not null default 0,
+  archived boolean not null default false
+);
+create table if not exists category_group_members (
+  group_id bigint not null references category_groups(id) on delete cascade,
+  category_id bigint not null references categories(id) on delete cascade,
+  primary key (group_id, category_id)
+);
 
 create table if not exists transactions (
   id bigint generated always as identity primary key,
