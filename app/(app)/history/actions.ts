@@ -60,6 +60,51 @@ export async function deleteTransaction(
 }
 
 /**
+ * Sheet variants of update/delete: same writes, but they return state instead of
+ * redirecting — the edit sheet closes over the page it was opened from, so there is
+ * nowhere to navigate to.
+ */
+export interface EditSheetState {
+  ok?: boolean;
+  error?: string;
+  /** Changes on every success so the client can tell two saves apart. */
+  nonce?: number;
+  savedLabel?: string;
+}
+
+export async function updateTransactionSheet(
+  id: number,
+  _prev: EditSheetState,
+  formData: FormData
+): Promise<EditSheetState> {
+  const { row, error } = parseTransactionForm(formData);
+  if (error || !row) return { error: error ?? "Could not save that." };
+
+  const sb = supabaseServer();
+  const { error: updateError } = await sb
+    .from("transactions")
+    .update(row)
+    .eq("id", id);
+  if (updateError) return { error: updateError.message };
+
+  revalidateLedger();
+  return { ok: true, nonce: Date.now(), savedLabel: "Changes saved" };
+}
+
+export async function deleteTransactionSheet(
+  id: number,
+  _prev: EditSheetState,
+  _formData: FormData
+): Promise<EditSheetState> {
+  const sb = supabaseServer();
+  const { error } = await sb.from("transactions").delete().eq("id", id);
+  if (error) return { error: error.message };
+
+  revalidateLedger();
+  return { ok: true, nonce: Date.now(), savedLabel: "Deleted" };
+}
+
+/**
  * Apply one set of field changes to many rows at once.
  *
  * The client only offers fields that are meaningful for the selected type, and only allows a

@@ -61,6 +61,27 @@ export async function getForexTransactions(
   }));
 }
 
+/**
+ * Every ledger txn id booked by the forex module. History routes these rows to the
+ * conversion editor instead of the plain edit sheet.
+ */
+export async function getForexLinkedTxnIds(): Promise<number[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("forex_transactions")
+    .select("txn_id, pl_txn_id");
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  const ids = new Set<number>();
+  for (const row of (data ?? []) as { txn_id: number | null; pl_txn_id: number | null }[]) {
+    if (row.txn_id != null) ids.add(Number(row.txn_id));
+    if (row.pl_txn_id != null) ids.add(Number(row.pl_txn_id));
+  }
+  return [...ids];
+}
+
 /** Lets the history editor detect that a ledger row was booked by the forex module. */
 export async function getForexTxnByTxnId(
   txnId: number

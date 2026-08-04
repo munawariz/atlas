@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import EditSheet from "@/components/EditSheet";
 import { formatDateShort, formatNumber, formatRupiah } from "@/lib/format";
 import { TXN_TYPES, type Category, type Transaction, type TxnType, type Wallet } from "@/lib/types";
 import { Search, X, Check } from "@/components/icons";
@@ -24,6 +25,8 @@ interface HistoryClientProps {
   categories: Category[];
   wallets: Wallet[];
   monthKey: string;
+  /** Rows booked by the forex module — they open the conversion editor, not the sheet. */
+  forexTxnIds: number[];
 }
 
 interface Filters {
@@ -39,11 +42,15 @@ export default function HistoryClient({
   categories,
   wallets,
   monthKey,
+  forexTxnIds,
 }: HistoryClientProps) {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [hydrated, setHydrated] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<Transaction | null>(null);
+
+  const forexIds = useMemo(() => new Set(forexTxnIds), [forexTxnIds]);
 
   const catById = useMemo(
     () => new Map(categories.map((c) => [c.id, c])),
@@ -340,14 +347,30 @@ export default function HistoryClient({
                     );
                   }
 
+                  // Forex-booked rows are one leg of a conversion — they still get the
+                  // dedicated conversion editor page.
+                  if (forexIds.has(txn.id)) {
+                    return (
+                      <Link
+                        key={txn.id}
+                        href={`/history/${txn.id}`}
+                        className={`${rowClass} no-underline`}
+                      >
+                        {body}
+                      </Link>
+                    );
+                  }
+
                   return (
-                    <Link
+                    <button
                       key={txn.id}
-                      href={`/history/${txn.id}`}
-                      className={`${rowClass} no-underline`}
+                      type="button"
+                      onClick={() => setEditing(txn)}
+                      aria-haspopup="dialog"
+                      className={rowClass}
                     >
                       {body}
-                    </Link>
+                    </button>
                   );
                 })}
               </div>
@@ -355,6 +378,13 @@ export default function HistoryClient({
           ))}
         </div>
       )}
+
+      <EditSheet
+        transaction={editing}
+        wallets={wallets}
+        categories={categories}
+        onClose={() => setEditing(null)}
+      />
 
       {/* Keeps the month in the URL available to the edit page's redirect. */}
       <input type="hidden" value={monthKey} readOnly />

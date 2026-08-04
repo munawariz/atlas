@@ -6,6 +6,7 @@ import {
   getWallets,
   listTransactions,
 } from "@/lib/data";
+import { getForexLinkedTxnIds } from "@/lib/forex";
 import HistoryClient from "./HistoryClient";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export default async function HistoryPage({
     ? (m as string)
     : currentMonthKey();
 
-  const [transactions, categories, wallets] = await Promise.all([
+  const [transactions, categories, wallets, forexTxnIds] = await Promise.all([
     listTransactions({
       from: monthKey,
       to: endOfMonth(monthKey),
@@ -32,6 +33,7 @@ export default async function HistoryPage({
     // Archived included: an old row must still resolve its category and wallet names.
     getCategories(true),
     getWallets(true),
+    getForexLinkedTxnIds(),
   ]);
 
   return (
@@ -49,6 +51,7 @@ export default async function HistoryPage({
         categories={categories}
         wallets={wallets}
         monthKey={monthKey}
+        forexTxnIds={forexTxnIds}
       />
     </div>
   );
