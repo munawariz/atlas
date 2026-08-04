@@ -85,6 +85,12 @@ export const CATEGORY_SETTINGS: CategorySetting[] = [
     kind: "expense",
     help: "Expense booked when you sell foreign currency below its average cost.",
   },
+  {
+    key: "cat_admin_fee",
+    label: "Transfer admin fee",
+    kind: "expense",
+    help: "Expense booked when a transfer includes an admin fee.",
+  },
 ];
 
 export interface WalletSetting {
@@ -126,6 +132,7 @@ export const DETECT_HINTS: Record<string, string[]> = {
   cat_forex: ["Forex", "FX", "Foreign Currency"],
   cat_forex_profit: ["Forex Profit", "FX Profit"],
   cat_forex_loss: ["Forex Loss", "FX Loss"],
+  cat_admin_fee: ["Admin Fee", "Bank Fee", "Biaya Admin", "Admin"],
 };
 
 // =============================================================================
