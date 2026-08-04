@@ -281,7 +281,7 @@ export default function HistoryClient({
         <div className="space-y-4">
           {groups.map(([day, rows]) => (
             <section key={day}>
-              <h2 className="label mb-2">{formatDateShort(day)}</h2>
+              <h2 className="label mb-3">{formatDateShort(day)}</h2>
               <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
                 {rows.map((txn, i) => {
                   const style = TYPE_STYLE[txn.type];

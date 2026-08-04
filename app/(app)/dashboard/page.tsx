@@ -409,7 +409,7 @@ export default async function DashboardPage({
             {/* --- Daily budgets --------------------------------------- */}
             {dailyRows.length > 0 && (
               <section>
-                <h2 className="label mb-2">Daily budgets · today</h2>
+                <h2 className="label mb-4">Daily budgets · today</h2>
                 <div className="space-y-2">
                   {dailyRows.map((row) => {
                     const pct = row.budget > 0 ? (row.spent / row.budget) * 100 : 0;
@@ -448,7 +448,7 @@ export default async function DashboardPage({
 
             {/* --- Income & expense ------------------------------------ */}
             <section>
-              <h2 className="label mb-2">
+              <h2 className="label mb-4">
                 Income &amp; expense · {monthName(parseInt(monthKey.slice(5, 7), 10))}
               </h2>
               <div className="grid grid-cols-3 gap-2">
@@ -481,7 +481,7 @@ export default async function DashboardPage({
 
             {/* --- Budget vs actual ------------------------------------ */}
             <section className="space-y-3">
-              <h2 className="label">Budget vs actual</h2>
+              <h2 className="label mb-4">Budget vs actual</h2>
               {budgetCards.map((card) => (
                 <BudgetCard key={card.kind} card={card} catById={catById} />
               ))}
@@ -489,7 +489,7 @@ export default async function DashboardPage({
 
             {/* --- Where it went --------------------------------------- */}
             <section>
-              <h2 className="label mb-2">
+              <h2 className="label mb-4">
                 Where it went · {monthName(parseInt(monthKey.slice(5, 7), 10))}
               </h2>
               <SpendBreakdown slices={slices} total={monthExpense} />
@@ -799,7 +799,7 @@ function InstallmentsTab({
 
         return (
           <section key={group.name}>
-            <div className="mb-2 flex items-baseline justify-between gap-2">
+            <div className="mb-4 flex items-baseline justify-between gap-2">
               <h2 className="label">{group.name}</h2>
               <span className="text-[12px] font-semibold text-ink-500 tabular-nums">
                 {formatRupiah(paid)} paid · {formatRupiah(total - paid)} owed
@@ -905,7 +905,7 @@ function SavingInvestmentTab({
   return (
     <div className="space-y-5">
       <section>
-        <h2 className="label mb-2">Stock buy targets · {formatMonth(monthKey)}</h2>
+        <h2 className="label mb-4">Stock buy targets · {formatMonth(monthKey)}</h2>
         {targets.length === 0 ? (
           <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center shadow-[var(--shadow-xs)]">
             <p className="text-[14px] text-ink-500">No buy targets set.</p>
@@ -961,7 +961,7 @@ function SavingInvestmentTab({
       </section>
 
       <section>
-        <h2 className="label mb-2">
+        <h2 className="label mb-4">
           Set aside · {monthName(parseInt(monthKey.slice(5, 7), 10))}
         </h2>
         <div className="grid grid-cols-2 gap-2">

@@ -219,7 +219,7 @@ export default async function CashflowPage({
       {groups.map((group) =>
         group.lines.length === 0 ? null : (
           <section key={group.label}>
-            <h2 className="label mb-2">{group.label}</h2>
+            <h2 className="label mb-3">{group.label}</h2>
             <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
               {[...group.lines]
                 .sort((a, b) => b.amount - a.amount)

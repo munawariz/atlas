@@ -48,7 +48,7 @@ export default async function BondsPage() {
       </section>
 
       <section>
-        <h2 className="label mb-2">Record a trade</h2>
+        <h2 className="label mb-3">Record a trade</h2>
         <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
           <BondTradeForm
             wallets={wallets}
@@ -59,7 +59,7 @@ export default async function BondsPage() {
       </section>
 
       <section>
-        <h2 className="label mb-2">Holdings</h2>
+        <h2 className="label mb-3">Holdings</h2>
         {portfolio.holdings.length === 0 ? (
           <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
             No bonds held yet.
@@ -95,7 +95,7 @@ export default async function BondsPage() {
 
       {trades.length > 0 && (
         <section>
-          <h2 className="label mb-2">Recent activity</h2>
+          <h2 className="label mb-3">Recent activity</h2>
           <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
             {trades.slice(0, 25).map((trade, i) => (
               <div

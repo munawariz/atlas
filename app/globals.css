@@ -163,6 +163,16 @@ h4 {
   box-shadow: var(--shadow-focus);
 }
 
+/*
+ * Form fields show focus through their border and caret instead — the lime square reads as
+ * decoration on an input. Buttons and links keep it for keyboard navigation.
+ */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  box-shadow: none;
+}
+
 /* Strip number-input spinners. */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
@@ -253,7 +263,6 @@ details[open] > summary .chevron {
   .field:focus {
     outline: none;
     border-color: var(--color-forest-800);
-    box-shadow: var(--shadow-focus);
   }
   .field::placeholder {
     color: var(--color-ink-300);
