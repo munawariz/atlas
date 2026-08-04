@@ -80,6 +80,14 @@ create index if not exists idx_txn_occurred_on on transactions (occurred_on);
 create index if not exists idx_txn_type on transactions (type);
 create index if not exists idx_txn_category on transactions (category_id);
 
+-- Normalize descriptions: the app trims on entry, so bring older rows (spreadsheet-era
+-- imports) in line. Whitespace-only descriptions become null. A deliberate, lossless
+-- exception to the "never touch user data" rule — idempotent, whitespace only.
+update transactions
+  set description = nullif(btrim(description), '')
+  where description is not null
+    and (description <> btrim(description) or btrim(description) = '');
+
 -- Opening balances, all stored at the single month given by app_settings.opening_month.
 create table if not exists wallet_balances (
   id bigint generated always as identity primary key,
