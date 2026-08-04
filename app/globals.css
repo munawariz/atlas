@@ -1,109 +1,184 @@
 @import "tailwindcss";
 
-/* ============================================================
-   Atlas — deep navy stats theme
-   ============================================================ */
+/* ===========================================================================
+   Atlas design tokens.
+
+   Source of truth for everything visual is the Atlas Design System bundle
+   (atlas-design-system/project/tokens/*.css). Values below are copied from it verbatim.
+
+   This supersedes ATLAS.md §6, which described an earlier dark "stats terminal" direction.
+   Atlas is a light brand: forest + lime on cream and white, flat grounds, no gradients,
+   no noise, no backdrop blur.
+   =========================================================================== */
+
 @theme {
-  /* surfaces — deep navy / slate */
-  --color-ink: #0b0e14;
-  --color-ink-2: #11151d;
-  --color-ink-3: #161c27;
-  --color-line: #232c3a;
+  /* --- Forest: the brand primary. #003511 is the sampled hero/footer green. ------------ */
+  --color-forest-900: #002b0f;
+  --color-forest-800: #003511;
+  --color-forest-700: #0a3d1c;
+  --color-forest-600: #1a5230;
+  --color-forest-500: #2f6a44;
+  --color-forest-300: #8fae9c;
+  --color-forest-200: #bcd0c3;
+  --color-forest-100: #d5e2d9;
+  --color-forest-50: #eaf1ec;
 
-  /* text — cool */
-  --color-paper: #e6edf3;
-  --color-paper-dim: #8a939e;
-  --color-paper-faint: #586069;
+  /* --- Lime: the single accent. Text on lime is always forest, never white. ------------ */
+  --color-lime-700: #a8d21f;
+  --color-lime-600: #c2ee36;
+  --color-lime-500: #d3fa53;
+  --color-lime-400: #dffb7d;
+  --color-lime-300: #eafda8;
+  --color-lime-200: #f2fecc;
 
-  /* accents — terminal/gaming palette */
-  --color-green: #3fb950;
-  --color-red: #f85149;
-  --color-amber: #e3b341;
-  --color-blue: #58a6ff;
-  --color-purple: #a371f7;
-  --color-teal: #39d3c6;
+  /* --- Cream & sage: the two tinted grounds. There is no third tint. ------------------- */
+  --color-cream-200: #efe9dd;
+  --color-cream-100: #f7f4ed;
+  --color-sage-300: #b3c2bd;
+  --color-sage-200: #cdd8d4;
+  --color-sage-100: #e2e9e6;
 
-  /* primary action = green; legacy aliases keep older utilities working */
-  --color-gold: #3fb950;
-  --color-gold-soft: #56d364;
-  --color-jade: #3fb950; /* income  */
-  --color-clay: #f85149; /* expense */
-  --color-sky: #58a6ff; /* saving  */
-  --color-plum: #a371f7; /* invest  */
-  --color-sand: #e3b341; /* transfer*/
+  /* --- Ink: near-black headlines, warm greys for body. Body copy is never pure black. -- */
+  --color-ink-900: #111111;
+  --color-ink-800: #2b2b2b;
+  --color-ink-700: #4e4e4e;
+  --color-ink-500: #7a7a7a;
+  --color-ink-300: #b5b5b5;
+  --color-ink-200: #e3e3e3;
+  --color-ink-100: #f1f1f1;
 
-  --font-display: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
-  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
-  --font-sans: var(--font-hanken), ui-sans-serif, system-ui, sans-serif;
+  /* --- Semantic money / status. Derived, not sampled. Red is genuine failure only. ----- */
+  --color-positive-600: #0f7a3a;
+  --color-positive-500: #159a4a;
+  --color-positive-100: #e2f5e9;
+  --color-negative-600: #a63424;
+  --color-negative-500: #c8452f;
+  --color-negative-100: #fbe9e5;
+  --color-warning-600: #8a5b12;
+  --color-warning-500: #e8a33d;
+  --color-warning-100: #fdf2df;
+  --color-info-600: #24509f;
+  --color-info-500: #2f6bd8;
+  --color-info-100: #e7eefc;
+
+  /* --- Categorical ramp -------------------------------------------------------------
+     The design system ships two hues; the ledger needs to separate six transaction types,
+     an eight-slice category donut and a multi-line cash-flow chart. This ramp is derived
+     from the existing forest/lime/sage ramps plus the derived semantics, so charts stay
+     legible without importing a foreign palette. Ordered by visual priority.            */
+  --color-series-1: #003511; /* forest-800  */
+  --color-series-2: #d3fa53; /* lime-500    */
+  --color-series-3: #2f6bd8; /* info-500    */
+  --color-series-4: #b3c2bd; /* sage-300    */
+  --color-series-5: #e8a33d; /* warning-500 */
+  --color-series-6: #2f6a44; /* forest-500  */
+  --color-series-7: #c8452f; /* negative-500*/
+  --color-series-8: #8fae9c; /* forest-300  */
+  --color-series-9: #a8d21f; /* lime-700    */
+  --color-series-10: #1a5230; /* forest-600 */
+
+  /* --- Type -------------------------------------------------------------------------- */
+  --font-display: var(--font-figtree), "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--font-figtree), "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --tracking-display: -0.03em;
+  --tracking-stat: -0.02em;
+  --tracking-eyebrow: 0.12em;
+
+  /* --- Radii. Buttons are noticeably squarer than the cards around them. -------------- */
+  --radius-button: 10px;
+  --radius-input: 12px;
+  --radius-card: 24px;
+  --radius-card-lg: 28px;
+
+  /* --- Elevation: wide, soft, green-tinted. Never grey, never more than one layer. ---- */
+  --shadow-xs: 0 1px 2px rgb(0 43 15 / 0.06);
+  --shadow-sm: 0 4px 16px rgb(0 43 15 / 0.06);
+  --shadow-md: 0 12px 32px rgb(0 43 15 / 0.08);
+  --shadow-lg: 0 24px 64px rgb(0 43 15 / 0.1);
+  --shadow-xl: 0 40px 96px rgb(0 43 15 / 0.12);
+  --shadow-float: 0 18px 44px rgb(0 43 15 / 0.14);
+  --shadow-focus: 0 0 0 3px rgb(211 250 83 / 0.55);
+
+  /* --- Motion: one curve does almost all the work. No bounce, no spring, ever. -------- */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-rise: rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-pop: pop 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+/* Non-Tailwind tokens the components read directly. */
 :root {
-  color-scheme: dark;
+  --border-subtle: rgb(0 53 17 / 0.1);
+  --border-default: rgb(0 53 17 / 0.16);
+  --border-inverse: rgb(255 255 255 / 0.22);
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+  --duration-slow: 340ms;
+  --glow-lime: radial-gradient(closest-side, rgb(211 250 83 / 0.35), rgb(211 250 83 / 0));
+
+  color-scheme: light;
 }
 
 html {
   height: 100%;
-}
-/* min-height (not height) so the body GROWS with content and the document itself scrolls.
-   A fixed-height flex body would cap its children, breaking sticky headers past one screen. */
-body {
-  min-height: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
+/*
+ * min-height, never height. A fixed-height flex body caps its children and kills sticky
+ * positioning past one screen (ATLAS.md §14.2).
+ */
 body {
-  background: var(--color-ink);
-  color: var(--color-paper);
+  min-height: 100%;
+  margin: 0;
+  background: var(--color-cream-100);
+  color: var(--color-ink-700);
   font-family: var(--font-sans);
-  -webkit-tap-highlight-color: transparent;
-  overscroll-behavior-y: none;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  color: var(--color-ink-900);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
 }
 
 ::selection {
-  background: var(--color-green);
-  color: var(--color-ink);
+  background: var(--color-lime-500);
+  color: var(--color-forest-800);
 }
 
-/* ---- atmosphere: subtle cool glow + faint grain --------------- */
-.bg-atmosphere {
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  pointer-events: none;
-  background:
-    radial-gradient(120% 70% at 50% -12%, rgba(63, 185, 80, 0.07), transparent 55%),
-    radial-gradient(90% 50% at 102% 2%, rgba(88, 166, 255, 0.05), transparent 55%),
-    radial-gradient(80% 50% at -6% 8%, rgba(163, 113, 247, 0.04), transparent 55%);
+*:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
 
-.bg-grain {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.035;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 170px 170px;
+/* Strip number-input spinners. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
 }
 
-/* ---- reusable pieces ------------------------------------------ */
-@layer components {
-  .label {
-    @apply font-display text-[10px] font-medium uppercase tracking-[0.16em] text-paper-dim;
-  }
-  .card {
-    @apply rounded-xl border border-line/70 bg-ink-2;
-  }
-  .field {
-    @apply w-full rounded-lg border border-line/80 bg-ink-3 px-4 py-3 text-paper outline-none placeholder:text-paper-faint focus:border-green/60;
-  }
+/* Native date inputs render a dark glyph by default; tint it to brand ink. */
+input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0.55;
+  cursor: pointer;
 }
 
-.hr-dash {
-  border: 0;
-  border-top: 1px dashed color-mix(in oklab, var(--color-line) 90%, transparent);
-}
-
-/* collapsible <details> — hide the default disclosure triangle */
 summary {
   list-style: none;
   cursor: pointer;
@@ -114,51 +189,264 @@ summary::-webkit-details-marker {
 details[open] > summary .chevron {
   transform: rotate(90deg);
 }
+.chevron {
+  transition: transform var(--duration-base) var(--ease-standard);
+}
 
-/* ---- motion --------------------------------------------------- */
-@keyframes reveal {
+/* ===========================================================================
+   Component classes
+   =========================================================================== */
+
+@layer components {
+  /* Eyebrow / section label. Uppercase, widely tracked, muted. */
+  .label {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-eyebrow);
+    color: var(--color-ink-500);
+  }
+
+  /*
+   * White card on the cream page ground. A card never has both a shadow and a border —
+   * white cards floating over a tint carry the shadow, tinted cards stay completely flat.
+   */
+  .card {
+    border-radius: var(--radius-card);
+    background: #fff;
+    box-shadow: var(--shadow-sm);
+  }
+
+  .card-flat {
+    border-radius: var(--radius-card);
+    background: var(--color-cream-100);
+  }
+
+  .card-sage {
+    border-radius: var(--radius-card);
+    background: var(--color-sage-100);
+  }
+
+  .card-forest {
+    border-radius: var(--radius-card);
+    background: var(--color-forest-800);
+    color: var(--color-forest-200);
+  }
+
+  /* Text input / select. 52px tall, 12px radius, hairline forest border. */
+  .field {
+    width: 100%;
+    height: 52px;
+    padding: 0 16px;
+    background: #fff;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-input);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    color: var(--color-ink-900);
+    transition:
+      border-color var(--duration-fast) var(--ease-standard),
+      box-shadow var(--duration-fast) var(--ease-standard);
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--color-forest-800);
+    box-shadow: var(--shadow-focus);
+  }
+  .field::placeholder {
+    color: var(--color-ink-300);
+  }
+  textarea.field {
+    height: auto;
+    padding: 14px 16px;
+    line-height: 1.5;
+  }
+  select.field {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    /* Room for the chevron the wrapper draws. */
+    padding-right: 40px;
+  }
+
+  /* Buttons. 10px radius — squarer than the cards around them. Hover is colour, not motion. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 48px;
+    padding: 0 26px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-button);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    transition: var(--duration-fast) var(--ease-standard);
+    transition-property: background-color, color, border-color, box-shadow, transform;
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-forest-800);
+    color: #fff;
+    border-color: var(--color-forest-800);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-forest-700);
+  }
+
+  .btn-accent {
+    background: var(--color-lime-500);
+    color: var(--color-forest-800);
+    border-color: var(--color-lime-500);
+  }
+  .btn-accent:hover:not(:disabled) {
+    background: var(--color-lime-600);
+  }
+
+  .btn-outline {
+    background: transparent;
+    color: var(--color-forest-800);
+    border-color: var(--color-forest-800);
+  }
+  .btn-outline:hover:not(:disabled) {
+    background: var(--color-forest-50);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-forest-800);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-forest-50);
+  }
+
+  .btn-sm {
+    height: 40px;
+    padding: 0 18px;
+    font-size: 14px;
+  }
+  .btn-lg {
+    height: 58px;
+    padding: 0 34px;
+  }
+
+  /* Pill chip — the type/category/wallet selectors. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    height: 38px;
+    padding: 0 18px;
+    border: 1px solid var(--border-default);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--color-ink-700);
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: var(--duration-fast) var(--ease-standard);
+    transition-property: background-color, color, border-color;
+  }
+  .chip:hover {
+    border-color: var(--color-forest-800);
+    color: var(--color-forest-800);
+  }
+  .chip-on {
+    background: var(--color-forest-800);
+    border-color: var(--color-forest-800);
+    color: #fff;
+    font-weight: 600;
+  }
+  .chip-on:hover {
+    color: #fff;
+  }
+
+  /* Badge — small status pill. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    background: var(--color-lime-200);
+    color: var(--color-forest-800);
+  }
+
+  /* Hairline divider. Forest at low alpha, never grey. */
+  .hr-dash {
+    border-top: 1px dashed var(--border-subtle);
+  }
+}
+
+/* ===========================================================================
+   Motion. Short and unshowy: 140ms hovers, 220ms toggles, 340ms chart bars.
+   No bounce, no spring, no overshoot.
+   =========================================================================== */
+
+@keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translate3d(0, 16px, 0);
   }
   to {
     opacity: 1;
     transform: none;
   }
 }
-.reveal {
-  animation: reveal 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-.stagger > * {
-  animation: reveal 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-}
-.stagger > *:nth-child(1) { animation-delay: 0.03s; }
-.stagger > *:nth-child(2) { animation-delay: 0.08s; }
-.stagger > *:nth-child(3) { animation-delay: 0.13s; }
-.stagger > *:nth-child(4) { animation-delay: 0.18s; }
-.stagger > *:nth-child(5) { animation-delay: 0.23s; }
-.stagger > *:nth-child(6) { animation-delay: 0.28s; }
-.stagger > *:nth-child(7) { animation-delay: 0.33s; }
-.stagger > *:nth-child(8) { animation-delay: 0.38s; }
-.stagger > *:nth-child(9) { animation-delay: 0.43s; }
-.stagger > *:nth-child(10) { animation-delay: 0.48s; }
 
 @keyframes pop {
-  0% { opacity: 0; transform: translateY(10px) scale(0.96); }
-  60% { transform: translateY(-2px) scale(1.02); }
-  100% { opacity: 1; transform: none; }
-}
-.pop {
-  animation: pop 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .reveal,
-  .stagger > *,
-  .pop {
-    animation: none;
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
   }
 }
+
+.stagger > * {
+  animation: rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.stagger > *:nth-child(1) { animation-delay: 0s; }
+.stagger > *:nth-child(2) { animation-delay: 0.03s; }
+.stagger > *:nth-child(3) { animation-delay: 0.06s; }
+.stagger > *:nth-child(4) { animation-delay: 0.09s; }
+.stagger > *:nth-child(5) { animation-delay: 0.12s; }
+.stagger > *:nth-child(6) { animation-delay: 0.15s; }
+.stagger > *:nth-child(7) { animation-delay: 0.18s; }
+.stagger > *:nth-child(8) { animation-delay: 0.21s; }
+.stagger > *:nth-child(9) { animation-delay: 0.24s; }
+.stagger > *:nth-child(10) { animation-delay: 0.27s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ===========================================================================
+   Safe areas
+   =========================================================================== */
 
 .safe-top {
   padding-top: env(safe-area-inset-top);
@@ -167,27 +455,19 @@ details[open] > summary .chevron {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-input[type="number"] {
-  -moz-appearance: textfield;
-}
+/* ===========================================================================
+   Privacy mode.
 
-/* Privacy mode — eye toggle masks amounts inside the stats page (`.privacy-scope`)
-   with a FIXED run of dots (hides both the value and its length). The real value is made
-   transparent — so the element keeps its original size and the container NEVER changes
-   height — and the dots are overlaid via an absolute ::after (out of flow, so no size
-   impact). The dots inherit the amount's font-size, and per-layout alignment classes
-   (priv-left / priv-center) match each container; the default is right-aligned for the
-   justify-between rows. CSS-only → applies before paint (no flash) and toggles instantly. */
+   The real text stays in flow and only turns transparent, with the dots absolutely
+   positioned over it — so containers never change size (ATLAS.md §14.9). A fixed 4-dot run
+   also hides the length of the amount. CSS-only, so it applies before paint.
+   =========================================================================== */
+
 .amounts-hidden .privacy-scope .tabular-nums {
   color: transparent;
   position: relative;
-  user-select: none;
 }
+
 .amounts-hidden .privacy-scope .tabular-nums::after {
   content: "••••";
   position: absolute;
@@ -195,12 +475,33 @@ input[type="number"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  letter-spacing: 0.12em;
-  color: var(--color-paper-dim, #8a939e);
+  color: var(--color-ink-300);
+  letter-spacing: 0.1em;
+  pointer-events: none;
 }
-.amounts-hidden .privacy-scope .priv-left::after {
+
+.amounts-hidden .privacy-scope .tabular-nums.priv-left::after {
   justify-content: flex-start;
 }
-.amounts-hidden .privacy-scope .priv-center::after {
+.amounts-hidden .privacy-scope .tabular-nums.priv-center::after {
   justify-content: center;
+}
+
+/* Inverse surfaces need lighter dots. */
+.amounts-hidden .privacy-scope .on-forest .tabular-nums::after {
+  color: var(--color-forest-300);
+}
+
+/* Utility: proportional-width digits for aligned money columns. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hide scrollbars on the horizontal chip rows without losing scroll. */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }

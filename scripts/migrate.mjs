@@ -1,95 +1,191 @@
-// Run one or more .sql files against your Supabase Postgres (statement-by-statement,
-// idempotent — "already exists" is skipped). Reads DATABASE_URL from .env.local.
+#!/usr/bin/env node
+// Atlas migration runner. Plain Node ESM, no framework.
 //
-//   npm run migrate     # schema only (safe to re-run on an existing DB)
-//   npm run seed        # boilerplate wallets/categories (fresh install only)
+//   node scripts/migrate.mjs supabase/migrations/0001_init.sql
+//   node scripts/migrate.mjs supabase/seed.sql
 //
-// Pass file paths as args; defaults to the schema migration.
-//
-import { readFileSync } from "node:fs";
-import { Client } from "pg";
+// Statements run individually in auto-commit — no wrapping transaction — because
+// `alter type ... add value` cannot run inside one. Errors matching /already exists/i are
+// skipped so re-runs are clean.
 
-function loadEnv(path) {
+import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
+import pg from "pg";
+
+const DEFAULT_FILES = ["supabase/migrations/0001_init.sql"];
+
+/** Minimal .env.local reader: KEY=value, strips quotes and trailing # comments. */
+function loadEnvLocal() {
+  const path = resolve(process.cwd(), ".env.local");
+  if (!existsSync(path)) return {};
   const out = {};
-  let raw = "";
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return out;
-  }
-  for (const line of raw.split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("#") || !t.includes("=")) continue;
-    const i = t.indexOf("=");
-    out[t.slice(0, i).trim()] = t.slice(i + 1).trim().replace(/^["']|["']$/g, "");
+  for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    // Strip a trailing comment only when the value is not quoted.
+    if (!/^["']/.test(value)) {
+      const hash = value.indexOf(" #");
+      if (hash !== -1) value = value.slice(0, hash).trim();
+    }
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value;
   }
   return out;
 }
 
-// Split SQL into statements, respecting $$…$$ function bodies and -- line comments.
-// Only split on a ; that is outside a dollar-quoted block.
-function splitSql(sql) {
-  const stmts = [];
+/**
+ * Split SQL into statements, respecting $$...$$ dollar-quoted function bodies and skipping
+ * `--` line comments. A naive split on `;` corrupts the trigger functions.
+ */
+function splitStatements(sql) {
+  const statements = [];
   let buf = "";
-  let inDollar = false;
-  for (let i = 0; i < sql.length; ) {
-    const two = sql.slice(i, i + 2);
-    if (!inDollar && two === "--") {
-      const j = sql.indexOf("\n", i);
-      i = j === -1 ? sql.length : j;
-      continue;
-    }
-    if (two === "$$") {
-      inDollar = !inDollar;
-      buf += "$$";
-      i += 2;
-      continue;
-    }
+  let i = 0;
+  let dollarTag = null; // e.g. "$$" or "$fn$" while inside a dollar-quoted body
+  let inSingle = false;
+  let inDouble = false;
+
+  while (i < sql.length) {
     const ch = sql[i];
-    if (ch === ";" && !inDollar) {
-      stmts.push(buf);
+    const rest = sql.slice(i);
+
+    if (dollarTag) {
+      if (rest.startsWith(dollarTag)) {
+        buf += dollarTag;
+        i += dollarTag.length;
+        dollarTag = null;
+        continue;
+      }
+      buf += ch;
+      i += 1;
+      continue;
+    }
+
+    if (inSingle) {
+      buf += ch;
+      i += 1;
+      if (ch === "'") inSingle = false;
+      continue;
+    }
+
+    if (inDouble) {
+      buf += ch;
+      i += 1;
+      if (ch === '"') inDouble = false;
+      continue;
+    }
+
+    // Line comment — drop it entirely.
+    if (rest.startsWith("--")) {
+      const nl = sql.indexOf("\n", i);
+      i = nl === -1 ? sql.length : nl + 1;
+      buf += "\n";
+      continue;
+    }
+
+    // Block comment.
+    if (rest.startsWith("/*")) {
+      const end = sql.indexOf("*/", i + 2);
+      i = end === -1 ? sql.length : end + 2;
+      buf += " ";
+      continue;
+    }
+
+    // Opening dollar quote: $$ or $tag$
+    const dollar = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(rest);
+    if (dollar) {
+      dollarTag = dollar[0];
+      buf += dollarTag;
+      i += dollarTag.length;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      buf += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      buf += ch;
+      i += 1;
+      continue;
+    }
+
+    if (ch === ";") {
+      const statement = buf.trim();
+      if (statement) statements.push(statement);
       buf = "";
       i += 1;
       continue;
     }
+
     buf += ch;
     i += 1;
   }
-  if (buf.trim()) stmts.push(buf);
-  return stmts.map((s) => s.trim()).filter(Boolean);
+
+  const tail = buf.trim();
+  if (tail) statements.push(tail);
+  return statements;
 }
 
-const env = loadEnv(".env.local");
-const dbUrl = env.DATABASE_URL || process.env.DATABASE_URL;
-if (!dbUrl) {
-  console.error("✗ DATABASE_URL is missing. Set it in .env.local (Supabase → Settings → Database → Connection string → URI).");
-  process.exit(1);
-}
-
-const args = process.argv.slice(2);
-const FILES = args.length ? args : ["supabase/migrations/0001_init.sql"];
-const client = new Client({ connectionString: dbUrl, ssl: { rejectUnauthorized: false } });
-
-try {
-  await client.connect();
-  for (const file of FILES) {
-    const statements = splitSql(readFileSync(file, "utf8"));
-    let applied = 0;
-    for (const stmt of statements) {
-      try {
-        await client.query(stmt); // each statement auto-commits (no explicit transaction)
-        applied++;
-      } catch (e) {
-        if (/already exists/i.test(e.message)) continue; // idempotent: skip duplicates
-        console.error(`✗ Failed in ${file}:\n${stmt.slice(0, 200)}\n${e.message}`);
-        throw e;
-      }
-    }
-    console.log(`  ${file} — ${applied} statement(s) applied`);
+async function main() {
+  const env = { ...loadEnvLocal() };
+  const connectionString = env.DATABASE_URL || process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error(
+      "DATABASE_URL is not set. Add it to .env.local (copy .example.env) or export it."
+    );
+    process.exit(1);
   }
-  console.log("✅ Done. Your data is untouched.");
-} catch (e) {
-  process.exitCode = 1;
-} finally {
-  await client.end();
+
+  const files = process.argv.slice(2).length ? process.argv.slice(2) : DEFAULT_FILES;
+
+  const client = new pg.Client({
+    connectionString,
+    ssl: { rejectUnauthorized: false },
+  });
+  await client.connect();
+
+  try {
+    for (const file of files) {
+      const path = resolve(process.cwd(), file);
+      if (!existsSync(path)) {
+        console.error(`✗ ${file} — not found`);
+        process.exitCode = 1;
+        continue;
+      }
+      const statements = splitStatements(readFileSync(path, "utf8"));
+      let applied = 0;
+      for (const statement of statements) {
+        try {
+          await client.query(statement);
+          applied += 1;
+        } catch (err) {
+          if (/already exists/i.test(err.message)) continue;
+          console.error(`\n✗ Failed in ${file}:\n${statement.slice(0, 400)}\n`);
+          throw err;
+        }
+      }
+      console.log(`${file} — ${applied} statement(s) applied`);
+    }
+    console.log("✅ Done. Your data is untouched.");
+  } finally {
+    await client.end();
+  }
 }
+
+main().catch((err) => {
+  console.error(err.message || err);
+  process.exit(1);
+});

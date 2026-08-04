@@ -1,65 +1,122 @@
-// Regenerate PWA/favicon icons from public/brand-icon.png. Run: node scripts/gen-icons.mjs
-// The source is a proper transparent PNG (rounded tile, transparent surroundings). We crop to
-// the tile and keep the transparent corners for the browser/PWA icons; iOS + Android-maskable
-// get an opaque full-bleed variant (they flatten alpha and apply their own mask).
+#!/usr/bin/env node
+/*
+ * Generate the PWA icon set from a single source image.
+ *
+ *   node scripts/gen-icons.mjs [source]
+ *
+ * Source defaults to public/brand-icon.png. If it is missing, a brand mark is drawn from
+ * scratch — the lime four-point sparkle on forest — so a fresh clone still installs as a PWA
+ * with something sensible on the home screen.
+ */
+
+import { mkdir, access, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { writeFile } from "node:fs/promises";
 
-const SRC = "public/brand-icon.png";
-const DARK = "#06160f"; // the tile's own dark colour, for the full-bleed corner fill
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const OUT_DIR = resolve(ROOT, "public/icons");
 
-// Crop away the transparent margin so the rounded tile fills the frame.
-const trimmed = await sharp(SRC).trim({ threshold: 10 }).toBuffer();
-const tile = await sharp(trimmed).resize(512, 512, { fit: "fill" }).png().toBuffer();
+const FOREST = "#003511";
+const LIME = "#d3fa53";
 
-// Browser / PWA "any" icons — keep the transparent corners (no black edge on any background).
-for (const [out, size] of [
-  ["public/icons/icon-512.png", 512],
-  ["public/icons/icon-192.png", 192],
-  ["public/icons/icon-32.png", 32],
-  ["public/icons/icon-16.png", 16],
-]) {
-  await sharp(tile).resize(size, size).png().toFile(out);
-  console.log("wrote", out, `${size}²`);
+/** The sparkle path from the app header, scaled to a 512 box. */
+const SPARKLE =
+  "M12 2c.6 5.2 4.2 8.8 9.4 9.4v1.2C16.2 13.2 12.6 16.8 12 22h-1.2C10.2 16.8 6.6 13.2 1.4 12.6v-1.2C6.6 10.8 10.2 7.2 10.8 2z";
+
+function fallbackSvg(size) {
+  // The glyph occupies the middle 50% so it survives a maskable crop.
+  const glyph = size * 0.5;
+  const offset = (size - glyph) / 2;
+  return Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+       <rect width="${size}" height="${size}" fill="${FOREST}"/>
+       <g transform="translate(${offset} ${offset}) scale(${glyph / 24})">
+         <path d="${SPARKLE}" fill="${LIME}"/>
+       </g>
+     </svg>`
+  );
 }
 
-// Maskable — built from the existing icon-512, laid full-bleed over the tile's dark colour so
-// the corners are dark (never black) once the OS applies its circle/squircle mask.
-const opaque = await sharp({ create: { width: 512, height: 512, channels: 4, background: DARK } })
-  .composite([{ input: "public/icons/icon-512.png" }])
-  .png()
-  .toBuffer();
-await sharp(opaque).toFile("public/icons/icon-512-maskable.png");
-await sharp(opaque).resize(180, 180).png().toFile("public/icons/apple-touch-icon.png");
-console.log("wrote icon-512-maskable.png + apple-touch-icon.png (full-bleed)");
-
-// favicon.ico — a real multi-size ICO (16 + 32) wrapping PNG frames.
-const icoFrames = await Promise.all([16, 32].map((s) => sharp(tile).resize(s, s).png().toBuffer()));
-const ico = buildIco(icoFrames, [16, 32]);
-await writeFile("app/favicon.ico", ico); // app-router convention serves this at /favicon.ico
-console.log("wrote app/favicon.ico (16 + 32)");
-
-// Minimal ICO writer (PNG-compressed frames, supported by all modern browsers).
-function buildIco(pngs, sizes) {
-  const count = pngs.length;
-  const header = Buffer.alloc(6);
-  header.writeUInt16LE(0, 0); // reserved
-  header.writeUInt16LE(1, 2); // type = icon
-  header.writeUInt16LE(count, 4);
-  const dir = Buffer.alloc(16 * count);
-  let offset = 6 + 16 * count;
-  pngs.forEach((png, i) => {
-    const s = sizes[i];
-    const e = 16 * i;
-    dir.writeUInt8(s >= 256 ? 0 : s, e); // width
-    dir.writeUInt8(s >= 256 ? 0 : s, e + 1); // height
-    dir.writeUInt8(0, e + 2); // palette
-    dir.writeUInt8(0, e + 3); // reserved
-    dir.writeUInt16LE(1, e + 4); // planes
-    dir.writeUInt16LE(32, e + 6); // bpp
-    dir.writeUInt32LE(png.length, e + 8);
-    dir.writeUInt32LE(offset, e + 12);
-    offset += png.length;
-  });
-  return Buffer.concat([header, dir, ...pngs]);
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+const TARGETS = [
+  { file: "icon-192.png", size: 192, maskable: false },
+  { file: "icon-512.png", size: 512, maskable: false },
+  { file: "icon-512-maskable.png", size: 512, maskable: true },
+  { file: "apple-touch-icon.png", size: 180, maskable: false },
+];
+
+async function main() {
+  const source = resolve(ROOT, process.argv[2] ?? "public/brand-icon.png");
+  const hasSource = await exists(source);
+
+  if (!hasSource) {
+    console.log(
+      `No source image at ${source} — drawing the Atlas mark instead.\n` +
+        "Drop a square PNG there and re-run to use your own."
+    );
+  }
+
+  await mkdir(OUT_DIR, { recursive: true });
+
+  for (const target of TARGETS) {
+    const out = resolve(OUT_DIR, target.file);
+
+    if (!hasSource) {
+      await sharp(fallbackSvg(target.size)).png().toFile(out);
+    } else {
+      /*
+       * A maskable icon is cropped to a circle by the launcher, so the artwork must sit in the
+       * middle 80% — anything closer to the edge gets cut off. Padding it here is what keeps
+       * the mark intact on Android.
+       */
+      const inner = target.maskable
+        ? Math.round(target.size * 0.8)
+        : target.size;
+      const pad = Math.round((target.size - inner) / 2);
+
+      await sharp(source)
+        .resize(inner, inner, { fit: "contain", background: FOREST })
+        .extend({
+          top: pad,
+          bottom: pad,
+          left: pad,
+          right: pad,
+          background: FOREST,
+        })
+        .png()
+        .toFile(out);
+    }
+
+    console.log(`  ${target.file}  ${target.size}x${target.size}`);
+  }
+
+  // A favicon that needs no extra tooling: browsers accept SVG here.
+  await writeFile(
+    resolve(ROOT, "public/favicon.svg"),
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <rect width="24" height="24" rx="5" fill="${FOREST}"/>
+  <g transform="translate(4.5 4.5) scale(0.625)">
+    <path d="${SPARKLE}" fill="${LIME}"/>
+  </g>
+</svg>
+`,
+    "utf8"
+  );
+  console.log("  favicon.svg");
+
+  console.log("\n✅ Icons written to public/icons/");
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

@@ -1,172 +1,257 @@
 import Link from "next/link";
-import { getLoanPayments, getLoans, getWallets } from "@/lib/data";
-import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
-import { addLoan, deleteLoan } from "../actions";
-import SubmitButton from "@/components/SubmitButton";
 import MoneyInput from "@/components/MoneyInput";
-import { TrashIcon } from "@/components/icons";
-import PaymentGrid, { type Cell } from "./PaymentGrid";
+import SubmitButton from "@/components/SubmitButton";
+import { ChevronLeft, Trash } from "@/components/icons";
+import {
+  currentMonthKey,
+  getLoanPayments,
+  getLoans,
+  getWallets,
+} from "@/lib/data";
+import { formatRupiah } from "@/lib/format";
+import PaymentGrid from "./PaymentGrid";
+import { addLoan, deleteLoan } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-type Status = "all" | "unfinished" | "finished";
+export const metadata = { title: "Loans · Atlas" };
 
-export default async function LoansPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
-  const sp = await searchParams;
-  const status: Status = sp.status === "finished" ? "finished" : sp.status === "all" ? "all" : "unfinished";
+const TABS = [
+  { key: "unfinished", label: "Unfinished" },
+  { key: "finished", label: "Finished" },
+  { key: "all", label: "All" },
+] as const;
 
-  const [loans, payments, wallets] = await Promise.all([getLoans(), getLoanPayments(), getWallets()]);
+export default async function LoansPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ t?: string }>;
+}) {
+  const { t } = await searchParams;
+  const tab = (TABS.some((x) => x.key === t) ? t : "unfinished") as
+    | "unfinished"
+    | "finished"
+    | "all";
 
-  const forLoan = (loanId: number) =>
-    payments.filter((p) => p.loan_id === loanId).sort((a, b) => a.period_month.localeCompare(b.period_month));
-  const scheduleOf = (loanId: number, installment: number): Cell[] =>
-    forLoan(loanId).map((p) => ({
-      month: p.period_month,
-      state: p.paid ? "paid" : "unpaid",
-      hasIncome: p.income_txn_id != null,
-      collected: p.paid ? p.amount ?? installment : null, // amount received (null = still owed)
-      partial: p.paid && (p.amount ?? installment) < installment,
-    }));
-  // What's still to collect: each month's installment minus what was actually received.
-  const outstanding = (loanId: number, installment: number) =>
-    forLoan(loanId).reduce((s, p) => s + Math.max(0, installment - (p.paid ? p.amount ?? installment : 0)), 0);
-  const loanStatus = (loanId: number, installment: number): "finished" | "unfinished" | "empty" => {
-    const sched = forLoan(loanId);
-    if (sched.length === 0) return "empty";
-    // Finished only when every scheduled month has been fully collected.
-    return sched.every((p) => p.paid && (p.amount ?? installment) >= installment) ? "finished" : "unfinished";
-  };
+  const [loans, payments, wallets] = await Promise.all([
+    getLoans(),
+    getLoanPayments(),
+    getWallets(),
+  ]);
 
-  const totalOutstanding = loans.reduce((a, l) => a + outstanding(l.id, l.installment), 0);
-  const shownLoans = loans.filter((l) => (status === "all" ? true : loanStatus(l.id, l.installment) === status));
+  const byLoan = new Map<number, typeof payments>();
+  for (const payment of payments) {
+    const list = byLoan.get(payment.loan_id) ?? [];
+    list.push(payment);
+    byLoan.set(payment.loan_id, list);
+  }
 
-  const tabs: { key: Status; label: string }[] = [
-    { key: "unfinished", label: "Unfinished" },
-    { key: "finished", label: "Finished" },
-    { key: "all", label: "All" },
-  ];
-  const currentYM = todayISO().slice(0, 7);
+  const rows = loans.map((loan) => {
+    const schedule = byLoan.get(loan.id) ?? [];
+    const expected = schedule.reduce(
+      (sum, p) => sum + (p.amount ?? loan.installment),
+      0
+    );
+    const collected = schedule
+      .filter((p) => p.paid)
+      .reduce((sum, p) => sum + (p.amount ?? loan.installment), 0);
+
+    /**
+     * Finished means every scheduled month is FULLY collected — a partial collection leaves
+     * the loan open, which is the whole point of tracking partials separately.
+     */
+    const finished =
+      schedule.length > 0 &&
+      schedule.every(
+        (p) => p.paid && (p.amount ?? loan.installment) >= loan.installment
+      );
+
+    return {
+      loan,
+      schedule,
+      expected,
+      collected,
+      outstanding: expected - collected,
+      pct: expected > 0 ? (collected / expected) * 100 : 0,
+      finished,
+    };
+  });
+
+  const visible = rows.filter((row) =>
+    tab === "all" ? true : tab === "finished" ? row.finished : !row.finished
+  );
+
+  const totalOutstanding = rows
+    .filter((r) => !r.finished)
+    .reduce((sum, r) => sum + r.outstanding, 0);
+
+  const defaultWalletId = wallets[0]?.id ?? null;
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Loans</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-4 privacy-scope">
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Loans
+        </h1>
+      </header>
 
-      <div className="card p-4">
-        <div className="text-sm text-paper-dim">
-          {loans.length} people · <span className="font-display text-green">{formatRupiah(totalOutstanding)}</span> to collect
+      <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">
+        <div className="label" style={{ color: "var(--color-forest-300)" }}>
+          Still owed to you
         </div>
-        <div className="mt-1 text-xs text-paper-faint">Money you expect to collect from people each month.</div>
-      </div>
+        <div className="mt-1 font-display text-[32px] font-extrabold tracking-[-0.03em] text-white tabular-nums">
+          {formatRupiah(totalOutstanding)}
+        </div>
+        <p className="mt-1 text-[13px]" style={{ color: "var(--color-forest-200)" }}>
+          Money other people owe you, collected month by month.
+        </p>
+      </section>
 
-      <div className="flex gap-1.5">
-        {tabs.map((t) => (
+      <nav className="flex gap-2">
+        {TABS.map((x) => (
           <Link
-            key={t.key}
-            href={t.key === "unfinished" ? "/more/loans" : `/more/loans?status=${t.key}`}
-            className={`rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
-              status === t.key ? "bg-green text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
-            }`}
+            key={x.key}
+            href={`/more/loans?t=${x.key}`}
+            aria-current={x.key === tab ? "page" : undefined}
+            className={`chip no-underline ${x.key === tab ? "chip-on" : ""}`}
           >
-            {t.label}
+            {x.label}
           </Link>
         ))}
-      </div>
+      </nav>
 
-      <form action={addLoan} className="card space-y-2 p-4">
-        <div className="flex gap-2">
-          <input name="person" placeholder="Who owes you" className="field" />
-          <input name="lender" placeholder="Via (e.g. Spinjam)" className="field" />
-        </div>
-        <div className="flex gap-2">
-          <MoneyInput name="installment" placeholder="Monthly Rp" className="field" />
-          <input name="note" placeholder="Note" className="field" />
-        </div>
-        <div className="flex gap-2">
-          <label className="flex-1 text-xs text-paper-dim">
-            Starts
-            <input type="month" name="start_month" defaultValue={currentYM} className="field mt-1 [color-scheme:dark]" />
-          </label>
-          <label className="flex-1 text-xs text-paper-dim">
-            # months
-            <input name="months" inputMode="numeric" placeholder="e.g. 6" className="field mt-1" />
-          </label>
-        </div>
-        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
-          Add person
-        </SubmitButton>
-      </form>
+      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+        <summary className="px-4 py-3.5 text-[15px] font-semibold text-ink-900">
+          Add a loan
+        </summary>
+        <form
+          action={addLoan}
+          className="space-y-2 border-t border-[var(--border-subtle)] p-4"
+        >
+          <input
+            name="person"
+            placeholder="Who owes you"
+            aria-label="Person"
+            required
+            className="field"
+          />
+          <input
+            name="lender"
+            placeholder="Via / lender (optional)"
+            aria-label="Lender"
+            className="field"
+          />
+          <MoneyInput
+            name="installment"
+            placeholder="Monthly amount"
+            ariaLabel="Monthly installment"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="label mb-1 block">Start month</span>
+              <input
+                type="month"
+                name="start_month"
+                defaultValue={currentMonthKey().slice(0, 7)}
+                className="field"
+              />
+            </label>
+            <label className="block">
+              <span className="label mb-1 block"># months</span>
+              <input
+                type="number"
+                name="months"
+                min={1}
+                max={60}
+                defaultValue={1}
+                aria-label="Number of months"
+                className="field"
+              />
+            </label>
+          </div>
+          <input
+            name="note"
+            placeholder="Note (optional)"
+            aria-label="Note"
+            className="field"
+          />
+          <SubmitButton className="btn btn-primary w-full">Add loan</SubmitButton>
+        </form>
+      </details>
 
-      <div className="space-y-3">
-        {shownLoans.length === 0 ? (
-          <p className="pt-6 text-center text-sm text-paper-faint">No {status === "all" ? "" : status} loans.</p>
-        ) : (
-          shownLoans.map((l) => {
-            const done = loanStatus(l.id, l.installment) === "finished";
-            const sched = forLoan(l.id);
-            const collected = sched.reduce((s, p) => s + (p.paid ? p.amount ?? l.installment : 0), 0);
-            const expected = sched.length * l.installment;
-            const pct = expected ? Math.round((collected / expected) * 100) : 0;
-            return (
-              <div key={l.id} className="card p-4">
-                <div className="flex items-start justify-between">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-medium text-paper">{l.person}</span>
-                      {done && (
-                        <span className="rounded bg-green/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
-                          ✓ finished
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-xs text-paper-dim">
-                      {[l.lender, l.note].filter(Boolean).join(" · ")} · {formatRupiahShort(l.installment)}/mo
-                    </div>
+      {visible.length === 0 ? (
+        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          {loans.length === 0
+            ? "Nobody owes you anything yet."
+            : `No ${tab} loans.`}
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {visible.map((row) => (
+            <article
+              key={row.loan.id}
+              className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[15px] font-semibold text-ink-900">
+                    {row.loan.person}
+                    {row.finished && <span className="badge ml-2">settled</span>}
                   </div>
-                  <form action={deleteLoan.bind(null, l.id)}>
-                    <SubmitButton
-                      label="Delete"
-                      className="ml-3 grid h-8 w-8 shrink-0 place-items-center rounded-lg text-clay active:bg-clay/10"
-                    >
-                      <TrashIcon className="h-[18px] w-[18px]" />
-                    </SubmitButton>
-                  </form>
+                  <div className="text-[13px] text-ink-500 tabular-nums">
+                    {formatRupiah(row.loan.installment)}/mo
+                    {row.loan.lender && ` · via ${row.loan.lender}`}
+                  </div>
+                  {row.loan.note && (
+                    <div className="mt-0.5 truncate text-[13px] text-ink-300">
+                      {row.loan.note}
+                    </div>
+                  )}
                 </div>
 
-                {expected > 0 ? (
-                  <div className="mt-2.5">
-                    <div className="flex items-baseline justify-between gap-2 text-sm">
-                      <span className={`font-display ${done ? "text-paper-faint" : "text-green"}`}>
-                        {done ? "All collected" : `${formatRupiah(outstanding(l.id, l.installment))} to collect`}
-                      </span>
-                      <span className="tabular-nums text-xs text-paper-dim">{pct}% paid</span>
-                    </div>
-                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-line/40">
-                      <div className="h-full rounded-full bg-green" style={{ width: `${Math.min(100, pct)}%` }} />
-                    </div>
-                    <div className="mt-1 text-[11px] tabular-nums text-paper-faint">
-                      {formatRupiah(collected)} of {formatRupiah(expected)} collected
-                    </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-display text-[17px] font-bold text-ink-900 tabular-nums">
+                    {formatRupiah(row.outstanding)}
                   </div>
-                ) : (
-                  <div className="mt-2 font-display text-sm text-paper-faint">No promised months yet</div>
-                )}
+                  <div className="text-[11px] text-ink-500">outstanding</div>
+                </div>
+              </div>
 
-                <PaymentGrid
-                  loanId={l.id}
-                  person={l.person}
-                  installment={l.installment}
-                  wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-                  schedule={scheduleOf(l.id, l.installment)}
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-cream-200">
+                <div
+                  className="h-full rounded-full bg-forest-800"
+                  style={{ width: `${Math.min(100, row.pct)}%` }}
                 />
               </div>
-            );
-          })
-        )}
-      </div>
+              <div className="mt-1 text-[12px] text-ink-500 tabular-nums">
+                {Math.round(row.pct)}% collected · {formatRupiah(row.collected)} of{" "}
+                {formatRupiah(row.expected)}
+              </div>
+
+              <PaymentGrid
+                loan={row.loan}
+                payments={row.schedule}
+                wallets={wallets}
+                defaultWalletId={defaultWalletId}
+              />
+
+              <form action={deleteLoan.bind(null, row.loan.id)} className="mt-3">
+                <SubmitButton className="btn btn-sm btn-ghost text-negative-600">
+                  <Trash size={16} />
+                  Delete loan
+                </SubmitButton>
+              </form>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

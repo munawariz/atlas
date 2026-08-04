@@ -1,39 +1,90 @@
 import Link from "next/link";
 import { getPaylaterProviders } from "@/lib/data";
-import SubmitButton from "@/components/SubmitButton";
-import ProviderList from "./ProviderList";
-import { addPaylaterProvider } from "../actions";
+import { ChevronLeft } from "@/components/icons";
+import ManageRow from "../ManageRow";
+import {
+  addProvider,
+  moveProvider,
+  renameProvider,
+  toggleProviderArchived,
+} from "../actions";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = { title: "Installment providers · Atlas" };
+
 export default async function ProvidersPage() {
   const providers = await getPaylaterProviders(true);
-  return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more/paylater" className="text-sm text-paper-dim active:text-paper">‹ My Installment</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Installment providers</h1>
-        <span className="w-12" />
-      </div>
+  const active = providers.filter((p) => !p.archived);
 
-      <p className="px-1 text-sm text-paper-dim">
-        Group your installments by provider (ShopeePaylater, GoPayLater, Credit Card, …). Drag the handle to reorder.
-        Archive one to hide it from the picker while keeping existing groupings; delete one to remove it (its items just
-        become ungrouped).
+  return (
+    <div className="space-y-5">
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Installment providers
+        </h1>
+      </header>
+
+      <p className="text-[14px] text-ink-500">
+        Each provider owns one expense category of the same name, so installment
+        spend stays separate from ordinary spend. Renaming a provider renames its
+        category too.
       </p>
 
-      <form action={addPaylaterProvider} className="flex gap-2">
-        <input name="name" placeholder="New provider name" className="field flex-1" />
-        <SubmitButton pendingText="…" className="rounded-2xl bg-gold px-5 font-semibold text-ink">
+      <form action={addProvider} className="flex gap-2">
+        <input
+          name="name"
+          placeholder="Provider name"
+          aria-label="Provider name"
+          required
+          className="field flex-1"
+        />
+        <button type="submit" className="btn btn-primary shrink-0 px-5">
           Add
-        </SubmitButton>
+        </button>
       </form>
 
-      {providers.length === 0 ? (
-        <p className="pt-6 text-center text-sm text-paper-faint">No providers yet — add one above.</p>
-      ) : (
-        <ProviderList providers={providers} />
-      )}
+      <div className="space-y-2">
+        {providers.map((provider) => {
+          const activeIndex = active.findIndex((p) => p.id === provider.id);
+          return (
+            <ManageRow
+              key={provider.id}
+              name={provider.name}
+              archived={provider.archived}
+              onRename={renameProvider.bind(null, provider.id)}
+              onToggleArchive={toggleProviderArchived.bind(
+                null,
+                provider.id,
+                !provider.archived
+              )}
+              onMoveUp={
+                activeIndex > 0
+                  ? moveProvider.bind(null, provider.id, -1)
+                  : undefined
+              }
+              onMoveDown={
+                activeIndex >= 0 && activeIndex < active.length - 1
+                  ? moveProvider.bind(null, provider.id, 1)
+                  : undefined
+              }
+            />
+          );
+        })}
+
+        {providers.length === 0 && (
+          <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+            No providers yet. Add one to start tracking installments.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

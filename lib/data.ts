@@ -1,10 +1,13 @@
 import "server-only";
-import { supabaseServer } from "./supabaseServer";
+
+import { cache } from "react";
+import { supabaseServer, isMissingTable } from "./supabaseServer";
 import { todayISO } from "./format";
 import type {
-  EffectiveBudget,
+  Budget,
   Category,
   CategoryKind,
+  EffectiveBudget,
   Loan,
   LoanPayment,
   PaylaterItem,
@@ -16,386 +19,768 @@ import type {
   WalletBalance,
 } from "./types";
 
-/** First day of the month after the given YYYY-MM-01 key. */
+// =============================================================================
+// Month key arithmetic — pure, no Date objects, so nothing can drift by a timezone.
+// A "month key" is always YYYY-MM-01.
+// =============================================================================
+
+export function monthKeyOf(iso: string): string {
+  return `${String(iso ?? "").slice(0, 7)}-01`;
+}
+
 export function nextMonthKey(monthKey: string): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  const ny = m === 12 ? y + 1 : y;
-  const nm = m === 12 ? 1 : m + 1;
-  return `${ny}-${String(nm).padStart(2, "0")}-01`;
+  const y = parseInt(monthKey.slice(0, 4), 10);
+  const m = parseInt(monthKey.slice(5, 7), 10);
+  return m === 12
+    ? `${y + 1}-01-01`
+    : `${y}-${String(m + 1).padStart(2, "0")}-01`;
 }
 
-/** First day of the month before the given YYYY-MM-01 key. */
 export function prevMonthKey(monthKey: string): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  const py = m === 1 ? y - 1 : y;
-  const pm = m === 1 ? 12 : m - 1;
-  return `${py}-${String(pm).padStart(2, "0")}-01`;
+  const y = parseInt(monthKey.slice(0, 4), 10);
+  const m = parseInt(monthKey.slice(5, 7), 10);
+  return m === 1
+    ? `${y - 1}-12-01`
+    : `${y}-${String(m - 1).padStart(2, "0")}-01`;
 }
 
-// Wallet starting balances are stored as the snapshot at this "opening" month.
-export const OPENING_MONTH = "2025-12-01";
+/** Last calendar day of a month key, as YYYY-MM-DD. */
+export function endOfMonth(monthKey: string): string {
+  const y = parseInt(monthKey.slice(0, 4), 10);
+  const m = parseInt(monthKey.slice(5, 7), 10);
+  const day = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${monthKey.slice(0, 7)}-${String(day).padStart(2, "0")}`;
+}
 
-/** Per-wallet starting balance (the opening snapshot). */
-export async function getOpeningBalances(): Promise<Map<number, number>> {
-  const { data, error } = await supabaseServer()
+/** The current month as a month key. */
+export function currentMonthKey(): string {
+  return monthKeyOf(todayISO());
+}
+
+// =============================================================================
+// Pagination
+//
+// PostgREST caps every response at 1000 rows (ATLAS.md §14.3). Any read that can span the
+// whole ledger MUST go through this. `deriveWalletBalances` is the one exception — the delta
+// table has at most (months x wallets) rows.
+// =============================================================================
+
+const PAGE = 1000;
+
+type QueryBuilder<T> = {
+  order(column: string, opts?: { ascending?: boolean }): QueryBuilder<T>;
+  range(from: number, to: number): PromiseLike<{ data: T[] | null; error: unknown }>;
+};
+
+/**
+ * Read every row a query matches, 1000 at a time.
+ *
+ * `build()` is called once per page so each page gets a fresh builder — Supabase builders are
+ * single-use, and reusing one silently returns the first page forever.
+ */
+async function paginate<T>(
+  build: () => QueryBuilder<T>,
+  { tolerateMissing = false }: { tolerateMissing?: boolean } = {}
+): Promise<T[]> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await build()
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      if (tolerateMissing && isMissingTable(error as { code?: string })) return [];
+      throw error;
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE) return rows;
+  }
+}
+
+// =============================================================================
+// Opening month
+//
+// The opening month is DATA, not a constant (ATLAS.md §14.15). It is both a read key
+// (deriveWalletBalances) and a write key (/balances upserts at it) — two call sites
+// disagreeing about which month is "opening" silently corrupts net worth, so it is resolved
+// in exactly one place.
+// =============================================================================
+
+/**
+ * Resolve the month `wallet_balances` stores opening balances at.
+ *
+ * 1. `app_settings.opening_month` if set;
+ * 2. else the earliest month present in `wallet_balances`;
+ * 3. else the month BEFORE the earliest transaction, so opening balances precede all activity;
+ * 4. else the current month.
+ *
+ * Cases 2-4 persist the result, so the value is decided exactly once and never drifts.
+ * `cache()` dedupes it across a single request.
+ */
+export const getOpeningMonth = cache(async (): Promise<string> => {
+  const sb = supabaseServer();
+
+  const { data: setting, error: settingError } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "opening_month")
+    .maybeSingle();
+  if (settingError && !isMissingTable(settingError)) throw settingError;
+
+  const stored = setting?.value ? monthKeyOf(String(setting.value)) : null;
+  if (stored && /^\d{4}-\d{2}-01$/.test(stored)) return stored;
+
+  let resolved: string | null = null;
+
+  const { data: earliestBalance } = await sb
     .from("wallet_balances")
-    .select("wallet_id, balance")
-    .eq("month", OPENING_MONTH);
+    .select("month")
+    .order("month", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (earliestBalance?.month) resolved = monthKeyOf(String(earliestBalance.month));
+
+  if (!resolved) {
+    const { data: earliestTxn } = await sb
+      .from("transactions")
+      .select("occurred_on")
+      .order("occurred_on", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (earliestTxn?.occurred_on) {
+      resolved = prevMonthKey(monthKeyOf(String(earliestTxn.occurred_on)));
+    }
+  }
+
+  if (!resolved) resolved = currentMonthKey();
+
+  // Persist so the answer never changes again. Best-effort: a failure here (missing table on a
+  // half-migrated DB) must not take the page down.
+  await sb
+    .from("app_settings")
+    .upsert({ key: "opening_month", value: resolved }, { onConflict: "key" });
+
+  return resolved;
+});
+
+// =============================================================================
+// Wallets, balances, categories
+// =============================================================================
+
+export const getWallets = cache(
+  async (includeArchived = false): Promise<Wallet[]> => {
+    const sb = supabaseServer();
+    let query = sb.from("wallets").select("*");
+    if (!includeArchived) query = query.eq("archived", false);
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true });
+    if (error) throw error;
+    return (data ?? []) as Wallet[];
+  }
+);
+
+export const getCategories = cache(
+  async (includeArchived = false): Promise<Category[]> => {
+    const sb = supabaseServer();
+    let query = sb.from("categories").select("*");
+    if (!includeArchived) query = query.eq("archived", false);
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true });
+    if (error) throw error;
+
+    // Default `period` / `is_installment` so the app works against a database that has not
+    // had the newer columns migrated in yet.
+    return (data ?? []).map(
+      (row: Record<string, unknown>): Category => ({
+        id: Number(row.id),
+        kind: row.kind as CategoryKind,
+        name: String(row.name),
+        sort_order: Number(row.sort_order ?? 0),
+        archived: Boolean(row.archived),
+        period: (row.period as Category["period"]) ?? "monthly",
+        is_installment: Boolean(row.is_installment ?? false),
+      })
+    );
+  }
+);
+
+export function walletMap(wallets: Wallet[]): Map<number, Wallet> {
+  return new Map(wallets.map((w) => [w.id, w]));
+}
+
+export function categoryMap(categories: Category[]): Map<number, Category> {
+  return new Map(categories.map((c) => [c.id, c]));
+}
+
+/** Opening balances, read at the resolved opening month. */
+export const getOpeningBalances = cache(async (): Promise<WalletBalance[]> => {
+  const sb = supabaseServer();
+  const month = await getOpeningMonth();
+  const { data, error } = await sb
+    .from("wallet_balances")
+    .select("*")
+    .eq("month", month);
   if (error) throw error;
-  return new Map((data ?? []).map((r) => [(r as WalletBalance).wallet_id, (r as WalletBalance).balance]));
+  return (data ?? []) as WalletBalance[];
+});
+
+/**
+ * Balance per wallet at the END of `monthKey`.
+ *
+ * opening + SUM(monthly_wallet_delta) for every month <= monthKey. This is implementation #2
+ * of the balance rule in ATLAS.md §3.3 — it must agree exactly with the Postgres trigger and
+ * with the dashboard's per-day recomputation.
+ *
+ * No pagination: the delta table is (months x wallets) rows, which stays tiny.
+ */
+export async function deriveWalletBalances(
+  monthKey: string
+): Promise<Map<number, number>> {
+  const sb = supabaseServer();
+  const openingMonth = await getOpeningMonth();
+  const opening = await getOpeningBalances();
+
+  const balances = new Map<number, number>();
+  for (const row of opening) balances.set(row.wallet_id, row.balance);
+
+  // Deltas at or before the opening month are already baked into the opening figures.
+  const { data, error } = await sb
+    .from("monthly_wallet_delta")
+    .select("wallet_id, delta")
+    .gt("month", openingMonth)
+    .lte("month", monthKey);
+  if (error && !isMissingTable(error)) throw error;
+
+  for (const row of (data ?? []) as { wallet_id: number; delta: number }[]) {
+    balances.set(row.wallet_id, (balances.get(row.wallet_id) ?? 0) + Number(row.delta));
+  }
+
+  return balances;
+}
+
+/** Net worth = the sum of every wallet balance. Buckets and forex are deliberately excluded. */
+export function sumBalances(balances: Map<number, number>): number {
+  let total = 0;
+  for (const value of balances.values()) total += value;
+  return total;
 }
 
 /**
- * Derived per-wallet balance at the END of `monthKey`, replicating the spreadsheet's
- * Dashboard formula: opening balance, minus expenses, plus income, minus
- * savings/investments funded from the wallet, minus transfers out, plus transfers in.
- * (Saving/investment move cash OUT of the source wallet into a non-wallet bucket.)
+ * Apply one transaction to a running per-wallet balance map.
+ *
+ * Implementation #3 of the balance rule (ATLAS.md §3.3) — the dashboard walks the current
+ * month day by day with this. Kept in `lib/data.ts` beside `deriveWalletBalances` so the two
+ * are read together and cannot drift apart.
  */
-export async function deriveWalletBalances(monthKey: string): Promise<Map<number, number>> {
-  const opening = await getOpeningBalances();
-  const bal = new Map<number, number>(opening);
+export function bumpWallet(
+  balances: Map<number, number>,
+  txn: Pick<Transaction, "type" | "amount" | "source_wallet_id" | "dest_wallet_id">,
+  sign: 1 | -1 = 1
+): void {
+  const add = (id: number | null, delta: number) => {
+    if (id == null) return;
+    balances.set(id, (balances.get(id) ?? 0) + delta);
+  };
+  const amount = sign * txn.amount;
 
-  // Read the precomputed monthly deltas (kept in sync by a DB trigger) instead of
-  // summing the whole transaction history. This table is tiny (months × wallets),
-  // so a single query is plenty — no pagination needed.
-  const { data, error } = await supabaseServer()
-    .from("monthly_wallet_delta")
-    .select("wallet_id, delta")
-    .lte("month", monthKey);
-  if (error) throw error;
-  for (const r of (data ?? []) as { wallet_id: number; delta: number }[]) {
-    bal.set(r.wallet_id, (bal.get(r.wallet_id) ?? 0) + r.delta);
+  if (txn.type === "income" || txn.type === "withdrawal") {
+    add(txn.dest_wallet_id, amount);
+  } else if (txn.type === "transfer") {
+    add(txn.source_wallet_id, -amount);
+    add(txn.dest_wallet_id, amount);
+  } else {
+    // expense, saving, investment
+    add(txn.source_wallet_id, -amount);
   }
-  return bal;
 }
 
-export async function getWallets(includeArchived = false): Promise<Wallet[]> {
-  let q = supabaseServer().from("wallets").select("*");
-  if (!includeArchived) q = q.eq("archived", false);
-  const { data, error } = await q.order("sort_order").order("id");
-  if (error) throw error;
-  return (data ?? []) as Wallet[];
+// =============================================================================
+// Transactions
+// =============================================================================
+
+export async function getMonthTransactions(
+  monthKey: string
+): Promise<Transaction[]> {
+  const sb = supabaseServer();
+  const end = endOfMonth(monthKey);
+  return paginate<Transaction>(() =>
+    sb
+      .from("transactions")
+      .select("*")
+      .gte("occurred_on", monthKey)
+      .lte("occurred_on", end) as unknown as QueryBuilder<Transaction>
+  );
 }
 
-export async function getCategories(includeArchived = false): Promise<Category[]> {
-  let q = supabaseServer().from("categories").select("*");
-  if (!includeArchived) q = q.eq("archived", false);
-  const { data, error } = await q.order("kind").order("sort_order").order("id");
-  if (error) throw error;
-  // Default new columns so the app works before they're migrated.
-  return (data ?? []).map((c) => ({
-    ...c,
-    period: (c as { period?: string }).period ?? "monthly",
-    is_installment: (c as { is_installment?: boolean }).is_installment ?? false,
-  })) as Category[];
-}
-
-export async function walletMap(): Promise<Map<number, string>> {
-  const ws = await getWallets(true);
-  return new Map(ws.map((w) => [w.id, w.name]));
-}
-
-export async function categoryMap(): Promise<Map<number, Category>> {
-  const cs = await getCategories(true);
-  return new Map(cs.map((c) => [c.id, c]));
-}
-
-export async function getMonthTransactions(monthKey: string): Promise<Transaction[]> {
-  const { data, error } = await supabaseServer()
-    .from("transactions")
-    .select("*")
-    .gte("occurred_on", monthKey)
-    .lt("occurred_on", nextMonthKey(monthKey))
-    .order("occurred_on", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Transaction[];
-}
-
-export interface TxnFilter {
-  monthKey?: string;
+export interface TransactionFilter {
+  from?: string;
+  to?: string;
   type?: TxnType;
   categoryId?: number;
+  walletId?: number;
   limit?: number;
 }
 
-export async function listTransactions(filter: TxnFilter = {}): Promise<Transaction[]> {
-  let q = supabaseServer().from("transactions").select("*");
-  if (filter.monthKey) {
-    q = q.gte("occurred_on", filter.monthKey).lt("occurred_on", nextMonthKey(filter.monthKey));
+export async function listTransactions(
+  filter: TransactionFilter = {}
+): Promise<Transaction[]> {
+  const sb = supabaseServer();
+  const limit = filter.limit ?? 200;
+
+  let query = sb.from("transactions").select("*");
+  if (filter.from) query = query.gte("occurred_on", filter.from);
+  if (filter.to) query = query.lte("occurred_on", filter.to);
+  if (filter.type) query = query.eq("type", filter.type);
+  if (filter.categoryId) query = query.eq("category_id", filter.categoryId);
+  if (filter.walletId) {
+    query = query.or(
+      `source_wallet_id.eq.${filter.walletId},dest_wallet_id.eq.${filter.walletId}`
+    );
   }
-  if (filter.type) q = q.eq("type", filter.type);
-  if (filter.categoryId) q = q.eq("category_id", filter.categoryId);
-  const { data, error } = await q
+
+  const { data, error } = await query
     .order("occurred_on", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(filter.limit ?? 200);
+    .order("id", { ascending: false })
+    .limit(limit);
   if (error) throw error;
   return (data ?? []) as Transaction[];
 }
 
 export async function getTransaction(id: number): Promise<Transaction | null> {
-  const { data, error } = await supabaseServer().from("transactions").select("*").eq("id", id).maybeSingle();
-  if (error) throw error;
-  return (data as Transaction) ?? null;
-}
-
-// Resolve each category's budget amount for the month: a per-month override (in `budgets`)
-// wins; otherwise the recurring rule with the greatest effective_from <= the month. The
-// cadence is a property of the category (Category.period) — non-monthly categories never
-// have per-month overrides (those are cleared when the period changes), so a single
-// recurring rule resolves cleanly here. For the dashboard panel, pass the current month.
-export async function getBudgetsForMonth(monthKey: string): Promise<EffectiveBudget[]> {
   const sb = supabaseServer();
-  const [ov, rec] = await Promise.all([
-    sb.from("budgets").select("category_id, amount").eq("month", monthKey),
-    sb
-      .from("recurring_budgets")
-      .select("category_id, amount, effective_from")
-      .lte("effective_from", monthKey)
-      .order("effective_from", { ascending: true }),
-  ]);
-  if (ov.error) throw ov.error;
-  if (rec.error && rec.error.code !== "42P01") throw rec.error; // tolerate table not migrated yet
-
-  const recByCat = new Map<number, number>();
-  for (const r of rec.data ?? []) recByCat.set(r.category_id, r.amount); // ascending => greatest effective_from wins
-  const ovByCat = new Map<number, number>();
-  for (const o of ov.data ?? []) ovByCat.set(o.category_id, o.amount);
-
-  const ids = new Set<number>([...recByCat.keys(), ...ovByCat.keys()]);
-  return [...ids].map((category_id) => ({
-    category_id,
-    amount: ovByCat.has(category_id) ? ovByCat.get(category_id)! : recByCat.get(category_id)!,
-    recurring: !ovByCat.has(category_id),
-  }));
-}
-
-export async function getPaylaterItems(): Promise<PaylaterItem[]> {
-  const { data, error } = await supabaseServer().from("paylater_items").select("*").order("item");
+  const { data, error } = await sb
+    .from("transactions")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
   if (error) throw error;
-  return (data ?? []) as PaylaterItem[];
+  return (data as Transaction | null) ?? null;
 }
 
-export async function getPaylaterPayments(): Promise<PaylaterPayment[]> {
-  const { data, error } = await supabaseServer().from("paylater_payments").select("*");
-  if (error) throw error;
-  return (data ?? []) as PaylaterPayment[];
-}
-
-export async function getPaylaterProviders(includeArchived = false): Promise<PaylaterProvider[]> {
-  let q = supabaseServer().from("paylater_providers").select("*");
-  if (!includeArchived) q = q.eq("archived", false);
-  const { data, error } = await q.order("sort_order").order("id");
-  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
-  return (data ?? []) as PaylaterProvider[];
-}
-
-export async function getLoans(): Promise<Loan[]> {
-  const { data, error } = await supabaseServer().from("loans").select("*").order("person");
-  if (error) throw error;
-  return (data ?? []) as Loan[];
-}
-
-export async function getLoanPayments(): Promise<LoanPayment[]> {
-  const { data, error } = await supabaseServer().from("loan_payments").select("*");
-  if (error) throw error;
-  return (data ?? []) as LoanPayment[];
-}
-
-// ---- Charts ----
-export interface ChartData {
-  months: string[]; // months with flows, ascending "YYYY-MM-01"
-  flows: { month: string; income: number; expense: number; saving: number; investment: number }[];
-  dailyFlows: { date: string; income: number; expense: number; saving: number; investment: number }[]; // per active day, ascending — for 1-month (daily) view
-
-  catTotals: { month: string; categoryId: number; kind: TxnType; total: number }[]; // categoryId 0 = uncategorized
-  // Per-(month, category, description) rollup for drilldown insights — identical
-  // descriptions collapse to one row so the payload stays small. max = biggest single txn.
-  catEntries: { month: string; categoryId: number; kind: TxnType; description: string; count: number; total: number; max: number }[];
-  networth: { month: string; total: number }[]; // opening baseline + each subsequent month-end
-}
-
-/**
- * One pass over the whole ledger for the Charts page: per-month income/expense/
- * saving/investment, per-(month, category) totals for drilldown, and the month-end
- * net-worth series (opening balance + cumulative monthly deltas). Transfers are excluded.
- */
-export async function getChartData(): Promise<ChartData> {
-  const sb = supabaseServer();
-
-  // Paginate — PostgREST caps each response at 1000 rows.
-  type Row = { occurred_on: string; type: TxnType; amount: number; category_id: number | null; description: string | null };
-  const rows: Row[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
-      .from("transactions")
-      .select("occurred_on, type, amount, category_id, description")
-      .order("id")
-      .range(from, from + 999);
-    if (error) throw error;
-    const batch = (data ?? []) as Row[];
-    rows.push(...batch);
-    if (batch.length < 1000) break;
-  }
-
-  // Map each category to its kind so "withdrawal" rows can net against the bucket's
-  // saving/investment flow rather than being counted on their own.
-  const { data: catRows } = await sb.from("categories").select("id, kind");
-  const catKind = new Map<number, CategoryKind>();
-  for (const c of (catRows ?? []) as { id: number; kind: CategoryKind }[]) catKind.set(c.id, c.kind);
-
-  const monthOf = (d: string) => `${d.slice(0, 7)}-01`;
-  const flowMap = new Map<string, ChartData["flows"][number]>();
-  const dailyMap = new Map<string, ChartData["dailyFlows"][number]>();
-  const catMap = new Map<string, ChartData["catTotals"][number]>();
-  const addCat = (m: string, cid: number, kind: TxnType, delta: number) => {
-    const key = `${m}|${cid}|${kind}`;
-    const c = catMap.get(key) ?? { month: m, categoryId: cid, kind, total: 0 };
-    c.total += delta;
-    catMap.set(key, c);
-  };
-  const entryMap = new Map<string, ChartData["catEntries"][number]>();
-  const addEntry = (m: string, cid: number, kind: TxnType, desc: string | null, amount: number) => {
-    const d = (desc ?? "").trim().slice(0, 48);
-    const key = `${m}|${cid}|${kind}|${d.toLowerCase()}`;
-    const e = entryMap.get(key) ?? { month: m, categoryId: cid, kind, description: d, count: 0, total: 0, max: 0 };
-    e.count += 1;
-    e.total += amount;
-    e.max = Math.max(e.max, amount);
-    entryMap.set(key, e);
-  };
-  for (const r of rows) {
-    if (r.type === "transfer") continue;
-    const m = monthOf(r.occurred_on);
-    const day = r.occurred_on.slice(0, 10);
-    const f = flowMap.get(m) ?? { month: m, income: 0, expense: 0, saving: 0, investment: 0 };
-    const df = dailyMap.get(day) ?? { date: day, income: 0, expense: 0, saving: 0, investment: 0 };
-
-    if (r.type === "withdrawal") {
-      const k = r.category_id ? catKind.get(r.category_id) : null;
-      if ((k === "saving" || k === "investment") && r.category_id) {
-        f[k] -= r.amount; // money left the bucket
-        df[k] -= r.amount;
-        flowMap.set(m, f);
-        dailyMap.set(day, df);
-        addCat(m, r.category_id, k, -r.amount);
-      }
-      continue;
-    }
-
-    const t = r.type as "income" | "expense" | "saving" | "investment";
-    f[t] += r.amount;
-    df[t] += r.amount;
-    flowMap.set(m, f);
-    dailyMap.set(day, df);
-    addCat(m, r.category_id ?? 0, r.type, r.amount);
-    addEntry(m, r.category_id ?? 0, r.type, r.description, r.amount);
-  }
-  const months = [...flowMap.keys()].sort();
-  const flows = months.map((m) => flowMap.get(m)!);
-  const dailyFlows = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
-  const catTotals = [...catMap.values()];
-  const catEntries = [...entryMap.values()];
-
-  // Net-worth series from opening + cumulative monthly_wallet_delta (drift-proof).
-  const opening = await getOpeningBalances();
-  const openingTotal = [...opening.values()].reduce((a, b) => a + b, 0);
-  const { data: deltas, error: dErr } = await sb.from("monthly_wallet_delta").select("month, delta");
-  if (dErr) throw dErr;
-  const deltaByMonth = new Map<string, number>();
-  for (const d of (deltas ?? []) as { month: string; delta: number }[]) {
-    deltaByMonth.set(d.month, (deltaByMonth.get(d.month) ?? 0) + d.delta);
-  }
-  const deltaMonths = [...deltaByMonth.keys()].filter((m) => m !== OPENING_MONTH).sort();
-  let running = openingTotal;
-  const networth = [{ month: OPENING_MONTH, total: openingTotal }];
-  for (const m of deltaMonths) {
-    running += deltaByMonth.get(m)!;
-    networth.push({ month: m, total: running });
-  }
-
-  return { months, flows, dailyFlows, catTotals, catEntries, networth };
-}
-
-// ---- Savings & investment balances ----
-export interface SavingsBucket {
-  categoryId: number;
-  name: string;
-  kind: "saving" | "investment";
-  contributed: number; // total moved in (saving / investment)
-  withdrawn: number; // total moved out (withdrawals)
-  balance: number; // contributed − withdrawn
-}
-
-/** Cumulative balance held in each saving/investment bucket (optionally as of a cutoff date). */
-export async function getSavingsBuckets(asOf?: string): Promise<SavingsBucket[]> {
-  const sb = supabaseServer();
-  // Active buckets only — this excludes the archived "Forex Yen" category, whose holding
-  // is tracked separately in the Forex module (counting it here would double it).
-  const cats = await getCategories(false);
-  const buckets = new Map<number, SavingsBucket>();
-  for (const c of cats) {
-    if (c.kind === "saving" || c.kind === "investment") {
-      buckets.set(c.id, { categoryId: c.id, name: c.name, kind: c.kind, contributed: 0, withdrawn: 0, balance: 0 });
-    }
-  }
-
-  // Paginate the relevant transactions (PostgREST caps each response at 1000 rows).
-  for (let from = 0; ; from += 1000) {
-    let q = sb.from("transactions").select("type, amount, category_id").in("type", ["saving", "investment", "withdrawal"]);
-    if (asOf) q = q.lte("occurred_on", asOf);
-    const { data, error } = await q.order("id").range(from, from + 999);
-    if (error) throw error;
-    const batch = (data ?? []) as { type: string; amount: number; category_id: number | null }[];
-    for (const r of batch) {
-      if (!r.category_id) continue; // null-category (e.g. legacy forex) is not a bucket
-      const b = buckets.get(r.category_id);
-      if (!b) continue;
-      if (r.type === "withdrawal") b.withdrawn += r.amount;
-      else b.contributed += r.amount;
-    }
-    if (batch.length < 1000) break;
-  }
-
-  for (const b of buckets.values()) b.balance = b.contributed - b.withdrawn;
-  return [...buckets.values()];
-}
-
-/** All transactions in a calendar year, ascending. Paginated (PostgREST caps at 1000). */
+/** Every transaction in a calendar year, oldest first. */
 export async function getYearTransactions(year: number): Promise<Transaction[]> {
   const sb = supabaseServer();
-  const start = `${year}-01-01`;
-  const end = `${year + 1}-01-01`;
-  const out: Transaction[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb
+  return paginate<Transaction>(() =>
+    sb
       .from("transactions")
       .select("*")
-      .gte("occurred_on", start)
-      .lt("occurred_on", end)
-      .order("occurred_on")
-      .order("id")
-      .range(from, from + 999);
-    if (error) throw error;
-    const batch = (data ?? []) as Transaction[];
-    out.push(...batch);
-    if (batch.length < 1000) break;
-  }
-  return out;
+      .gte("occurred_on", `${year}-01-01`)
+      .lte("occurred_on", `${year}-12-31`) as unknown as QueryBuilder<Transaction>
+  );
 }
 
-/** Years with transaction data (descending), always including the current year. */
+/** Years that have any ledger activity, newest first, always including the current year. */
 export async function getDataYears(): Promise<number[]> {
   const sb = supabaseServer();
-  const { data } = await sb
+  const years = new Set<number>([new Date().getFullYear()]);
+
+  const { data: first } = await sb
     .from("transactions")
     .select("occurred_on")
     .order("occurred_on", { ascending: true })
     .limit(1)
     .maybeSingle();
-  const currentYear = Number(todayISO().slice(0, 4));
-  const minYear = data ? Number((data as { occurred_on: string }).occurred_on.slice(0, 4)) : currentYear;
-  const years: number[] = [];
-  for (let y = currentYear; y >= Math.min(minYear, currentYear); y--) years.push(y);
-  return years;
+  const { data: last } = await sb
+    .from("transactions")
+    .select("occurred_on")
+    .order("occurred_on", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (first?.occurred_on && last?.occurred_on) {
+    const lo = parseInt(String(first.occurred_on).slice(0, 4), 10);
+    const hi = parseInt(String(last.occurred_on).slice(0, 4), 10);
+    for (let y = lo; y <= hi; y += 1) years.add(y);
+  }
+
+  return [...years].sort((a, b) => b - a);
+}
+
+// =============================================================================
+// Budgets — "override beats recurring rule" (ATLAS.md §3.4)
+// =============================================================================
+
+/**
+ * The winning budget per category for `monthKey`.
+ *
+ * A per-month override in `budgets` wins outright. Otherwise the recurring rule with the
+ * greatest `effective_from <= monthKey` applies — which is why the rules are ordered ASCENDING:
+ * the last write into the Map is the latest applicable rule (ATLAS.md §14.6).
+ */
+export async function getBudgetsForMonth(
+  monthKey: string
+): Promise<Map<number, EffectiveBudget>> {
+  const sb = supabaseServer();
+  const effective = new Map<number, EffectiveBudget>();
+
+  const { data: rules, error: rulesError } = await sb
+    .from("recurring_budgets")
+    .select("category_id, amount, effective_from")
+    .lte("effective_from", monthKey)
+    .order("effective_from", { ascending: true });
+  if (rulesError && !isMissingTable(rulesError)) throw rulesError;
+
+  for (const rule of (rules ?? []) as {
+    category_id: number;
+    amount: number;
+  }[]) {
+    effective.set(rule.category_id, {
+      category_id: rule.category_id,
+      amount: Number(rule.amount),
+      source: "rule",
+    });
+  }
+
+  const { data: overrides, error: overridesError } = await sb
+    .from("budgets")
+    .select("category_id, amount")
+    .eq("month", monthKey);
+  if (overridesError && !isMissingTable(overridesError)) throw overridesError;
+
+  for (const row of (overrides ?? []) as {
+    category_id: number;
+    amount: number;
+  }[]) {
+    effective.set(row.category_id, {
+      category_id: row.category_id,
+      amount: Number(row.amount),
+      source: "month",
+    });
+  }
+
+  return effective;
+}
+
+/** Every recurring rule for one category, oldest first — drives the budget scope controls. */
+export async function getRecurringBudgets(
+  categoryId: number
+): Promise<{ id: number; amount: number; effective_from: string }[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("recurring_budgets")
+    .select("id, amount, effective_from")
+    .eq("category_id", categoryId)
+    .order("effective_from", { ascending: true });
+  if (error && !isMissingTable(error)) throw error;
+  return (data ?? []) as { id: number; amount: number; effective_from: string }[];
+}
+
+export async function getMonthBudgetOverrides(
+  monthKey: string
+): Promise<Budget[]> {
+  const sb = supabaseServer();
+  const { data, error } = await sb.from("budgets").select("*").eq("month", monthKey);
+  if (error && !isMissingTable(error)) throw error;
+  return (data ?? []) as Budget[];
+}
+
+/**
+ * A budget expressed per month, whatever cadence it was entered at.
+ *
+ * 30.4 days and 4.345 weeks are the average month — using 30/4 would make a daily budget read
+ * ~1.3% low and a weekly one ~8% low against actuals.
+ */
+export function monthlyEquivalent(
+  amount: number,
+  period: Category["period"]
+): number {
+  switch (period) {
+    case "daily":
+      return Math.round(amount * 30.4);
+    case "weekly":
+      return Math.round(amount * 4.345);
+    case "yearly":
+      return Math.round(amount / 12);
+    default:
+      return amount;
+  }
+}
+
+// =============================================================================
+// Installments and loans
+// =============================================================================
+
+export const getPaylaterProviders = cache(
+  async (includeArchived = false): Promise<PaylaterProvider[]> => {
+    const sb = supabaseServer();
+    let query = sb.from("paylater_providers").select("*");
+    if (!includeArchived) query = query.eq("archived", false);
+    const { data, error } = await query
+      .order("sort_order", { ascending: true })
+      .order("id", { ascending: true });
+    if (error) {
+      if (isMissingTable(error)) return [];
+      throw error;
+    }
+    return (data ?? []) as PaylaterProvider[];
+  }
+);
+
+export const getPaylaterItems = cache(async (): Promise<PaylaterItem[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("paylater_items")
+    .select("*")
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as PaylaterItem[];
+});
+
+export const getPaylaterPayments = cache(async (): Promise<PaylaterPayment[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("paylater_payments")
+    .select("*")
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as PaylaterPayment[];
+});
+
+export const getLoans = cache(async (): Promise<Loan[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("loans")
+    .select("*")
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as Loan[];
+});
+
+export const getLoanPayments = cache(async (): Promise<LoanPayment[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("loan_payments")
+    .select("*")
+    .order("period_month", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as LoanPayment[];
+});
+
+// =============================================================================
+// Savings buckets
+// =============================================================================
+
+export interface SavingsBucket {
+  category_id: number;
+  name: string;
+  kind: "saving" | "investment";
+  contributed: number;
+  withdrawn: number;
+  balance: number;
+}
+
+/**
+ * Cumulative per-bucket contributed / withdrawn / balance.
+ *
+ * ACTIVE categories only (ATLAS.md §14.10): an archived legacy bucket must not double-count
+ * against a module that tracks the same money — e.g. an old "Forex Yen" saving category
+ * alongside the Forex module.
+ */
+export async function getSavingsBuckets(asOf?: string): Promise<SavingsBucket[]> {
+  const sb = supabaseServer();
+  const categories = await getCategories();
+
+  const buckets = new Map<number, SavingsBucket>();
+  for (const cat of categories) {
+    if (cat.kind !== "saving" && cat.kind !== "investment") continue;
+    buckets.set(cat.id, {
+      category_id: cat.id,
+      name: cat.name,
+      kind: cat.kind,
+      contributed: 0,
+      withdrawn: 0,
+      balance: 0,
+    });
+  }
+  if (buckets.size === 0) return [];
+
+  const rows = await paginate<
+    Pick<Transaction, "type" | "amount" | "category_id">
+  >(() => {
+    let query = sb
+      .from("transactions")
+      .select("id, type, amount, category_id")
+      .in("type", ["saving", "investment", "withdrawal"]);
+    if (asOf) query = query.lte("occurred_on", asOf);
+    return query as unknown as QueryBuilder<
+      Pick<Transaction, "type" | "amount" | "category_id">
+    >;
+  });
+
+  for (const row of rows) {
+    if (row.category_id == null) continue;
+    const bucket = buckets.get(row.category_id);
+    if (!bucket) continue;
+    if (row.type === "withdrawal") bucket.withdrawn += row.amount;
+    else bucket.contributed += row.amount;
+  }
+
+  for (const bucket of buckets.values()) {
+    bucket.balance = bucket.contributed - bucket.withdrawn;
+  }
+
+  return [...buckets.values()];
+}
+
+// =============================================================================
+// Chart data — ONE pass over the whole ledger
+// =============================================================================
+
+export interface MonthFlow {
+  income: number;
+  expense: number;
+  saving: number;
+  investment: number;
+}
+
+export interface CatEntry {
+  description: string;
+  count: number;
+  total: number;
+  max: number;
+}
+
+export interface ChartData {
+  /** Every month with activity, ascending. */
+  months: string[];
+  /** month -> flows. Transfers excluded throughout. */
+  flows: Record<string, MonthFlow>;
+  /** YYYY-MM-DD -> flows, for the 1-month daily zoom. Active days only. */
+  dailyFlows: Record<string, MonthFlow>;
+  /** month -> categoryId -> { kind, total } */
+  catTotals: Record<string, Record<number, { kind: CategoryKind; total: number }>>;
+  /** month -> categoryId -> normalized description -> aggregate */
+  catEntries: Record<string, Record<number, Record<string, CatEntry>>>;
+  /** month -> net worth at the end of that month. */
+  networth: Record<string, number>;
+}
+
+const EMPTY_FLOW = (): MonthFlow => ({
+  income: 0,
+  expense: 0,
+  saving: 0,
+  investment: 0,
+});
+
+/** Collapse whitespace so "Coffee  run" and "Coffee run" aggregate as one entry. */
+function normalizeDescription(value: string | null): string {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Everything /charts needs, from a single pass over the ledger.
+ *
+ * A `withdrawal` NETS AGAINST ITS BUCKET'S KIND (`flow[kind] -= amount`) rather than counting
+ * as its own flow — taking money back out of a savings bucket reduces that month's saving, it
+ * is not income.
+ */
+export async function getChartData(): Promise<ChartData> {
+  const sb = supabaseServer();
+  const categories = await getCategories(true);
+  const kindOf = new Map(categories.map((c) => [c.id, c.kind]));
+
+  const rows = await paginate<Transaction>(
+    () => sb.from("transactions").select("*") as unknown as QueryBuilder<Transaction>
+  );
+
+  const flows: Record<string, MonthFlow> = {};
+  const dailyFlows: Record<string, MonthFlow> = {};
+  const catTotals: ChartData["catTotals"] = {};
+  const catEntries: ChartData["catEntries"] = {};
+  const monthDelta: Record<string, number> = {};
+
+  for (const row of rows) {
+    const month = monthKeyOf(row.occurred_on);
+    const day = row.occurred_on;
+
+    // --- Net worth delta: the balance rule again, summed across all wallets. Transfers are
+    //     wallet-to-wallet so they net to zero and are skipped entirely.
+    if (row.type === "income" || row.type === "withdrawal") {
+      if (row.dest_wallet_id != null) {
+        monthDelta[month] = (monthDelta[month] ?? 0) + row.amount;
+      }
+    } else if (row.type !== "transfer") {
+      if (row.source_wallet_id != null) {
+        monthDelta[month] = (monthDelta[month] ?? 0) - row.amount;
+      }
+    }
+
+    if (row.type === "transfer") continue;
+
+    flows[month] ??= EMPTY_FLOW();
+    dailyFlows[day] ??= EMPTY_FLOW();
+
+    if (row.type === "withdrawal") {
+      // Net against whichever bucket kind it came out of.
+      const kind = row.category_id != null ? kindOf.get(row.category_id) : undefined;
+      if (kind === "saving" || kind === "investment") {
+        flows[month][kind] -= row.amount;
+        dailyFlows[day][kind] -= row.amount;
+      }
+    } else {
+      flows[month][row.type] += row.amount;
+      dailyFlows[day][row.type] += row.amount;
+    }
+
+    // --- Per-category aggregates ------------------------------------------
+    if (row.category_id == null) continue;
+    const kind = kindOf.get(row.category_id);
+    if (!kind) continue;
+
+    const signed = row.type === "withdrawal" ? -row.amount : row.amount;
+
+    catTotals[month] ??= {};
+    catTotals[month][row.category_id] ??= { kind, total: 0 };
+    catTotals[month][row.category_id].total += signed;
+
+    // Identical notes collapse into one entry, which is what keeps this payload small enough
+    // to ship to the client.
+    const note = normalizeDescription(row.description);
+    catEntries[month] ??= {};
+    catEntries[month][row.category_id] ??= {};
+    const bucket = (catEntries[month][row.category_id][note] ??= {
+      description: note,
+      count: 0,
+      total: 0,
+      max: 0,
+    });
+    bucket.count += 1;
+    bucket.total += signed;
+    bucket.max = Math.max(bucket.max, row.amount);
+  }
+
+  // --- Net worth: opening baseline + cumulative monthly deltas -------------
+  const openingMonth = await getOpeningMonth();
+  const opening = await getOpeningBalances();
+  const baseline = opening.reduce((sum, row) => sum + row.balance, 0);
+
+  const months = [
+    ...new Set([...Object.keys(flows), ...Object.keys(monthDelta), openingMonth]),
+  ].sort();
+
+  const networth: Record<string, number> = {};
+  let running = baseline;
+  for (const month of months) {
+    // Activity at or before the opening month is already inside the opening balances.
+    if (month > openingMonth) running += monthDelta[month] ?? 0;
+    networth[month] = running;
+    flows[month] ??= EMPTY_FLOW();
+  }
+
+  return { months, flows, dailyFlows, catTotals, catEntries, networth };
 }

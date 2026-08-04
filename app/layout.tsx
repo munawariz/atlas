@@ -1,42 +1,49 @@
 import type { Metadata, Viewport } from "next";
-import { JetBrains_Mono, Hanken_Grotesk } from "next/font/google";
-import "./globals.css";
+import type { ReactNode } from "react";
+import { Figtree, DM_Mono } from "next/font/google";
 import RegisterSW from "@/components/RegisterSW";
+import "./globals.css";
 
-const display = JetBrains_Mono({
+// Substituted fonts, per the design system's own notice: no binaries were supplied with the
+// brand reference. Figtree is the closest match to its tight geometric grotesque; DM Mono
+// covers tabular data. Swap both here when the licensed files arrive.
+const figtree = Figtree({
   subsets: ["latin"],
-  variable: "--font-jetbrains",
+  variable: "--font-figtree",
   display: "swap",
+  weight: ["400", "500", "600", "700", "800"],
 });
 
-const sans = Hanken_Grotesk({
+const dmMono = DM_Mono({
   subsets: ["latin"],
-  variable: "--font-hanken",
+  variable: "--font-dm-mono",
   display: "swap",
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
   title: "Atlas",
-  description: "Atlas — a fast, mobile-first personal finance tracker",
+  description: "Personal finance, tracked to the rupiah.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
     title: "Atlas",
+    statusBarStyle: "default",
   },
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icons/icon-16.png", sizes: "16x16", type: "image/png" },
-      { url: "/icons/icon-32.png", sizes: "32x32", type: "image/png" },
+      // The SVG is listed first so browsers that support it get the crisp mark.
+      { url: "/favicon.svg", type: "image/svg+xml" },
       { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: "/icons/apple-touch-icon.png",
+    // iOS wants exactly 180x180 and will downscale anything else badly.
+    apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180" }],
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0e14",
+  themeColor: "#f7f4ed",
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
@@ -44,17 +51,19 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// Blocking inline script: applies the privacy class before first paint so masked amounts
+// never flash their real value on reload.
+const NO_FLASH_PRIVACY = `try{if(localStorage.getItem("ft_hide_amounts")==="1")document.documentElement.classList.add("amounts-hidden")}catch(e){}`;
+
+export default function RootLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${display.variable} ${sans.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col font-sans">
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `try{if(localStorage.getItem('ft_hide_amounts')==='1')document.documentElement.classList.add('amounts-hidden')}catch(e){}`,
-          }}
-        />
-        <div className="bg-atmosphere" aria-hidden />
-        <div className="bg-grain" aria-hidden />
+    <html lang="en" className={`${figtree.variable} ${dmMono.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: NO_FLASH_PRIVACY }} />
+      </head>
+      <body>
         {children}
         <RegisterSW />
       </body>

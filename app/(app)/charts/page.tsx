@@ -1,26 +1,27 @@
-import Link from "next/link";
 import { getCategories, getChartData } from "@/lib/data";
 import ChartsClient from "./ChartsClient";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = { title: "Charts · Atlas" };
+
 export default async function ChartsPage() {
-  const [data, cats] = await Promise.all([getChartData(), getCategories(true)]);
-  const categories = cats.map((c) => ({ id: c.id, name: c.name, kind: c.kind }));
+  // One pass over the whole ledger, on the server. Everything the client needs ships with it,
+  // so changing the range never costs a round trip.
+  const [data, categories] = await Promise.all([
+    getChartData(),
+    getCategories(true),
+  ]);
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Charts</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-4">
+      <header>
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Charts
+        </h1>
+      </header>
 
-      {data.flows.length === 0 ? (
-        <p className="pt-10 text-center text-sm text-paper-faint">No data to chart yet.</p>
-      ) : (
-        <ChartsClient data={data} categories={categories} />
-      )}
+      <ChartsClient data={data} categories={categories} />
     </div>
   );
 }

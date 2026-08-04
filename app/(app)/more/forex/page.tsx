@@ -1,195 +1,254 @@
 import Link from "next/link";
-import { getWallets, walletMap } from "@/lib/data";
-import { getForexAccounts, getForexRate, getForexTransactions, forexAvgCost } from "@/lib/forex";
-import { formatMonth, formatRupiah } from "@/lib/format";
-import { deleteForexAccount, setForexUnits } from "../actions";
+import PrivacyToggle from "@/components/PrivacyToggle";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
-import ForexConvert from "./ForexConvert";
-import ForexAddCurrency from "./ForexAddCurrency";
+import { ChevronLeft, Trash } from "@/components/icons";
+import { getWallets, monthKeyOf } from "@/lib/data";
+import {
+  forexAvgCost,
+  getForexAccounts,
+  getForexRate,
+  getForexTransactions,
+} from "@/lib/forex";
+import { formatDateShort, formatMonth, formatRupiah } from "@/lib/format";
+import { ForexAddCurrency, ForexConvert } from "./ForexForms";
+import { deleteForexAccount, deleteForexTransaction, setForexBalance } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-const fmtUnits = (n: number) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(n);
+export const metadata = { title: "Forex · Atlas" };
 
 export default async function ForexPage() {
-  const [accounts, wallets, txns, ws] = await Promise.all([
+  const [accounts, wallets] = await Promise.all([
     getForexAccounts(),
     getWallets(),
-    getForexTransactions(),
-    walletMap(),
   ]);
-  const currencies = [...new Set(accounts.map((a) => a.currency))];
-  const rates = new Map<string, number>();
-  await Promise.all(currencies.map(async (c) => rates.set(c, await getForexRate(c))));
-  const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
 
-  // group the forex log per account → average-cost basis of each holding
-  const txnsByAccount = new Map<number, typeof txns>();
-  for (const t of txns) {
-    (txnsByAccount.get(t.account_id) ?? txnsByAccount.set(t.account_id, []).get(t.account_id)!).push(t);
-  }
+  const cards = await Promise.all(
+    accounts.map(async (account) => {
+      const [txns, rate] = await Promise.all([
+        getForexTransactions(account.id),
+        getForexRate(account.currency),
+      ]);
 
-  // group the log by month (already sorted newest-first)
-  const byMonth = new Map<string, typeof txns>();
-  for (const t of txns) {
-    const k = t.occurred_on.slice(0, 7);
-    (byMonth.get(k) ?? byMonth.set(k, []).get(k)!).push(t);
+      const avgCost = forexAvgCost(txns);
+      const invested = Math.round(avgCost * account.units);
+      const value = Math.round(rate * account.units);
+      const gain = value - invested;
+      const pct = invested > 0 ? (gain / invested) * 100 : 0;
+      const realized = txns.reduce((sum, t) => sum + (t.realized_pl ?? 0), 0);
+
+      return { account, txns, rate, avgCost, invested, value, gain, pct, realized };
+    })
+  );
+
+  // One month-grouped log across every currency.
+  const allTxns = cards
+    .flatMap((card) =>
+      card.txns.map((txn) => ({ ...txn, currency: card.account.currency }))
+    )
+    .sort((a, b) => (a.occurred_on < b.occurred_on ? 1 : -1));
+
+  const byMonth = new Map<string, typeof allTxns>();
+  for (const txn of allTxns) {
+    const month = monthKeyOf(txn.occurred_on);
+    const list = byMonth.get(month) ?? [];
+    list.push(txn);
+    byMonth.set(month, list);
   }
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Forex</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-5 privacy-scope">
+      <header className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <Link
+            href="/more"
+            aria-label="Back to more"
+            className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+          >
+            <ChevronLeft size={20} />
+          </Link>
+          <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+            Forex
+          </h1>
+        </div>
+        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+      </header>
 
-      {accounts.map((a) => {
-        const rate = rates.get(a.currency) ?? 0;
-        const avgCost = forexAvgCost(txnsByAccount.get(a.id) ?? []);
-        const invested = Math.round(avgCost * a.units);
-        const value = Math.round(a.units * rate);
-        const hasCost = avgCost > 0 && a.units > 0;
-        const hasValue = rate > 0 && a.units > 0;
-        const pl = value - invested;
-        const plPct = hasCost && hasValue ? (pl / invested) * 100 : null;
-        // Realized gain/loss already booked from this holding's sells (income/expense).
-        const realized = (txnsByAccount.get(a.id) ?? []).reduce((s, t) => s + (t.realized_pl ?? 0), 0);
-        return (
-          <div key={a.id} className="space-y-2">
-            <div className="card p-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="text-[15px] font-medium text-paper">{a.name}</div>
-                  <form action={deleteForexAccount.bind(null, a.id)} className="mt-1">
-                    <SubmitButton label="Remove currency" className="grid h-6 w-6 place-items-center rounded-lg text-clay/70 active:bg-clay/10">
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </SubmitButton>
-                  </form>
-                </div>
-                <div className="text-right">
-                  <div className="font-display text-2xl font-bold tabular-nums text-sky">
-                    {fmtUnits(a.units)} {a.currency}
-                  </div>
-                  <div className="text-[11px] text-paper-faint">not in networth</div>
-                </div>
-              </div>
+      <p className="text-[14px] text-ink-500">
+        Foreign currency is tracked in its own units and is{" "}
+        <strong>never counted in your IDR net worth</strong>. The rupiah figures
+        below are a live reference, not a booked value.
+      </p>
 
-              <div className="mt-3 grid grid-cols-2 gap-2.5">
-                <div className="rounded-xl bg-ink-3/60 p-2.5">
-                  <div className="label">Invested</div>
-                  <div className="mt-0.5 font-display text-sm font-semibold tabular-nums text-paper">
-                    {hasCost ? formatRupiah(invested) : "—"}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-ink-3/60 p-2.5">
-                  <div className="label">Value · live</div>
-                  <div className="mt-0.5 font-display text-sm font-semibold tabular-nums text-paper">
-                    {hasValue ? formatRupiah(value) : "—"}
-                  </div>
-                </div>
-              </div>
-              {plPct !== null ? (
-                <div className={`mt-2 flex flex-wrap items-center gap-x-1.5 text-xs font-medium ${pl >= 0 ? "text-green" : "text-clay"}`}>
-                  <span className="tabular-nums">{pl >= 0 ? "▲" : "▼"} {formatRupiah(Math.abs(pl))}</span>
-                  <span className="tabular-nums">({pl >= 0 ? "+" : "−"}{Math.abs(plPct).toFixed(1)}%)</span>
-                  <span className="text-paper-faint">vs invested · live rate</span>
-                </div>
-              ) : (
-                <div className="mt-2 text-xs text-paper-faint">
-                  {!hasValue ? "Live rate unavailable." : "Buy some to track gain/loss."}
-                </div>
-              )}
-              {hasValue && (
-                <div className="mt-1.5 text-[11px] text-paper-faint">
-                  Live{" "}
-                  <span className={`tabular-nums ${hasCost ? (rate >= avgCost ? "text-green" : "text-clay") : "text-paper-dim"}`}>
-                    Rp {fmtUnits(rate)}
-                  </span>
-                  {hasCost && (
-                    <> vs avg <span className="tabular-nums text-paper-dim">Rp {fmtUnits(avgCost)}</span></>
-                  )}
-                  {" "}/ {a.currency}
-                </div>
-              )}
-              {realized !== 0 && (
-                <div className="mt-1 text-[11px] text-paper-faint">
-                  Realized{" "}
-                  <span className={`tabular-nums ${realized >= 0 ? "text-green" : "text-clay"}`}>
-                    {realized >= 0 ? "+" : "−"}{formatRupiah(Math.abs(realized))}
-                  </span>{" "}
-                  booked to date
-                </div>
-              )}
-
-              <form action={setForexUnits.bind(null, a.id)} className="mt-3 flex items-center gap-2">
-                <span className="text-xs text-paper-faint">Set balance</span>
-                <input
-                  name="units"
-                  inputMode="decimal"
-                  defaultValue={a.units || ""}
-                  className="w-28 rounded-lg border border-line/70 bg-ink-3 px-2 py-1.5 text-right text-sm tabular-nums text-paper outline-none focus:border-green/60"
-                />
-                <span className="text-xs text-paper-dim">{a.currency}</span>
-                <SubmitButton
-                  pendingText="…"
-                  className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
-                >
-                  Save
-                </SubmitButton>
-              </form>
-            </div>
-
-            <ForexConvert
-              accountId={a.id}
-              currency={a.currency}
-              wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-            />
-          </div>
-        );
-      })}
-
-      {/* Add a new foreign currency (in a modal) */}
       <ForexAddCurrency />
 
-      {accounts.length === 0 && (
-        <p className="pt-2 text-center text-sm text-paper-faint">No currencies yet — add one above.</p>
+      {cards.length === 0 ? (
+        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          No currencies yet.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {cards.map((card) => (
+            <article
+              key={card.account.id}
+              className="space-y-3 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-[15px] font-bold text-ink-900">
+                    {card.account.name}
+                  </div>
+                  <div className="font-display text-[26px] font-extrabold tracking-[-0.03em] text-ink-900 tabular-nums">
+                    {card.account.units.toLocaleString()}{" "}
+                    <span className="text-[16px] text-ink-500">
+                      {card.account.currency}
+                    </span>
+                  </div>
+                  <span className="badge mt-1 bg-cream-200 text-ink-700">
+                    not in networth
+                  </span>
+                </div>
+
+                <form action={deleteForexAccount.bind(null, card.account.id)}>
+                  <SubmitButton
+                    label={`Delete ${card.account.currency}`}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
+                  >
+                    <Trash size={16} />
+                  </SubmitButton>
+                </form>
+              </div>
+
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--border-subtle)] pt-3 text-[13px]">
+                {[
+                  ["Invested", formatRupiah(card.invested)],
+                  ["Value now", formatRupiah(card.value)],
+                  [
+                    "Gain / loss",
+                    `${card.gain >= 0 ? "▲" : "▼"} ${formatRupiah(
+                      Math.abs(card.gain)
+                    )} (${card.pct.toFixed(1)}%)`,
+                  ],
+                  ["Realized P/L", formatRupiah(card.realized)],
+                  [
+                    "Live rate",
+                    `${formatRupiah(Math.round(card.rate))} / ${card.account.currency}`,
+                  ],
+                  [
+                    "Average rate",
+                    `${formatRupiah(Math.round(card.avgCost))} / ${card.account.currency}`,
+                  ],
+                ].map(([label, value]) => (
+                  <div key={label} className="flex justify-between gap-2">
+                    <dt className="text-ink-500">{label}</dt>
+                    <dd
+                      className={`font-semibold tabular-nums ${
+                        label === "Gain / loss"
+                          ? card.gain >= 0
+                            ? "text-positive-600"
+                            : "text-negative-600"
+                          : "text-ink-900"
+                      }`}
+                    >
+                      {value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+
+              <div className="border-t border-[var(--border-subtle)] pt-3">
+                <ForexConvert
+                  accountId={card.account.id}
+                  currency={card.account.currency}
+                  wallets={wallets}
+                />
+              </div>
+
+              <details className="border-t border-[var(--border-subtle)] pt-3">
+                <summary className="text-[13px] font-semibold text-forest-800">
+                  Correct the balance
+                </summary>
+                <form action={setForexBalance} className="mt-2 flex gap-2">
+                  <input
+                    type="hidden"
+                    name="account_id"
+                    value={card.account.id}
+                  />
+                  <input
+                    name="units"
+                    inputMode="decimal"
+                    defaultValue={card.account.units}
+                    aria-label="Corrected balance"
+                    className="field flex-1"
+                  />
+                  <SubmitButton className="btn btn-sm btn-outline shrink-0">
+                    Set
+                  </SubmitButton>
+                </form>
+                <p className="mt-1.5 text-[13px] text-ink-500">
+                  Sets the balance directly. No transaction is booked, so use it
+                  only to fix a drift.
+                </p>
+              </details>
+            </article>
+          ))}
+        </div>
       )}
 
-      {txns.length > 0 && (
-        <section>
-          <h2 className="label mb-2 text-amber">History</h2>
-          <div className="space-y-4">
-            {[...byMonth.entries()].map(([ym, rows]) => (
-              <div key={ym}>
-                <div className="label mb-1.5 px-1">{formatMonth(`${ym}-01`)}</div>
-                <div className="card overflow-hidden">
-                  {rows.map((t, i) => (
-                    <div key={t.id} className={`flex items-center justify-between px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-paper">
-                          {t.direction === "buy" ? "Buy" : "Sell"} {fmtUnits(t.units)} {currencyById.get(t.account_id) ?? ""}
-                        </div>
-                        <div className="text-xs text-paper-dim">
-                          {t.wallet_id ? ws.get(t.wallet_id) : "—"}
-                          {t.direction === "sell" && t.realized_pl != null && t.realized_pl !== 0 && (
-                            <span className={t.realized_pl >= 0 ? "text-green" : "text-clay"}>
-                              {" · "}{t.realized_pl >= 0 ? "profit " : "loss "}
-                              {formatRupiah(Math.abs(t.realized_pl)).replace("Rp", "").trim()}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className={`shrink-0 font-display text-sm font-medium tabular-nums ${t.direction === "buy" ? "text-clay" : "text-green"}`}>
-                        {t.direction === "buy" ? "−" : "+"}{formatRupiah(t.idr).replace("Rp", "").trim()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      {byMonth.size > 0 && (
+        <section className="space-y-3">
+          <h2 className="label">History</h2>
+          {[...byMonth.entries()].map(([month, txns]) => (
+            <div key={month}>
+              <div className="mb-1.5 text-[13px] font-semibold text-ink-500">
+                {formatMonth(month)}
               </div>
-            ))}
-          </div>
+              <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+                {txns.map((txn, i) => (
+                  <div
+                    key={txn.id}
+                    className={`flex items-center gap-2 px-4 py-2.5 ${
+                      i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14px] font-medium text-ink-900">
+                        {txn.direction === "buy" ? "Buy" : "Sell"}{" "}
+                        {txn.units.toLocaleString()} {txn.currency}
+                      </span>
+                      <span className="block text-[12px] text-ink-500">
+                        {formatDateShort(txn.occurred_on)}
+                        {txn.realized_pl != null && txn.realized_pl !== 0 && (
+                          <span
+                            className={
+                              txn.realized_pl > 0
+                                ? "text-positive-600"
+                                : "text-negative-600"
+                            }
+                          >
+                            {" "}
+                            · {txn.realized_pl > 0 ? "+" : "−"}
+                            {formatRupiah(Math.abs(txn.realized_pl))}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[14px] font-semibold text-ink-900 tabular-nums">
+                      {formatRupiah(txn.idr)}
+                    </span>
+                    <form action={deleteForexTransaction.bind(null, txn.id)}>
+                      <SubmitButton
+                        label="Delete conversion"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
+                      >
+                        <Trash size={16} />
+                      </SubmitButton>
+                    </form>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </section>
       )}
     </div>

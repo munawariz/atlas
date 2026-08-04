@@ -1,66 +1,46 @@
 "use client";
 
-import { useActionState } from "react";
-import type { Category, Transaction, Wallet } from "@/lib/types";
 import TxnFields from "@/components/TxnFields";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
-import { deleteTransaction, updateTransaction, type EditState } from "../actions";
+import { Trash } from "@/components/icons";
+import { deleteTransaction, updateTransaction } from "../actions";
+import type { Category, Transaction, Wallet } from "@/lib/types";
 
 export default function EditForm({
-  txn,
+  transaction,
   wallets,
   categories,
+  monthKey,
 }: {
-  txn: Transaction;
+  transaction: Transaction;
   wallets: Wallet[];
   categories: Category[];
+  monthKey: string;
 }) {
-  const update = updateTransaction.bind(null, txn.id);
-  const del = deleteTransaction.bind(null, txn.id);
-  const [state, formAction, pending] = useActionState<EditState, FormData>(update, {});
+  // `.bind(null, id)` is the convention for row-bound actions — it keeps the id off the form,
+  // where a client could edit it.
+  const save = updateTransaction.bind(null, transaction.id);
+  const remove = deleteTransaction.bind(null, transaction.id);
 
   return (
-    <div>
-      <form action={formAction}>
+    <div className="space-y-5">
+      <form action={save} className="space-y-5">
         <TxnFields
           wallets={wallets}
           categories={categories}
-          initialToday={txn.occurred_on.slice(0, 10)}
-          initial={{
-            type: txn.type,
-            amount: txn.amount,
-            date: txn.occurred_on.slice(0, 10),
-            description: txn.description ?? "",
-            categoryId: txn.category_id,
-            sourceWalletId: txn.source_wallet_id,
-            destWalletId: txn.dest_wallet_id,
-          }}
+          initial={transaction}
         />
-
-        {state.error && <p className="mt-4 text-sm text-clay">{state.error}</p>}
-
-        <button
-          type="submit"
-          disabled={pending}
-          className="mt-6 w-full rounded-2xl bg-gold py-4 text-lg font-semibold text-ink shadow-[0_10px_30px_-12px_rgba(63,185,80,0.6)] transition-transform active:scale-[0.98] disabled:opacity-60"
-        >
-          {pending ? "Saving…" : "Save changes"}
-        </button>
+        <SubmitButton pendingChildren="Saving…">Save changes</SubmitButton>
       </form>
 
-      <form
-        action={del}
-        onSubmit={(e) => {
-          if (!confirm("Delete this transaction?")) e.preventDefault();
-        }}
-        className="mt-3 flex justify-end"
-      >
+      <form action={remove}>
+        <input type="hidden" name="month" value={monthKey} />
         <SubmitButton
-          label="Delete transaction"
-          className="grid h-11 w-11 place-items-center rounded-2xl border border-clay/40 text-clay active:bg-clay/10"
+          className="btn btn-ghost w-full text-negative-600"
+          pendingChildren="Deleting…"
         >
-          <TrashIcon className="h-5 w-5" />
+          <Trash size={18} />
+          Delete
         </SubmitButton>
       </form>
     </div>

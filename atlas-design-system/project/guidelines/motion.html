@@ -1,0 +1,8 @@
+<!-- @dsCard group="Spacing" viewport="700x160" name="Motion" subtitle="One easing curve, 80–560ms, no bounce" -->
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css"><style>html,body{margin:0}body{background:var(--white);font-family:var(--font-text)}.wrap{padding:24px 28px}.lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-500);font-weight:600}.mono{font-family:var(--font-mono);font-size:11px;color:var(--ink-500)}</style></head><body><style>@keyframes demo{0%,10%{transform:translateX(0)}55%,100%{transform:translateX(calc(100% - 26px))}}.t{height:26px;background:var(--sage-100);border-radius:999px;position:relative;overflow:hidden}.d{position:absolute;width:26px;height:26px;border-radius:999px;background:var(--forest-800);animation:demo 2.6s var(--ease-standard) infinite alternate}</style>
+<div class="wrap" style="display:flex;flex-direction:column;gap:12px">
+<div style="display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center"><span class="mono">fast 140ms</span><div class="t"><div class="d" style="animation-duration:1.4s"></div></div></div>
+<div style="display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center"><span class="mono">base 220ms</span><div class="t"><div class="d" style="animation-duration:2.2s"></div></div></div>
+<div style="display:grid;grid-template-columns:150px 1fr;gap:16px;align-items:center"><span class="mono">slow 340ms</span><div class="t"><div class="d" style="animation-duration:3.4s"></div></div></div>
+<span class="mono">cubic-bezier(.2,.8,.2,1) — the standard curve for hovers, toggles, panels</span>
+</div></body></html>

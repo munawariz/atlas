@@ -1,177 +1,216 @@
 import Link from "next/link";
-import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems, getPaylaterProviders } from "@/lib/data";
-import { formatRupiah, formatRupiahShort, todayISO } from "@/lib/format";
-import type { BudgetPeriod } from "@/lib/types";
 import MonthSwitcher from "@/components/MonthSwitcher";
-import { getSettings, mappedCategoryId } from "@/lib/settings";
+import { ChevronLeft } from "@/components/icons";
+import {
+  currentMonthKey,
+  getBudgetsForMonth,
+  getCategories,
+  monthlyEquivalent,
+} from "@/lib/data";
+import { installmentAutoBudgets, loanAutoBudget } from "@/lib/autoBudget";
+import { formatRupiah } from "@/lib/format";
+import type { CategoryKind } from "@/lib/types";
 import BudgetRow from "./BudgetRow";
 
 export const dynamic = "force-dynamic";
 
-const KINDS = [
-  { value: "expense", label: "Expense" },
-  { value: "income", label: "Income" },
-  { value: "saving", label: "Saving" },
-] as const;
+export const metadata = { title: "Budgets · Atlas" };
 
-export default async function BudgetsPage({ searchParams }: { searchParams: Promise<{ m?: string; kind?: string }> }) {
-  const sp = await searchParams;
-  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
-  const kind = KINDS.some((k) => k.value === sp.kind) ? (sp.kind as string) : "expense";
-  const [cats, budgets, loans, payments, paylater, providers, settings] = await Promise.all([
+const TABS: { kind: CategoryKind; label: string; blurb: string }[] = [
+  {
+    kind: "expense",
+    label: "Expense",
+    blurb: "A limit. Going over is what the dashboard warns you about.",
+  },
+  {
+    kind: "income",
+    label: "Income",
+    blurb: "A target. Meeting it is the win.",
+  },
+  {
+    kind: "saving",
+    label: "Saving",
+    blurb: "A target for money you intend to set aside.",
+  },
+];
+
+export default async function BudgetsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ m?: string; k?: string }>;
+}) {
+  const { m, k } = await searchParams;
+  const monthKey = /^\d{4}-\d{2}-\d{2}$/.test(m ?? "")
+    ? (m as string)
+    : currentMonthKey();
+  const activeKind = (TABS.some((t) => t.kind === k) ? k : "expense") as CategoryKind;
+
+  const [categories, budgets, loanAuto, installmentAuto] = await Promise.all([
     getCategories(),
     getBudgetsForMonth(monthKey),
-    getLoans(),
-    getLoanPayments(),
-    getPaylaterItems(),
-    getPaylaterProviders(true),
-    getSettings(),
+    loanAutoBudget(monthKey),
+    installmentAutoBudgets(monthKey),
   ]);
-  const byCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
-  const recurringSet = new Set(budgets.filter((b) => b.recurring).map((b) => b.category_id));
-  const rows = cats.filter((c) => c.kind === kind);
 
-  // Auto budgets for the selected month: the configured loan-income category = total
-  // expected to collect from Loans; every INSTALLMENT category = its installments active
-  // this month (rolled up by provider). No-provider installments are uncategorized ("other").
-  const loanById = new Map(loans.map((l) => [l.id, l]));
-  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
-  const catById = new Map(cats.map((c) => [c.id, c]));
-  const loanExpected = payments
-    .filter((p) => p.period_month === monthKey)
-    .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  const hutangCatId = mappedCategoryId(settings, cats, "cat_loan", "Hutang", "income");
-  const instByCat = new Map<number, number>();
-  for (const p of paylater) {
-    if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.provider_id ? providerById.get(p.provider_id)?.category_id ?? null : null;
-    if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
-  }
-  const instFor = (id: number) => instByCat.get(id) ?? 0;
-  const isAuto = (id: number) => id === hutangCatId || !!catById.get(id)?.is_installment;
-  const autoValue = (id: number) => (id === hutangCatId ? loanExpected : instFor(id));
+  const autoByCategory = new Map(installmentAuto.byCategory);
+  if (loanAuto) autoByCategory.set(loanAuto.category_id, loanAuto);
 
-  // Expected cashflow from the PLAN (budgets): income in, minus expense + saving out.
-  // Non-monthly budgets are converted to a monthly-equivalent so the estimate is comparable.
-  const monthlyEquiv = (amt: number, p: BudgetPeriod) =>
-    p === "daily" ? amt * 30.4 : p === "weekly" ? amt * 4.345 : p === "yearly" ? amt / 12 : amt;
-  const effBudget = (c: { id: number; period: BudgetPeriod }) => {
-    if (isAuto(c.id)) return autoValue(c.id);
-    return monthlyEquiv(byCat.get(c.id) ?? 0, c.period);
-  };
+  // --- Expected cashflow: planned income − planned expense − planned saving ---
+  // Every cadence converted to its monthly equivalent, so the figure means the same thing
+  // whichever mix of daily/weekly/yearly budgets is in play.
   let plannedIncome = 0;
   let plannedExpense = 0;
   let plannedSaving = 0;
-  for (const c of cats) {
-    const eff = effBudget(c);
-    if (c.kind === "income") plannedIncome += eff;
-    else if (c.kind === "expense") plannedExpense += eff;
-    else if (c.kind === "saving") plannedSaving += eff;
+
+  for (const category of categories) {
+    const auto = autoByCategory.get(category.id);
+    const amount =
+      auto?.amount ?? budgets.get(category.id)?.amount ?? 0;
+    if (amount <= 0) continue;
+    // An auto figure is already a real monthly total; a manual one carries a cadence.
+    const monthly = auto ? amount : monthlyEquivalent(amount, category.period);
+
+    if (category.kind === "income") plannedIncome += monthly;
+    else if (category.kind === "expense") plannedExpense += monthly;
+    else if (category.kind === "saving") plannedSaving += monthly;
   }
-  const cashflow = plannedIncome - plannedExpense - plannedSaving;
+  plannedExpense += installmentAuto.unassigned.amount;
+
+  const expected = plannedIncome - plannedExpense - plannedSaving;
+
+  const tab = TABS.find((t) => t.kind === activeKind) ?? TABS[0];
+  const rows = categories.filter((c) => c.kind === activeKind);
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Budgets</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-4 privacy-scope">
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Budgets
+        </h1>
+      </header>
 
-      <MonthSwitcher monthKey={monthKey} basePath="/more/budgets" params={{ kind }} />
+      <MonthSwitcher monthKey={monthKey} params={{ k: activeKind }} />
 
-      {/* Planned cashflow for the month (income budget − expense − saving budgets) */}
-      <div className="card p-4">
-        <div className="flex items-center justify-between">
-          <span className="label">Expected cashflow · /mo</span>
-          <span className={`font-display text-base font-semibold tabular-nums ${cashflow >= 0 ? "text-green" : "text-red"}`}>
-            {cashflow >= 0 ? "+" : "−"}
-            {formatRupiah(Math.abs(cashflow))}
-          </span>
+      <section
+        className={`rounded-[var(--radius-card)] p-5 ${
+          expected < 0 ? "bg-negative-100" : "bg-forest-800 on-forest"
+        }`}
+      >
+        <div
+          className="label"
+          style={{ color: expected < 0 ? undefined : "var(--color-forest-300)" }}
+        >
+          Expected cashflow /mo
         </div>
-        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-paper-faint">
-          <span>in <span className="text-green">{formatRupiahShort(plannedIncome)}</span></span>
-          <span>spend <span className="text-red">{formatRupiahShort(plannedExpense)}</span></span>
-          {plannedSaving > 0 && <span>save <span className="text-sky">{formatRupiahShort(plannedSaving)}</span></span>}
+        <div
+          className={`mt-1 font-display text-[30px] font-extrabold tracking-[-0.03em] tabular-nums ${
+            expected < 0 ? "text-negative-600" : "text-white"
+          }`}
+        >
+          {formatRupiah(expected)}
         </div>
-        {cashflow < 0 && (
-          <p className="mt-2 rounded-lg bg-red/10 px-2.5 py-1.5 text-xs text-red">
-            ⚠ Heads up — your budget plans {formatRupiah(Math.abs(cashflow))} more going out than coming in this month.
+        <p
+          className="mt-1 text-[13px]"
+          style={{ color: expected < 0 ? "var(--color-negative-600)" : "var(--color-forest-200)" }}
+        >
+          {expected < 0
+            ? "Your plan spends more than it earns. Trim a limit or raise a target."
+            : "Planned income, less planned expense and saving."}
+        </p>
+      </section>
+
+      <nav className="flex gap-2">
+        {TABS.map((t) => (
+          <Link
+            key={t.kind}
+            href={`/more/budgets?m=${monthKey}&k=${t.kind}`}
+            aria-current={t.kind === activeKind ? "page" : undefined}
+            className={`chip no-underline ${t.kind === activeKind ? "chip-on" : ""}`}
+          >
+            {t.label}
+          </Link>
+        ))}
+      </nav>
+
+      <p className="text-[13px] text-ink-500">{tab.blurb}</p>
+
+      <div className="space-y-2">
+        {rows.map((category) => {
+          const auto = autoByCategory.get(category.id);
+
+          if (auto) {
+            return (
+              <div
+                key={category.id}
+                className="rounded-[var(--radius-card)] bg-cream-100 p-4"
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-semibold text-ink-900">
+                      {category.name}
+                      <span className="badge ml-2">auto</span>
+                    </span>
+                    <span className="block text-[13px] text-ink-500">
+                      {auto.note}
+                    </span>
+                  </span>
+                  <span className="shrink-0 font-display text-[17px] font-bold text-ink-900 tabular-nums">
+                    {formatRupiah(auto.amount)}
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          const budget = budgets.get(category.id);
+          const amount = budget?.amount ?? 0;
+
+          return (
+            <BudgetRow
+              key={category.id}
+              categoryId={category.id}
+              name={category.name}
+              period={category.period}
+              amount={amount}
+              monthKey={monthKey}
+              source={budget?.source ?? "none"}
+              monthlyEquivalent={monthlyEquivalent(amount, category.period)}
+            />
+          );
+        })}
+
+        {rows.length === 0 && (
+          <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+            No {tab.label.toLowerCase()} categories yet.
           </p>
         )}
       </div>
 
-      <div className="flex gap-1.5">
-        {KINDS.map((k) => (
-          <Link
-            key={k.value}
-            href={`/more/budgets?m=${monthKey}&kind=${k.value}`}
-            className={`flex-1 rounded-full py-1.5 text-center text-sm font-medium transition-colors ${
-              kind === k.value ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
-            }`}
-          >
-            {k.label}
-          </Link>
-        ))}
-      </div>
-
-      <div className="space-y-2">
-        {rows.length === 0 ? (
-          <p className="py-6 text-center text-sm text-paper-faint">No {kind} categories.</p>
-        ) : (
-          rows.map((c) =>
-          isAuto(c.id) ? (
-            <div key={c.id} className="card flex items-center justify-between gap-3 px-4 py-2.5">
-              <span className="shrink-0 text-sm font-medium text-paper">
-                {c.name}
-                <span className="ml-1.5 rounded bg-green/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">
-                  auto
-                </span>
-              </span>
-              <span className="font-display text-sm font-medium tabular-nums text-paper">
-                {formatRupiah(autoValue(c.id))}
-              </span>
-            </div>
-          ) : (
-            <BudgetRow
-              key={c.id}
-              id={c.id}
-              name={c.name}
-              kind={c.kind}
-              amount={byCat.get(c.id) ?? 0}
-              period={c.period}
-              recurring={recurringSet.has(c.id)}
-              month={monthKey}
-              instAmount={instFor(c.id)}
-            />
-          )
-          )
-        )}
-      </div>
-
-      <p className="px-1 text-xs text-paper-faint">
-        Change each category's <span className="text-paper-dim">period</span> (daily, weekly Mon→Sun, monthly, or yearly) right
-        here or on the <Link href="/more/categories" className="underline">Categories</Link> page. The amount is the limit per
-        that period; non-monthly ones are converted to a monthly estimate for the cashflow above.
-      </p>
-
-      <p className="px-1 text-xs text-paper-faint">
-        For daily, weekly and monthly budgets, pick a scope when saving:{" "}
-        <span className="text-paper-dim">This month →</span> sets it for this month and every month after,{" "}
-        <span className="text-paper-dim">This month only</span> sets just this one (monthly also has{" "}
-        <span className="text-paper-dim">All months</span>). <span className="text-paper-dim">Yearly</span> is a single
-        whole-year limit, counted as 1/12 per month in the cashflow.
-      </p>
-
-      {kind !== "saving" && (
-        <p className="px-1 text-xs text-paper-faint">
-          The <span className="text-green">loan-collection</span> category is auto-calculated from{" "}
-          <Link href="/more/loans" className="underline">Loans</Link> — the total you expect to collect this month. Every{" "}
-          <span className="text-plum">installment</span> category (one per provider) is auto-calculated from its active{" "}
-          <Link href="/more/paylater" className="underline">My Installment</Link> installments this month. Installments without
-          a provider are uncategorized and shown under <span className="text-paper-dim">Other</span> on Home.
+      <footer className="space-y-2 rounded-[var(--radius-card)] bg-sage-100 p-4 text-[13px] text-ink-700">
+        <p>
+          <strong>Cadence.</strong> A daily or weekly budget is converted to a
+          monthly equivalent (×30.4 and ×4.345) wherever totals are shown, so the
+          numbers stay comparable. A yearly budget is one whole-year limit,
+          divided by twelve.
         </p>
-      )}
+        <p>
+          <strong>Scope.</strong> &ldquo;This month →&rdquo; sets the recurring rule from
+          here on. &ldquo;This month only&rdquo; is a one-off override that wins for
+          exactly one month. &ldquo;All months&rdquo; wipes both and applies everywhere.
+        </p>
+        <p>
+          <strong>Auto rows.</strong> Loan collection and each installment
+          category are derived from their own schedules, so there is nothing to
+          type — and nothing to keep in sync.
+        </p>
+      </footer>
     </div>
   );
 }

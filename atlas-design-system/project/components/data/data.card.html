@@ -1,0 +1,31 @@
+<!-- @dsCard group="Components" viewport="700x420" name="Data" subtitle="BankCard, TransactionRow, BarChart, SegmentedControl, Avatar, AvatarStack, StarRating" -->
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Atlas — Data</title><link rel="stylesheet" href="../../styles.css"><script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script><script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script><script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script><script src="../../_ds_bundle.js"></script><style>html,body{margin:0}body{background:var(--white);font-family:var(--font-text)}#root{padding:24px 28px}.row{display:flex;flex-wrap:wrap;align-items:center;gap:14px}.col{display:flex;flex-direction:column;gap:14px}.lbl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-500);font-weight:600}</style></head><body><div id="root"></div><script type="text/babel">
+const { BankCard, TransactionRow, BarChart, SegmentedControl, Avatar, AvatarStack, StarRating, Card } = window.AtlasDesignSystem_92c2f4;
+function Demo(){
+  const [tab,setTab]=React.useState("income");
+  const data=[{label:"Mar",value:44},{label:"Apr",value:100},{label:"May",value:58},{label:"Jun",value:86},{label:"July",value:52},{label:"Aug",value:70}];
+  return (<div className="col" style={{gap:18}}>
+    <div className="row" style={{gap:16,alignItems:"flex-start"}}>
+      <BankCard width={200} />
+      <BankCard width={200} finish="sage" network="Mastercard" />
+      <BankCard width={200} finish="cream" />
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,alignItems:"start"}}>
+      <Card tone="cream" pad="sm" style={{display:"flex",flexDirection:"column",gap:8}}>
+        <TransactionRow icon="hand-coins" title="Barclays Bank Deposit" amount="+288.00" direction="in" />
+        <TransactionRow title="Transaction" meta="November 20" amount="-$120.30" chevron />
+        <TransactionRow avatar={<Avatar name="David Anderson" size={44} />} title="David Anderson" meta="30 Jun · Payment received" amount="+$250.00" direction="in" />
+      </Card>
+      <Card tone="sage" pad="sm" style={{display:"flex",flexDirection:"column",gap:14}}>
+        <SegmentedControl value={tab} onChange={setTab} options={[{value:"income",label:"Income",icon:"arrow-down-left"},{value:"expenses",label:"Expenses",icon:"arrow-up-right"}]} />
+        <BarChart data={data} height={120} />
+      </Card>
+    </div>
+    <div className="row" style={{gap:36}}>
+      <AvatarStack people={[{name:"A B"},{name:"C D"},{name:"E F"},{name:"G H"}]} overflowLabel="5k+" />
+      <StarRating score="4.8" caption="Score on App Store" />
+      <div className="row" style={{gap:10}}><Avatar name="An De" size={28}/><Avatar name="An De" size={36}/><Avatar name="An De" size={48} ring="lime"/></div>
+    </div>
+  </div>);
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Demo/>);</script></body></html>

@@ -1,40 +1,56 @@
-// Minimal, conservative service worker: installable PWA + offline app shell.
-// Hashed build assets are cached cache-first but ONLY when the response is OK, so a
-// transient 404/500 can never poison the cache. Navigations are network-first so data
-// is never stale, falling back to an offline page only when truly offline.
-// Bump CACHE whenever this file changes — `activate` purges every older cache.
-const CACHE = "ft-v3";
-const ASSETS = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
+/*
+ * Atlas service worker — deliberately conservative.
+ *
+ * Every number this app shows is derived from a live ledger, so caching a page would mean
+ * showing a stale balance. Only the immutable build assets and a bare offline shell are cached;
+ * navigations always go to the network first.
+ *
+ * Bump CACHE whenever this file changes.
+ */
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+const CACHE = "ft-v3";
+
+const PRECACHE = ["/offline.html", "/icons/icon-192.png", "/manifest.webmanifest"];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE)
+      .then((cache) => cache.addAll(PRECACHE))
+      .then(() => self.skipWaiting())
+  );
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) =>
+        Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))
+      )
       .then(() => self.clients.claim())
   );
 });
 
-self.addEventListener("fetch", (e) => {
-  const req = e.request;
-  if (req.method !== "GET") return;
-  const url = new URL(req.url);
+self.addEventListener("fetch", (event) => {
+  const { request } = event;
+
+  if (request.method !== "GET") return;
+
+  const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Immutable, content-hashed build assets + icons: cache-first, but only ever store a
-  // successful response (never cache an error — that would break every later load).
+  // --- Immutable build assets: cache first ---------------------------------
   if (url.pathname.startsWith("/_next/static") || url.pathname.startsWith("/icons")) {
-    e.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
+    event.respondWith(
+      caches.match(request).then((hit) => {
+        if (hit) return hit;
+        return fetch(request).then((res) => {
+          // Only ever store a successful response. A transient 404 or 500 cached here would
+          // poison the asset until the cache version changes.
           if (res.ok) {
             const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
+            caches.open(CACHE).then((cache) => cache.put(request, copy));
           }
           return res;
         });
@@ -43,10 +59,15 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Page navigations: always hit the network for fresh data; fall back to the offline
-  // shell only when the network is unreachable (a server 5xx is passed through as-is,
-  // where the app's error boundary can show a retry).
-  if (req.mode === "navigate") {
-    e.respondWith(fetch(req).catch(() => caches.match("/offline.html")));
+  // --- Navigations: network first ------------------------------------------
+  if (request.mode === "navigate") {
+    event.respondWith(
+      // Only a rejected fetch (genuinely offline) falls back to the shell. A 5xx passes
+      // through so the app's own error boundary can offer a retry.
+      fetch(request).catch(() => caches.match("/offline.html"))
+    );
+    return;
   }
+
+  // Everything else goes straight to the network, untouched.
 });

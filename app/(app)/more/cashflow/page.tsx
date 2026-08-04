@@ -1,171 +1,260 @@
 import Link from "next/link";
-import { getBudgetsForMonth, getCategories, getLoanPayments, getLoans, getPaylaterItems, getPaylaterProviders } from "@/lib/data";
-import { getStockPortfolio, getStockTargetsForMonth } from "@/lib/stocks";
-import { getSettings, mappedCategoryId } from "@/lib/settings";
-import { formatMonth, formatNumber, formatRupiah, todayISO } from "@/lib/format";
-import type { BudgetPeriod } from "@/lib/types";
 import MonthSwitcher from "@/components/MonthSwitcher";
+import { ChevronLeft } from "@/components/icons";
+import {
+  currentMonthKey,
+  getBudgetsForMonth,
+  getCategories,
+  monthlyEquivalent,
+} from "@/lib/data";
+import { installmentAutoBudgets, loanAutoBudget } from "@/lib/autoBudget";
+import {
+  LOT_SIZE,
+  getAverageBuyPerLot,
+  getStockPortfolio,
+  getStockTargetsForMonth,
+} from "@/lib/stocks";
+import { formatMonth, formatRupiah } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-type Kind = "income" | "expense" | "saving" | "investment";
-const FLOWS: { key: Kind; label: string; color: string; dir: "in" | "out" }[] = [
-  { key: "income", label: "Income", color: "text-green", dir: "in" },
-  { key: "expense", label: "Expense", color: "text-red", dir: "out" },
-  { key: "saving", label: "Saving", color: "text-sky", dir: "out" },
-  { key: "investment", label: "Investment", color: "text-plum", dir: "out" },
-];
+export const metadata = { title: "Expected cashflow · Atlas" };
 
-const monthlyEquiv = (amt: number, p: BudgetPeriod) =>
-  p === "daily" ? amt * 30.4 : p === "weekly" ? amt * 4.345 : p === "yearly" ? amt / 12 : amt;
+interface Line {
+  label: string;
+  amount: number;
+  note?: string;
+}
 
-export default async function CashflowPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
-  const sp = await searchParams;
-  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+export default async function CashflowPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ m?: string }>;
+}) {
+  const { m } = await searchParams;
+  const monthKey = /^\d{4}-\d{2}-\d{2}$/.test(m ?? "")
+    ? (m as string)
+    : currentMonthKey();
 
-  const [cats, budgets, loans, payments, paylater, providers, targets, portfolio, settings] = await Promise.all([
-    getCategories(true),
-    getBudgetsForMonth(monthKey),
-    getLoans(),
-    getLoanPayments(),
-    getPaylaterItems(),
-    getPaylaterProviders(true),
-    getStockTargetsForMonth(monthKey),
-    getStockPortfolio(),
-    getSettings(),
-  ]);
+  const [categories, budgets, loanAuto, installmentAuto, targets, portfolio, avgBuy] =
+    await Promise.all([
+      getCategories(),
+      getBudgetsForMonth(monthKey),
+      loanAutoBudget(monthKey),
+      installmentAutoBudgets(monthKey),
+      getStockTargetsForMonth(monthKey),
+      getStockPortfolio(),
+      getAverageBuyPerLot(),
+    ]);
 
-  // Auto sources: loan collection (income) and installments (expense, by provider category).
-  const hutangCatId = mappedCategoryId(settings, cats, "cat_loan", "Hutang", "income");
-  const loanById = new Map(loans.map((l) => [l.id, l]));
-  const loanExpected = payments
-    .filter((p) => p.period_month === monthKey)
-    .reduce((s, p) => s + (loanById.get(p.loan_id)?.installment ?? 0), 0);
-  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
-  const instByCat = new Map<number, number>();
-  let otherInst = 0;
-  for (const p of paylater) {
-    if (!(p.first_month_date <= monthKey && monthKey <= p.last_month_date)) continue;
-    const catId = p.provider_id ? providerById.get(p.provider_id)?.category_id ?? null : null;
-    if (catId) instByCat.set(catId, (instByCat.get(catId) ?? 0) + p.monthly_amount);
-    else otherInst += p.monthly_amount;
+  const income: Line[] = [];
+  const expense: Line[] = [];
+  const saving: Line[] = [];
+  const investment: Line[] = [];
+
+  // --- Category budgets, at their monthly equivalent -------------------------
+  for (const category of categories) {
+    // An installment category's real number comes from its schedule, not a typed budget.
+    if (installmentAuto.byCategory.has(category.id)) continue;
+    if (loanAuto && category.id === loanAuto.category_id) continue;
+
+    const amount = budgets.get(category.id)?.amount ?? 0;
+    if (amount <= 0) continue;
+
+    const monthly = monthlyEquivalent(amount, category.period);
+    const line: Line = {
+      label: category.name,
+      amount: monthly,
+      note: category.period === "monthly" ? undefined : `${category.period} budget`,
+    };
+
+    if (category.kind === "income") income.push(line);
+    else if (category.kind === "expense") expense.push(line);
+    else if (category.kind === "saving") saving.push(line);
+    else investment.push(line);
   }
-  const budgetByCat = new Map(budgets.map((b) => [b.category_id, b.amount]));
 
-  // Expected amount per category: loan/installments are authoritative; else the (monthly-
-  // equivalent) budget you set.
-  type Line = { name: string; amount: number };
-  const lines: Record<Kind, Line[]> = { income: [], expense: [], saving: [], investment: [] };
-  for (const c of cats) {
-    if (c.id === hutangCatId) continue; // loan collection added as its own line below
-    const amount = c.is_installment
-      ? instByCat.get(c.id) ?? 0
-      : Math.round(monthlyEquiv(budgetByCat.get(c.id) ?? 0, c.period));
-    if (amount > 0) lines[c.kind].push({ name: c.name, amount });
+  // --- Loan collection ------------------------------------------------------
+  if (loanAuto) {
+    const name =
+      categories.find((c) => c.id === loanAuto.category_id)?.name ??
+      "Loan collection";
+    income.push({ label: name, amount: loanAuto.amount, note: loanAuto.note });
   }
-  if (loanExpected > 0) lines.income.push({ name: "Loan collection", amount: loanExpected });
-  if (otherInst > 0) lines.expense.push({ name: "Installments · no provider", amount: otherInst });
-  // Stock buy targets → expected investment. Use the target's speculative price, else fall
-  // back to the live price of a ticker you already hold (matching the Stocks page estimate).
-  const heldPrice = new Map(portfolio.holdings.filter((h) => h.price != null).map((h) => [h.ticker, h.price as number]));
-  let stockUnpriced = 0;
-  for (const tg of targets) {
-    const price = tg.price ?? heldPrice.get(tg.ticker) ?? null;
-    if (price) lines.investment.push({ name: `${tg.ticker} · ${tg.lots} lot${tg.lots > 1 ? "s" : ""}`, amount: Math.round(tg.lots * 100 * price) });
-    else stockUnpriced++;
-  }
-  for (const k of Object.keys(lines) as Kind[]) lines[k].sort((a, b) => b.amount - a.amount);
 
-  const total = (k: Kind) => lines[k].reduce((s, l) => s + l.amount, 0);
-  const net = total("income") - total("expense") - total("saving") - total("investment");
-  const moneyIn = total("income");
-  const moneyOut = total("expense") + total("saving") + total("investment");
-  const hasAny = moneyIn > 0 || moneyOut > 0;
+  // --- Installments ---------------------------------------------------------
+  for (const [categoryId, auto] of installmentAuto.byCategory) {
+    const name = categories.find((c) => c.id === categoryId)?.name;
+    expense.push({
+      label: name ?? "Installments",
+      amount: auto.amount,
+      note: auto.note,
+    });
+  }
+  if (installmentAuto.unassigned.count > 0) {
+    expense.push({
+      label: "Installments · no provider",
+      amount: installmentAuto.unassigned.amount,
+      note: `${installmentAuto.unassigned.count} item${
+        installmentAuto.unassigned.count === 1 ? "" : "s"
+      }`,
+    });
+  }
+
+  // --- Stock buy targets ----------------------------------------------------
+  // Priced by the target's own speculative price, else the live price of a held ticker, else
+  // its all-time average buy. A target we cannot price is reported, not guessed at.
+  const livePriceOf = new Map(
+    portfolio.holdings.map((h) => [h.ticker, h.price] as const)
+  );
+  const unpricedTargets: string[] = [];
+
+  for (const target of targets) {
+    let perLot: number | null = null;
+    if (target.price != null) perLot = target.price * LOT_SIZE;
+    else {
+      const live = livePriceOf.get(target.ticker);
+      if (live != null) perLot = live * LOT_SIZE;
+      else perLot = avgBuy.get(target.ticker) ?? null;
+    }
+
+    if (perLot == null) {
+      unpricedTargets.push(target.ticker);
+      continue;
+    }
+
+    investment.push({
+      label: target.ticker,
+      amount: Math.round(perLot * target.lots),
+      note: `${target.lots} lot${target.lots === 1 ? "" : "s"} planned`,
+    });
+  }
+
+  const sum = (lines: Line[]) => lines.reduce((total, l) => total + l.amount, 0);
+  const incomeTotal = sum(income);
+  const expenseTotal = sum(expense);
+  const savingTotal = sum(saving);
+  const investmentTotal = sum(investment);
+  const net = incomeTotal - expenseTotal - savingTotal - investmentTotal;
+
+  const groups: { label: string; lines: Line[]; total: number; tone: string }[] = [
+    { label: "Income in", lines: income, total: incomeTotal, tone: "text-positive-600" },
+    { label: "Expense out", lines: expense, total: expenseTotal, tone: "text-negative-600" },
+    { label: "Saving out", lines: saving, total: savingTotal, tone: "text-info-600" },
+    { label: "Investment out", lines: investment, total: investmentTotal, tone: "text-forest-800" },
+  ];
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Expected cashflow</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-4 privacy-scope">
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Expected cashflow
+        </h1>
+      </header>
 
-      <MonthSwitcher monthKey={monthKey} basePath="/more/cashflow" />
+      <MonthSwitcher monthKey={monthKey} />
 
-      {/* Net hero */}
-      <div className="card relative overflow-hidden p-6">
-        <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-[radial-gradient(circle,rgba(63,185,80,0.16),transparent_70%)]" />
-        <div className="label">Expected net · {formatMonth(monthKey)}</div>
-        <div className={`mt-1.5 font-display text-3xl font-semibold tabular-nums ${net >= 0 ? "text-green" : "text-red"}`}>
-          {net >= 0 ? "+" : "−"}
-          {formatRupiah(Math.abs(net))}
+      <section
+        className={`rounded-[var(--radius-card)] p-5 ${
+          net < 0 ? "bg-negative-100" : "bg-forest-800 on-forest"
+        }`}
+      >
+        <div
+          className="label"
+          style={{ color: net < 0 ? undefined : "var(--color-forest-300)" }}
+        >
+          Expected net · {formatMonth(monthKey)}
         </div>
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-paper-faint">
-          <span>in <span className="text-green">{formatRupiah(moneyIn)}</span></span>
-          <span>out <span className="text-red">{formatRupiah(moneyOut)}</span></span>
+        <div
+          className={`mt-1 font-display text-[34px] font-extrabold tracking-[-0.03em] tabular-nums ${
+            net < 0 ? "text-negative-600" : "text-white"
+          }`}
+        >
+          {formatRupiah(net)}
         </div>
-        {net < 0 && (
-          <p className="mt-2 rounded-lg bg-red/10 px-2.5 py-1.5 text-xs text-red">
-            ⚠ Your plan sends {formatRupiah(Math.abs(net))} more out than comes in this month.
-          </p>
-        )}
-      </div>
-
-      {!hasAny ? (
-        <p className="pt-6 text-center text-sm text-paper-faint">
-          Nothing planned yet — set{" "}
-          <Link href="/more/budgets" className="text-green underline">budgets</Link>,{" "}
-          <Link href="/more/loans" className="text-green underline">loans</Link>,{" "}
-          <Link href="/more/paylater" className="text-green underline">installments</Link> or{" "}
-          <Link href="/stocks" className="text-green underline">stock targets</Link>.
+        <p
+          className="mt-1 text-[13px]"
+          style={{ color: net < 0 ? "var(--color-negative-600)" : "var(--color-forest-200)" }}
+        >
+          What the plan says this month will do, before anything actually happens.
         </p>
-      ) : (
-        <>
-          {/* Flow totals */}
-          <div className="grid grid-cols-2 gap-2.5">
-            {FLOWS.map((f) => (
-              <div key={f.key} className="card p-3.5">
-                <div className="flex items-center justify-between">
-                  <span className="label">{f.label}</span>
-                  <span className="text-[10px] uppercase tracking-wider text-paper-faint">{f.dir}</span>
-                </div>
-                <div className={`mt-1 font-display text-base font-bold tabular-nums ${f.color}`}>{formatRupiah(total(f.key))}</div>
-                <div className="mt-0.5 text-[11px] text-paper-faint">{lines[f.key].length} source{lines[f.key].length === 1 ? "" : "s"}</div>
-              </div>
-            ))}
-          </div>
+      </section>
 
-          {/* Per-flow breakdown */}
-          {FLOWS.filter((f) => lines[f.key].length > 0).map((f) => (
-            <section key={f.key}>
-              <div className="mb-2 flex items-baseline justify-between px-1">
-                <h2 className={`label ${f.color}`}>{f.label}</h2>
-                <span className={`text-xs tabular-nums ${f.color}`}>{formatRupiah(total(f.key))}</span>
-              </div>
-              <div className="card divide-y divide-line/50">
-                {lines[f.key].map((r) => (
-                  <div key={r.name} className="flex items-baseline justify-between gap-2 px-4 py-2.5 text-sm">
-                    <span className="min-w-0 truncate text-paper">{r.name}</span>
-                    <span className="shrink-0 tabular-nums text-paper-dim">{formatNumber(r.amount)}</span>
+      <div className="grid grid-cols-2 gap-2">
+        {groups.map((group) => (
+          <div
+            key={group.label}
+            className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+          >
+            <div className="label">{group.label}</div>
+            <div
+              className={`mt-1 font-display text-[18px] font-bold tabular-nums ${group.tone}`}
+            >
+              {formatRupiah(group.total)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {unpricedTargets.length > 0 && (
+        <p className="rounded-[var(--radius-card)] border-l-4 border-warning-500 bg-warning-100 p-4 text-[13px] text-ink-700">
+          <strong>{unpricedTargets.join(", ")}</strong>{" "}
+          {unpricedTargets.length === 1 ? "has" : "have"} a buy target but no
+          price — no live quote, no past buys, no price set on the target. Those
+          targets are <strong>not counted</strong> above. Set a price on{" "}
+          <Link href={`/stocks/targets?m=${monthKey}`} className="underline">
+            the targets page
+          </Link>
+          .
+        </p>
+      )}
+
+      {groups.map((group) =>
+        group.lines.length === 0 ? null : (
+          <section key={group.label}>
+            <h2 className="label mb-2">{group.label}</h2>
+            <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+              {[...group.lines]
+                .sort((a, b) => b.amount - a.amount)
+                .map((line, i) => (
+                  <div
+                    key={`${line.label}-${i}`}
+                    className={`flex items-baseline justify-between gap-3 px-4 py-3 ${
+                      i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-medium text-ink-900">
+                        {line.label}
+                      </span>
+                      {line.note && (
+                        <span className="block text-[13px] text-ink-500">
+                          {line.note}
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-[15px] font-semibold text-ink-900 tabular-nums">
+                      {formatRupiah(line.amount)}
+                    </span>
                   </div>
                 ))}
-              </div>
-            </section>
-          ))}
+            </div>
+          </section>
+        )
+      )}
 
-          <p className="px-1 text-[11px] text-paper-faint">
-            Planned, not actual: from your category budgets (converted to a monthly amount),
-            expected loan collection, active installments, and stock buy targets.
-          </p>
-          {stockUnpriced > 0 && (
-            <p className="px-1 text-[11px] text-amber">
-              {stockUnpriced} stock target{stockUnpriced > 1 ? "s" : ""} not counted — set a
-              speculative price/share on{" "}
-              <Link href="/stocks" className="underline">Stocks</Link> to include{" "}
-              {stockUnpriced > 1 ? "them" : "it"}.
-            </p>
-          )}
-        </>
+      {groups.every((g) => g.lines.length === 0) && (
+        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          Nothing planned for this month yet. Set some budgets to see what it
+          should do.
+        </p>
       )}
     </div>
   );

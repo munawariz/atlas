@@ -1,37 +1,57 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { EyeIcon, EyeOffIcon } from "@/components/icons";
+import { Eye, EyeOff } from "./icons";
 
-const KEY = "ft_hide_amounts";
+export const PRIVACY_KEY = "ft_hide_amounts";
 
-// Toggles a privacy class on <html>; CSS masks amounts (dots) inside `.privacy-scope`.
-// A no-flash script in the root layout applies the class before paint.
-export default function PrivacyToggle() {
+/**
+ * Masks every amount inside a `.privacy-scope` by toggling `amounts-hidden` on <html>.
+ *
+ * The masking itself is pure CSS (globals.css §Privacy mode) so it applies before paint — this
+ * button only flips the class and persists the choice. The root layout runs a blocking inline
+ * script that reads the same key, so a reload never flashes the real numbers.
+ */
+export default function PrivacyToggle({
+  className = "",
+}: {
+  className?: string;
+}) {
+  // Start false and correct in an effect: the server cannot know the client's preference, and
+  // rendering the wrong icon briefly is harmless — the amounts themselves are already masked
+  // by the pre-paint script.
   const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
     setHidden(document.documentElement.classList.contains("amounts-hidden"));
   }, []);
 
-  const toggle = () => {
+  function toggle() {
     const next = !hidden;
     setHidden(next);
     document.documentElement.classList.toggle("amounts-hidden", next);
     try {
-      localStorage.setItem(KEY, next ? "1" : "0");
-    } catch {}
-  };
+      if (next) localStorage.setItem(PRIVACY_KEY, "1");
+      else localStorage.removeItem(PRIVACY_KEY);
+    } catch {
+      // Private-mode Safari throws on setItem. The class is already applied; losing the
+      // preference across reloads is an acceptable degradation.
+    }
+  }
+
+  const Glyph = hidden ? EyeOff : Eye;
+  const label = hidden ? "Show amounts" : "Hide amounts";
 
   return (
     <button
       type="button"
       onClick={toggle}
-      aria-label={hidden ? "Show amounts" : "Hide amounts"}
-      title={hidden ? "Show amounts" : "Hide amounts"}
-      className="flex h-7 w-7 items-center justify-center rounded-full border border-line/60 bg-ink-2/70 text-paper-dim transition-colors active:text-paper"
+      aria-label={label}
+      aria-pressed={hidden}
+      title={label}
+      className={`inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors ${className}`}
     >
-      {hidden ? <EyeOffIcon className="h-3.5 w-3.5" /> : <EyeIcon className="h-3.5 w-3.5" />}
+      <Glyph size={18} />
     </button>
   );
 }

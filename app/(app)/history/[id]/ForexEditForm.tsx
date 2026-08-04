@@ -1,161 +1,145 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import type { ForexAccount, ForexTransaction, Transaction, Wallet } from "@/lib/types";
-import { formatNumber } from "@/lib/format";
+import MoneyInput from "@/components/MoneyInput";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
-import { updateForexTransaction, deleteForexTransaction } from "../../more/actions";
+import { Trash } from "@/components/icons";
+import type { ForexAccount, ForexTransaction, Wallet } from "@/lib/types";
+import {
+  deleteForexTransaction,
+  updateForexTransaction,
+  type ForexState,
+} from "../../more/forex/actions";
 
-// Forex buy/sell entries are a ledger transaction + a forex log row + a holding balance,
-// so they can't be edited with the generic TxnFields (the currency isn't a category).
-// This form edits all of it and the bound actions keep the three parts in sync.
+const INITIAL: ForexState = {};
+
+/**
+ * Editing a forex-booked row.
+ *
+ * The ordinary transaction editor cannot be used here: this ledger row is one of two or three
+ * that a single conversion produced, and its amount is a derived cost basis. Editing the
+ * conversion instead lets the action revert and re-book the whole set consistently.
+ */
 export default function ForexEditForm({
-  txn,
   forexTxn,
   accounts,
   wallets,
 }: {
-  txn: Transaction;
   forexTxn: ForexTransaction;
   accounts: ForexAccount[];
   wallets: Wallet[];
 }) {
-  const update = updateForexTransaction.bind(null, forexTxn.id, txn.id);
-  const del = deleteForexTransaction.bind(null, forexTxn.id, txn.id);
-  const [state, formAction, pending] = useActionState(update, {} as { error?: string });
-
-  const [accountId, setAccountId] = useState(forexTxn.account_id);
+  const bound = updateForexTransaction.bind(null, forexTxn.id);
+  const [state, formAction] = useActionState(
+    async (_prev: ForexState, formData: FormData) => bound(formData),
+    INITIAL
+  );
   const [direction, setDirection] = useState<"buy" | "sell">(forexTxn.direction);
-  const [idr, setIdr] = useState(forexTxn.idr ? String(forexTxn.idr) : "");
-  const [unitsStr, setUnitsStr] = useState(forexTxn.units ? String(forexTxn.units) : "");
-  const [walletId, setWalletId] = useState<number>(forexTxn.wallet_id ?? wallets[0]?.id ?? 0);
-  const [date, setDate] = useState(txn.occurred_on.slice(0, 10));
-
-  const currency = accounts.find((a) => a.id === accountId)?.currency ?? "";
-  const idrNum = parseInt(idr || "0", 10);
-  const unitsNum = parseFloat(unitsStr || "0") || 0;
-  const rate = unitsNum > 0 ? idrNum / unitsNum : 0;
 
   return (
-    <div>
-      <form action={formAction} className="space-y-5">
-        <div>
-          <div className="label mb-2.5">Currency</div>
-          <select
-            name="account_id"
-            value={accountId}
-            onChange={(e) => setAccountId(parseInt(e.target.value, 10))}
-            className="field"
-          >
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id} className="bg-ink-2">
-                {a.name} · {a.currency}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="space-y-4">
+      <p className="rounded-[var(--radius-card)] bg-sage-100 p-4 text-[13px] text-ink-700">
+        This entry was created by a <strong>forex conversion</strong>. Editing it
+        reverses the whole conversion and books it again — a sell&rsquo;s cost basis
+        depends on the rest of your log, so it cannot be changed in isolation.
+      </p>
 
-        <div>
-          <div className="label mb-2.5">Direction</div>
-          <select
-            name="direction"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value === "sell" ? "sell" : "buy")}
-            className="field"
-          >
-            <option value="buy" className="bg-ink-2">Buy · IDR → {currency}</option>
-            <option value="sell" className="bg-ink-2">Sell · {currency} → IDR</option>
-          </select>
-        </div>
-
-        <div>
-          <div className="label mb-2.5">{direction === "buy" ? "Paid from" : "Received in"}</div>
-          <select
-            name="wallet_id"
-            value={walletId}
-            onChange={(e) => setWalletId(parseInt(e.target.value, 10))}
-            className="field"
-          >
-            {wallets.map((w) => (
-              <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
-            ))}
-          </select>
-        </div>
+      <form action={formAction} className="space-y-2">
+        <input type="hidden" name="direction" value={direction} />
 
         <div className="flex gap-2">
-          <label className="flex-1 text-xs text-paper-dim">
-            IDR amount
-            <input
-              name="idr"
-              inputMode="numeric"
-              value={idr ? formatNumber(idrNum) : ""}
-              onChange={(e) => setIdr(e.target.value.replace(/\D/g, ""))}
-              placeholder="Rp"
-              className="field mt-1"
-            />
-          </label>
-          <label className="flex-1 text-xs text-paper-dim">
-            {currency || "Foreign"} amount
-            <input
-              name="units"
-              inputMode="decimal"
-              value={unitsStr}
-              onChange={(e) => setUnitsStr(e.target.value.replace(/[^0-9.]/g, ""))}
-              placeholder={currency}
-              className="field mt-1"
-            />
-          </label>
+          {(["buy", "sell"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setDirection(value)}
+              aria-pressed={direction === value}
+              className={`chip flex-1 justify-center ${
+                direction === value ? "chip-on" : ""
+              }`}
+            >
+              {value === "buy" ? "Buy" : "Sell"}
+            </button>
+          ))}
         </div>
 
-        <p className="text-[11px] text-paper-faint">
-          {rate > 0 ? (
-            <>
-              Your rate:{" "}
-              <span className="text-paper">
-                Rp {rate.toLocaleString("id-ID", { maximumFractionDigits: 2 })} / {currency}
-              </span>{" "}
-              — your exact amounts are recorded, not the live rate.
-            </>
-          ) : (
-            <>Enter both your broker&apos;s IDR and {currency || "foreign"} amounts.</>
-          )}
-        </p>
+        <select
+          name="account_id"
+          defaultValue={forexTxn.account_id}
+          aria-label="Currency"
+          className="field"
+        >
+          {accounts.map((account) => (
+            <option key={account.id} value={String(account.id)}>
+              {account.name} ({account.currency})
+            </option>
+          ))}
+        </select>
 
-        <div>
-          <div className="label mb-2.5">Date</div>
+        <div className="grid grid-cols-2 gap-2">
+          <MoneyInput
+            name="idr"
+            defaultValue={forexTxn.idr}
+            ariaLabel="Rupiah amount"
+          />
           <input
-            type="date"
-            name="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="field [color-scheme:dark]"
+            name="units"
+            inputMode="decimal"
+            defaultValue={forexTxn.units}
+            aria-label="Units"
+            className="field"
           />
         </div>
 
-        {state.error && <p className="text-sm text-clay">{state.error}</p>}
-
-        <button
-          type="submit"
-          disabled={pending}
-          className="w-full rounded-2xl bg-gold py-4 text-lg font-semibold text-ink shadow-[0_10px_30px_-12px_rgba(63,185,80,0.6)] transition-transform active:scale-[0.98] disabled:opacity-60"
+        <select
+          name="wallet_id"
+          defaultValue={forexTxn.wallet_id ?? ""}
+          aria-label="Wallet"
+          className="field"
         >
-          {pending ? "Saving…" : "Save changes"}
-        </button>
+          <option value="">Choose a wallet</option>
+          {wallets.map((w) => (
+            <option key={w.id} value={String(w.id)}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+
+        <input
+          type="date"
+          name="occurred_on"
+          defaultValue={forexTxn.occurred_on}
+          aria-label="Date"
+          className="field"
+        />
+
+        {state.error && (
+          <p
+            role="alert"
+            className="rounded-[var(--radius-input)] bg-negative-100 px-4 py-3 text-[14px] font-medium text-negative-600"
+          >
+            {state.error}
+          </p>
+        )}
+        {state.ok && (
+          <p
+            role="status"
+            className="rounded-[var(--radius-input)] bg-positive-100 px-4 py-3 text-[14px] font-medium text-positive-600"
+          >
+            Conversion updated.
+          </p>
+        )}
+
+        <SubmitButton pendingChildren="Saving…">Save conversion</SubmitButton>
       </form>
 
-      <form
-        action={del}
-        onSubmit={(e) => {
-          if (!confirm("Delete this forex entry?")) e.preventDefault();
-        }}
-        className="mt-3 flex justify-end"
-      >
+      <form action={deleteForexTransaction.bind(null, forexTxn.id)}>
         <SubmitButton
-          label="Delete forex entry"
-          className="grid h-11 w-11 place-items-center rounded-2xl border border-clay/40 text-clay active:bg-clay/10"
+          className="btn btn-ghost w-full text-negative-600"
+          pendingChildren="Deleting…"
         >
-          <TrashIcon className="h-5 w-5" />
+          <Trash size={18} />
+          Delete conversion
         </SubmitButton>
       </form>
     </div>

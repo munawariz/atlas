@@ -1,50 +1,38 @@
-# Self-host Atlas outside Vercel.
-#
-#   1. cp .example.env .env.local   and fill it in (Supabase URL + service-role key,
-#      APP_PASSWORD, COOKIE_SECRET, and DATABASE_URL for the one-off migration).
-#   2. docker compose --profile setup run --rm migrate   # create the schema (idempotent)
-#      docker compose --profile setup run --rm seed       # optional starter data (fresh DB)
-#   3. docker compose up -d --build                       # run the app on :3000
-#
-# Atlas sets a Secure session cookie in production, so serve it over HTTPS — put a
-# reverse proxy (Caddy / nginx / Traefik) in front. Over plain HTTP the login won't stick.
-
 services:
   app:
     build:
       context: .
-    image: atlas
-    restart: unless-stopped
+      target: runner
+    env_file: .env.local
     ports:
       - "3000:3000"
-    env_file:
-      - .env.local
-    environment:
-      NODE_ENV: production
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1 || exit 1"]
+      # /login is the one route the proxy serves without a session, so it is the honest
+      # liveness check — anything else would redirect and mask a broken app.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 3
+      start_period: 15s
 
-  # One-off helpers — only run via `docker compose --profile setup run --rm <name>`.
+  # --- One-off setup tasks ---------------------------------------------------
+  # Behind a profile so `docker compose up` never runs them by accident.
+  #
+  #   docker compose --profile setup run --rm migrate
+  #   docker compose --profile setup run --rm seed     # EMPTY databases only
   migrate:
     build:
       context: .
       target: tools
-    image: atlas-tools
+    env_file: .env.local
     profiles: ["setup"]
-    env_file:
-      - .env.local
     command: ["node", "scripts/migrate.mjs", "supabase/migrations/0001_init.sql"]
 
   seed:
     build:
       context: .
       target: tools
-    image: atlas-tools
+    env_file: .env.local
     profiles: ["setup"]
-    env_file:
-      - .env.local
     command: ["node", "scripts/migrate.mjs", "supabase/seed.sql"]

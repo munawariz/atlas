@@ -1,101 +1,136 @@
-import Link from "next/link";
-import { getWallets } from "@/lib/data";
-import { getBondPortfolio, getBondTrades } from "@/lib/bonds";
-import { getSettings, mappedWalletId } from "@/lib/settings";
-import { formatRupiah, formatRupiahShort, formatDateShort } from "@/lib/format";
+import PrivacyToggle from "@/components/PrivacyToggle";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
+import { Trash } from "@/components/icons";
+import { getBondPortfolio, getBondTrades } from "@/lib/bonds";
+import { getWallets } from "@/lib/data";
+import { getSettings, mappedWalletId } from "@/lib/settings";
+import { formatDateShort, formatRupiah } from "@/lib/format";
 import BondTradeForm from "./BondTradeForm";
 import { deleteBondTrade } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-const SIDE = {
-  buy: { label: "Buy", color: "text-plum" },
-  sell: { label: "Sell", color: "text-sky" },
-  coupon: { label: "Coupon", color: "text-green" },
-} as const;
-
-const fmtUnits = (n: number) => new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(n);
+export const metadata = { title: "Bonds · Atlas" };
 
 export default async function BondsPage() {
-  const [{ holdings, totalInvested, totalCoupons }, wallets, trades, settings] = await Promise.all([
+  const [portfolio, trades, wallets, settings] = await Promise.all([
     getBondPortfolio(),
-    getWallets(),
     getBondTrades(),
+    getWallets(),
     getSettings(),
   ]);
-  const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
-  const defaultWalletId = mappedWalletId(settings, walletOpts, "wallet_bond", "");
+
+  const defaultWalletId = mappedWalletId(settings, wallets, "wallet_bond");
+  const names = [...new Set(trades.map((t) => t.name))].sort();
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Bonds</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-5 privacy-scope">
+      <header className="flex items-start justify-between gap-3">
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Bonds
+        </h1>
+        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+      </header>
 
-      {/* Hero */}
-      <div className="card relative overflow-hidden p-6">
-        <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-[radial-gradient(circle,rgba(163,113,247,0.18),transparent_70%)]" />
-        <div className="label">Principal held</div>
-        <div className="mt-1.5 font-display text-3xl font-semibold tabular-nums text-paper">{formatRupiah(totalInvested)}</div>
-        <div className="mt-2 text-sm">
-          <span className="text-paper-faint">coupons earned </span>
-          <span className="font-display font-medium text-green">{formatRupiah(totalCoupons)}</span>
+      <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">
+        <div className="label" style={{ color: "var(--color-forest-300)" }}>
+          Principal held
         </div>
-      </div>
+        <div className="font-display text-[34px] font-extrabold leading-none tracking-[-0.03em] text-white tabular-nums">
+          {formatRupiah(portfolio.totalInvested)}
+        </div>
+        <div
+          className="mt-1.5 text-[13px] font-semibold tabular-nums"
+          style={{ color: "var(--color-lime-500)" }}
+        >
+          {formatRupiah(portfolio.totalCoupons)} in coupons received
+        </div>
+      </section>
 
-      <BondTradeForm wallets={walletOpts} defaultWalletId={defaultWalletId} />
+      <section>
+        <h2 className="label mb-2">Record a trade</h2>
+        <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
+          <BondTradeForm
+            wallets={wallets}
+            defaultWalletId={defaultWalletId}
+            names={names}
+          />
+        </div>
+      </section>
 
-      {/* Holdings */}
-      {holdings.length === 0 ? (
-        <p className="pt-4 text-center text-sm text-paper-faint">No bonds yet. Log a buy above.</p>
-      ) : (
-        <section className="space-y-2">
-          <h2 className="label text-plum">Holdings</h2>
-          {holdings.map((h) => (
-            <div key={h.name} className="card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="font-display text-base font-semibold text-paper">{h.name}</span>
-                  {h.units > 0 && <span className="ml-2 text-xs text-paper-dim">{fmtUnits(h.units)} unit</span>}
-                </div>
-                <div className="shrink-0 text-right">
-                  <div className="font-display text-sm font-bold tabular-nums text-paper">{formatRupiah(h.invested)}</div>
-                  {h.coupons > 0 && (
-                    <div className="text-xs text-green">+{formatRupiahShort(h.coupons)} coupons</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-          <p className="px-1 text-[11px] text-paper-faint">
-            Principal = bought − sold. Coupons are booked as Kupon income and don&apos;t change principal.
+      <section>
+        <h2 className="label mb-2">Holdings</h2>
+        {portfolio.holdings.length === 0 ? (
+          <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+            No bonds held yet.
           </p>
-        </section>
-      )}
-
-      {/* Trades */}
-      {trades.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="label">Activity</h2>
-          <div className="card overflow-hidden">
-            {trades.slice(0, 40).map((t, i) => (
-              <div key={t.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-paper">
-                    <span className={SIDE[t.side].color}>{SIDE[t.side].label}</span> {t.name}
-                  </div>
-                  <div className="text-xs text-paper-faint">
-                    {formatDateShort(t.occurred_on)} · {formatRupiah(t.idr)}
-                    {t.side !== "coupon" && t.units > 0 && ` · ${fmtUnits(t.units)} unit`}
-                  </div>
+        ) : (
+          <div className="space-y-2">
+            {portfolio.holdings.map((holding) => (
+              <article
+                key={holding.name}
+                className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-900">
+                    {holding.name}
+                  </span>
+                  <span className="shrink-0 font-display text-[17px] font-bold text-ink-900 tabular-nums">
+                    {formatRupiah(holding.invested)}
+                  </span>
                 </div>
-                <form action={deleteBondTrade.bind(null, t.id)}>
-                  <SubmitButton label="Delete" className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10">
-                    <TrashIcon className="h-[18px] w-[18px]" />
+                <div className="mt-1 flex gap-4 text-[13px] text-ink-500 tabular-nums">
+                  {holding.units > 0 && (
+                    <span>{holding.units.toLocaleString()} units</span>
+                  )}
+                  <span className="text-positive-600">
+                    {formatRupiah(holding.coupons)} coupons
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {trades.length > 0 && (
+        <section>
+          <h2 className="label mb-2">Recent activity</h2>
+          <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+            {trades.slice(0, 25).map((trade, i) => (
+              <div
+                key={trade.id}
+                className={`flex items-center gap-2 px-4 py-2.5 ${
+                  i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                }`}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-medium text-ink-900">
+                    {trade.side === "buy"
+                      ? "Buy"
+                      : trade.side === "sell"
+                        ? "Sell"
+                        : "Coupon"}{" "}
+                    {trade.name}
+                  </span>
+                  <span className="block text-[12px] text-ink-500">
+                    {formatDateShort(trade.occurred_on)}
+                    {trade.units > 0 && ` · ${trade.units.toLocaleString()} units`}
+                  </span>
+                </span>
+                <span
+                  className={`shrink-0 text-[14px] font-semibold tabular-nums ${
+                    trade.side === "buy" ? "text-ink-900" : "text-positive-600"
+                  }`}
+                >
+                  {formatRupiah(trade.idr)}
+                </span>
+                <form action={deleteBondTrade.bind(null, trade.id)}>
+                  <SubmitButton
+                    label={`Delete ${trade.name} ${trade.side}`}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
+                  >
+                    <Trash size={16} />
                   </SubmitButton>
                 </form>
               </div>

@@ -1,74 +1,159 @@
-// Indonesian Rupiah + date helpers. Amounts are integer rupiah.
+// Formatting helpers. Everything localizable funnels through the two constants below, so a
+// language swap is a single edit rather than a hunt through the tree (ATLAS.md §0.1).
+//
+// No `server-only` here — client components import this.
 
-const idr = new Intl.NumberFormat("id-ID", {
-  style: "currency",
-  currency: "IDR",
+export const LOCALE = "en-US"; // number grouping + month names
+export const CURRENCY = "IDR"; // the money being tracked — independent of LOCALE
+
+// Hardcoded English month names rather than toLocaleDateString: keeps output stable regardless
+// of server locale, and monthName() is called in tight render loops.
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+const MONTHS_SHORT = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const decimalFormatter = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 0,
 });
 
-const idrPlain = new Intl.NumberFormat("id-ID", { maximumFractionDigits: 0 });
+// `narrowSymbol` renders IDR as "Rp" rather than the verbose "IDR". Some runtimes lack
+// narrow-symbol data for IDR — detect that once and fall back to prefixing "Rp " ourselves.
+// We must never ship "IDR 7,761,691".
+const currencyFormatter = (() => {
+  try {
+    const fmt = new Intl.NumberFormat(LOCALE, {
+      style: "currency",
+      currency: CURRENCY,
+      currencyDisplay: "narrowSymbol",
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    });
+    if (fmt.format(1).includes(CURRENCY)) return null; // no narrow-symbol data
+    return fmt;
+  } catch {
+    return null;
+  }
+})();
 
-/** "Rp 7.761.691" */
-export function formatRupiah(n: number | null | undefined): string {
-  return idr.format(Math.round(n ?? 0));
+/** "Rp 7,761,691" */
+export function formatRupiah(n: number): string {
+  const value = Number.isFinite(n) ? n : 0;
+  if (currencyFormatter) return currencyFormatter.format(value);
+  const abs = decimalFormatter.format(Math.abs(value));
+  return value < 0 ? `-Rp ${abs}` : `Rp ${abs}`;
 }
 
-/** "7.761.691" (no symbol) */
-export function formatNumber(n: number | null | undefined): string {
-  return idrPlain.format(Math.round(n ?? 0));
+/** "7,761,691" */
+export function formatNumber(n: number): string {
+  return decimalFormatter.format(Number.isFinite(n) ? n : 0);
 }
 
-/** Compact form for tight UI: "Rp 7,8jt", "Rp 950rb", "Rp 1jt". */
-export function formatRupiahShort(n: number | null | undefined): string {
-  const v = Math.round(n ?? 0);
-  const abs = Math.abs(v);
-  const sign = v < 0 ? "-" : "";
-  // One decimal, dropping a trailing ",0" so 1_000_000 → "1jt" (not "1,0jt").
-  const dec = (x: number) => {
-    const s = x.toFixed(1);
-    return (s.endsWith(".0") ? s.slice(0, -2) : s).replace(".", ",");
-  };
-  // Thresholds sit at 999.5×unit so a value that rounds up (e.g. 999.900) carries into the
-  // next unit ("1jt") instead of overflowing its own ("1000rb").
-  if (abs >= 999_500_000) return `${sign}Rp ${dec(abs / 1_000_000_000)}M`;
-  if (abs >= 999_500) return `${sign}Rp ${dec(abs / 1_000_000)}jt`;
-  if (abs >= 1_000) return `${sign}Rp ${Math.round(abs / 1_000)}rb`;
-  return `${sign}Rp ${abs}`;
+/**
+ * Compact money: "Rp 7.8M" | "Rp 950K" | "Rp 1M" | "Rp 1.2B".
+ *
+ * Thresholds sit at 999.5 x unit rather than 1000 x unit, so a value that rounds up
+ * (999,900) carries into the next unit as "1M" instead of overflowing its own as "1000K".
+ * One decimal, with a trailing ".0" dropped.
+ */
+export function formatRupiahShort(n: number): string {
+  const value = Number.isFinite(n) ? n : 0;
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+
+  let scaled: number;
+  let suffix: string;
+  if (abs >= 999.5e6) {
+    scaled = abs / 1e9;
+    suffix = "B";
+  } else if (abs >= 999.5e3) {
+    scaled = abs / 1e6;
+    suffix = "M";
+  } else if (abs >= 999.5) {
+    scaled = abs / 1e3;
+    suffix = "K";
+  } else {
+    return `${sign}Rp ${decimalFormatter.format(abs)}`;
+  }
+
+  const text = scaled.toFixed(1).replace(/\.0$/, "");
+  return `${sign}Rp ${text}${suffix}`;
 }
 
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
+/** 1..12 -> "January".."December" */
 export function monthName(m: number): string {
-  return MONTH_NAMES[m - 1] ?? "";
+  return MONTHS[Math.min(11, Math.max(0, Math.round(m) - 1))];
 }
 
-/** "YYYY-MM-DD" for today in local time. */
-export function todayISO(): string {
-  const d = new Date();
-  const tz = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+/** 1..12 -> "Jan".."Dec" */
+export function monthNameShort(m: number): string {
+  return MONTHS_SHORT[Math.min(11, Math.max(0, Math.round(m) - 1))];
 }
 
-const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/**
+ * Local-time YYYY-MM-DD. Offset-corrected before toISOString(), or the date flips near
+ * midnight in non-UTC timezones (ATLAS.md §14.7).
+ */
+export function todayISO(d: Date = new Date()): string {
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
 
-/** "Mar 2026" from a YYYY-MM-01 string. */
+/** "2026-03-01" -> "Mar 2026" */
 export function formatMonth(iso: string): string {
-  const [y, m] = iso.slice(0, 10).split("-").map(Number);
-  return `${MONTH_ABBR[(m || 1) - 1]} ${y}`;
+  const [y, m] = String(iso ?? "").split("-");
+  const idx = parseInt(m ?? "", 10);
+  if (!y || !Number.isFinite(idx)) return String(iso ?? "");
+  return `${monthNameShort(idx)} ${y}`;
 }
 
-/** "Mar '26" compact month label. */
+/** "2026-03-01" -> "Mar '26" */
 export function formatMonthShort(iso: string): string {
-  const [y, m] = iso.slice(0, 10).split("-").map(Number);
-  return `${MONTH_ABBR[(m || 1) - 1]} '${String(y).slice(2)}`;
+  const [y, m] = String(iso ?? "").split("-");
+  const idx = parseInt(m ?? "", 10);
+  if (!y || !Number.isFinite(idx)) return String(iso ?? "");
+  return `${monthNameShort(idx)} '${y.slice(2)}`;
 }
 
-/** "5 Jun" style short date from an ISO date string. */
+/** "2026-06-05" -> "5 Jun" */
 export function formatDateShort(iso: string): string {
-  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
-  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${d} ${months[(m || 1) - 1]}`;
+  const [, m, d] = String(iso ?? "").split("-");
+  const idx = parseInt(m ?? "", 10);
+  const day = parseInt(d ?? "", 10);
+  if (!Number.isFinite(idx) || !Number.isFinite(day)) return String(iso ?? "");
+  return `${day} ${monthNameShort(idx)}`;
+}
+
+/** "2026-06-05" -> "Mon, 5" — used by DaySwitcher. All arithmetic in UTC. */
+export function formatDayLabel(iso: string): string {
+  const [y, m, d] = String(iso ?? "").split("-").map((p) => parseInt(p, 10));
+  if (![y, m, d].every(Number.isFinite)) return String(iso ?? "");
+  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return `${days[dow]}, ${d}`;
 }

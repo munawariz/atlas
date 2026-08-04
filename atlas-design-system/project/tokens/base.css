@@ -1,0 +1,8 @@
+/* Minimal element defaults so a bare page already looks like Atlas. */
+:root{color-scheme:light}
+body{margin:0;font-family:var(--font-text);font-size:var(--text-body-md);line-height:var(--leading-body);color:var(--text-body);background:var(--surface-page);-webkit-font-smoothing:antialiased}
+h1,h2,h3,h4{font-family:var(--font-display);color:var(--text-heading);margin:0;font-weight:var(--weight-bold);letter-spacing:var(--tracking-heading);line-height:var(--leading-heading)}
+a{color:var(--text-link);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1.5px;transition:color var(--duration-fast) var(--ease-standard)}
+a:hover{color:var(--text-link-hover)}
+::selection{background:var(--lime-500);color:var(--forest-800)}
+*:focus-visible{outline:none;box-shadow:var(--shadow-focus)}

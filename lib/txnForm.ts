@@ -1,51 +1,96 @@
-import type { TxnType } from "./types";
+// Pure form parsing shared by Add and Edit. No server imports.
 
-export interface TxnRow {
-  occurred_on: string;
-  type: TxnType;
-  amount: number;
-  description: string | null;
-  category_id: number | null;
-  source_wallet_id: number | null;
-  dest_wallet_id: number | null;
+import type { TransactionInput, TxnType } from "./types";
+
+const TYPES: TxnType[] = [
+  "expense",
+  "income",
+  "saving",
+  "investment",
+  "transfer",
+  "withdrawal",
+];
+
+/** Strip thousand separators and anything else non-numeric. */
+export function digits(v: FormDataEntryValue | string | null | undefined): number {
+  return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
 }
 
-function num(v: FormDataEntryValue | null): number | null {
+/** Positive integer or null — used for optional id fields. */
+export function optInt(v: FormDataEntryValue | string | null | undefined): number | null {
   const n = parseInt(String(v ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** Validate + normalize a transaction form into a DB row (or an error message). */
-export function parseTransactionForm(formData: FormData): { row?: TxnRow; error?: string } {
-  const type = String(formData.get("type") ?? "") as TxnType;
-  const amount = num(formData.get("amount"));
-  const occurred_on = String(formData.get("date") ?? "");
-  const description = String(formData.get("description") ?? "").trim() || null;
-  const category_id = num(formData.get("category_id"));
-  const source_wallet_id = num(formData.get("source_wallet_id"));
-  const dest_wallet_id = num(formData.get("dest_wallet_id"));
+export interface ParsedTransaction {
+  row?: TransactionInput;
+  error?: string;
+}
 
-  if (!amount) return { error: "Enter an amount." };
-  if (!occurred_on) return { error: "Pick a date." };
+/**
+ * Validate then normalize a transaction form.
+ *
+ * Normalization is load-bearing: the ledger's direction is implied by `type`, so the wallet
+ * and category columns that do not apply to a type must be nulled (ATLAS.md §3.1).
+ */
+export function parseTransactionForm(formData: FormData): ParsedTransaction {
+  const rawType = String(formData.get("type") ?? "");
+  const type = (TYPES.includes(rawType as TxnType) ? rawType : "expense") as TxnType;
 
-  if ((type === "expense" || type === "income") && !category_id) return { error: "Choose a category." };
-  if ((type === "saving" || type === "investment") && !category_id) return { error: "Choose where it's going." };
-  if (type === "withdrawal" && !category_id) return { error: "Choose which savings to withdraw from." };
-  if (type === "expense" && !source_wallet_id) return { error: "Choose the wallet you paid from." };
-  if ((type === "income" || type === "withdrawal") && !dest_wallet_id) return { error: "Choose the wallet it went into." };
-  if (type === "transfer" && (!source_wallet_id || !dest_wallet_id)) return { error: "Choose both From and To wallets." };
-  if (type === "transfer" && source_wallet_id === dest_wallet_id) return { error: "From and To must differ." };
+  const amount = digits(formData.get("amount"));
+  if (amount <= 0) return { error: "Enter an amount." };
 
-  const usesDestWallet = type === "transfer" || type === "income" || type === "withdrawal";
+  const occurred_on = String(formData.get("occurred_on") ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurred_on)) return { error: "Pick a date." };
+
+  const rawDescription = String(formData.get("description") ?? "").trim();
+  const description = rawDescription || null;
+
+  let category_id = optInt(formData.get("category_id"));
+  let source_wallet_id = optInt(formData.get("source_wallet_id"));
+  let dest_wallet_id = optInt(formData.get("dest_wallet_id"));
+
+  // --- Category ---------------------------------------------------------
+  if (type !== "transfer" && !category_id) {
+    if (type === "saving" || type === "investment") {
+      return { error: "Choose where it's going." };
+    }
+    if (type === "withdrawal") {
+      return { error: "Choose which savings to withdraw from." };
+    }
+    return { error: "Choose a category." };
+  }
+
+  // --- Wallets ----------------------------------------------------------
+  if (type === "transfer") {
+    if (!source_wallet_id || !dest_wallet_id) {
+      return { error: "Choose both wallets." };
+    }
+    if (source_wallet_id === dest_wallet_id) {
+      return { error: "Pick two different wallets." };
+    }
+  } else if (type === "income" || type === "withdrawal") {
+    if (!dest_wallet_id) return { error: "Choose which wallet received it." };
+  } else if (type === "expense") {
+    if (!source_wallet_id) return { error: "Choose which wallet you paid from." };
+  }
+
+  // --- Normalize --------------------------------------------------------
+  if (type === "transfer") category_id = null;
+  if (type === "income" || type === "withdrawal") source_wallet_id = null;
+  if (type !== "transfer" && type !== "income" && type !== "withdrawal") {
+    dest_wallet_id = null;
+  }
+
   return {
     row: {
       occurred_on,
       type,
       amount,
       description,
-      category_id: type === "transfer" ? null : category_id,
-      source_wallet_id: type === "income" || type === "withdrawal" ? null : source_wallet_id,
-      dest_wallet_id: usesDestWallet ? dest_wallet_id : null,
+      category_id,
+      source_wallet_id,
+      dest_wallet_id,
     },
   };
 }

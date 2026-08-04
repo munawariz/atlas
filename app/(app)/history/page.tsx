@@ -1,39 +1,54 @@
-import { getCategories, getWallets, listTransactions } from "@/lib/data";
-import { todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
-import RefreshOnFocus from "@/components/RefreshOnFocus";
+import {
+  currentMonthKey,
+  endOfMonth,
+  getCategories,
+  getWallets,
+  listTransactions,
+} from "@/lib/data";
 import HistoryClient from "./HistoryClient";
 
 export const dynamic = "force-dynamic";
 
+export const metadata = { title: "History · Atlas" };
+
 export default async function HistoryPage({
   searchParams,
 }: {
+  // Next 16: searchParams is a Promise and must be awaited.
   searchParams: Promise<{ m?: string }>;
 }) {
-  const sp = await searchParams;
-  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+  const { m } = await searchParams;
+  const monthKey = /^\d{4}-\d{2}-\d{2}$/.test(m ?? "")
+    ? (m as string)
+    : currentMonthKey();
 
-  const [txns, cats, wallets] = await Promise.all([
-    listTransactions({ monthKey, limit: 1000 }),
+  const [transactions, categories, wallets] = await Promise.all([
+    listTransactions({
+      from: monthKey,
+      to: endOfMonth(monthKey),
+      limit: 1000,
+    }),
+    // Archived included: an old row must still resolve its category and wallet names.
     getCategories(true),
     getWallets(true),
   ]);
 
   return (
-    <div className="space-y-4 pt-4">
-      <RefreshOnFocus />
-      <header className="mb-1">
-        <p className="label">Ledger</p>
-        <h1 className="font-display text-3xl font-medium tracking-tight text-paper">History</h1>
+    <div className="space-y-4">
+      <header>
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          History
+        </h1>
       </header>
 
-      <MonthSwitcher monthKey={monthKey} basePath="/history" />
+      <MonthSwitcher monthKey={monthKey} />
 
       <HistoryClient
-        transactions={txns}
-        categories={cats.map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
-        wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
+        transactions={transactions}
+        categories={categories}
+        wallets={wallets}
+        monthKey={monthKey}
       />
     </div>
   );

@@ -1,180 +1,326 @@
 import ExcelJS from "exceljs";
 import { gatherSnapshot } from "@/lib/snapshot";
-import { todayISO } from "@/lib/format";
+import { formatMonth } from "@/lib/format";
+import type { NextRequest } from "next/server";
 
+// exceljs needs Node APIs — this cannot run on the Edge runtime.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const RP = "#,##0"; // rupiah number format
+const MONEY = "#,##0";
 
-type Col = { h: string; w?: number; money?: boolean };
-
-function sheet(wb: ExcelJS.Workbook, name: string, cols: Col[], rows: (string | number | null)[][], total?: (string | number | null)[]) {
-  const ws = wb.addWorksheet(name);
-  ws.columns = cols.map((c) => ({ header: c.h, width: c.w ?? 16, style: c.money ? { numFmt: RP } : {} }));
-  ws.getRow(1).font = { bold: true };
-  rows.forEach((r) => ws.addRow(r));
-  if (total) {
-    const tr = ws.addRow(total);
-    tr.font = { bold: true };
-  }
-  return ws;
+interface Column {
+  header: string;
+  width: number;
+  /** Format money columns and bold them in TOTAL rows. */
+  money?: boolean;
 }
 
-export async function GET(request: Request) {
-  const reqYear = parseInt(new URL(request.url).searchParams.get("year") ?? "", 10);
-  const year = Number.isFinite(reqYear) && reqYear >= 2000 && reqYear <= 2100 ? reqYear : Number(todayISO().slice(0, 4));
+function addSheet(
+  workbook: ExcelJS.Workbook,
+  name: string,
+  columns: Column[],
+  rows: (string | number)[][],
+  totalRow?: (string | number)[]
+): void {
+  const sheet = workbook.addWorksheet(name);
 
-  const s = await gatherSnapshot(year);
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "Atlas";
+  sheet.columns = columns.map((column) => ({
+    header: column.header,
+    width: column.width,
+  }));
 
-  // ---- Summary ----
-  const sum = wb.addWorksheet("Summary");
-  sum.columns = [
-    { header: "Item", width: 34 },
-    { header: "Amount (Rp)", width: 20, style: { numFmt: RP } },
-  ];
-  sum.getRow(1).font = { bold: true };
-  sum.addRow([`Snapshot of ${s.year}`, ""]);
-  sum.addRow(["Generated on", s.generatedOn]);
-  sum.addRow([]);
-  sum.addRow([`This year's flows`, ""]).font = { bold: true };
-  sum.addRow(["Income", s.income]);
-  sum.addRow(["Expense", s.expense]);
-  sum.addRow(["Saving", s.saving]);
-  sum.addRow(["Investment", s.investment]);
-  sum.addRow(["Net (income - expense - saving - invest)", s.net]);
-  sum.addRow([]);
-  sum.addRow([`Status at end of ${s.year}`, ""]).font = { bold: true };
-  sum.addRow(["Net worth (wallet cash)", s.netWorth]);
-  sum.addRow(["  change vs start of year", s.netWorth - s.netWorthStart]);
-  sum.addRow(["Savings & investments (at cost)", s.savingsTotal]);
-  if (s.isCurrentYear) sum.addRow(["    - Stocks at market value (live)", s.stocksValue]);
-  sum.addRow(["    - Stocks at cost", s.stocksCost]);
-  sum.addRow(["    - Bonds principal", s.bondsPrincipal]);
-  sum.addRow(["    - Bond coupons (all time)", s.bondsCoupons]);
-  sum.addRow(["Forex (IDR value)", s.forexTotal]);
-  sum.addRow(["Loans to collect", s.loansOutstanding]);
-  sum.addRow(["Paylater remaining (owed)", -s.paylaterRemaining]);
-  sum.addRow([]);
-  sum.addRow(["Tracked net total", s.trackedTotal]).font = { bold: true };
-  sum.addRow([]);
-  sum.addRow(["Note: savings already includes stocks & bonds at cost; loans/paylater are current status."]);
+  sheet.getRow(1).font = { bold: true };
 
-  // ---- Transactions (that year) ----
-  sheet(
-    wb,
+  for (const row of rows) sheet.addRow(row);
+
+  if (totalRow) {
+    const added = sheet.addRow(totalRow);
+    added.font = { bold: true };
+  }
+
+  columns.forEach((column, i) => {
+    if (column.money) sheet.getColumn(i + 1).numFmt = MONEY;
+  });
+}
+
+export async function GET(request: NextRequest) {
+  const yearParam = request.nextUrl.searchParams.get("year");
+  const year = parseInt(yearParam ?? "", 10);
+  if (!Number.isFinite(year) || year < 1900 || year > 3000) {
+    return new Response("Pass a valid ?year=YYYY", { status: 400 });
+  }
+
+  const snap = await gatherSnapshot(year);
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Atlas";
+
+  const walletName = new Map(snap.wallets.map((w) => [w.id, w.name]));
+  const categoryName = new Map(snap.categories.map((c) => [c.id, c.name]));
+
+  // --- Summary -------------------------------------------------------------
+  addSheet(
+    workbook,
+    "Summary",
+    [
+      { header: "Metric", width: 34 },
+      { header: "Value", width: 20, money: true },
+    ],
+    [
+      ["Year", year],
+      ["Income", snap.flows.income],
+      ["Expense", snap.flows.expense],
+      ["Saving (net)", snap.flows.saving],
+      ["Investment (net)", snap.flows.investment],
+      ["Net flow", snap.flows.income - snap.flows.expense],
+      ["", ""],
+      ["Net worth, start of year", snap.startNetWorth],
+      ["Net worth, end of year", snap.endNetWorth],
+      ["Change", snap.endNetWorth - snap.startNetWorth],
+      ["", ""],
+      ["Savings & investment buckets", snap.savingsTotal],
+      ["Forex value (not in net worth)", snap.forexTotal],
+      ["Loans outstanding (owed to you)", snap.loansOutstanding],
+      ["Installments remaining (you owe)", -snap.paylaterRemaining],
+    ],
+    ["TRACKED NET TOTAL", snap.trackedTotal]
+  );
+
+  // --- Transactions --------------------------------------------------------
+  addSheet(
+    workbook,
     "Transactions",
     [
-      { h: "Date", w: 12 },
-      { h: "Type", w: 12 },
-      { h: "Amount (Rp)", w: 16, money: true },
-      { h: "Category", w: 18 },
-      { h: "From", w: 14 },
-      { h: "To", w: 14 },
-      { h: "Description", w: 32 },
+      { header: "Date", width: 12 },
+      { header: "Month", width: 10 },
+      { header: "Type", width: 12 },
+      { header: "Amount", width: 16, money: true },
+      { header: "Category", width: 22 },
+      { header: "From wallet", width: 16 },
+      { header: "To wallet", width: 16 },
+      { header: "Description", width: 34 },
     ],
-    s.transactions.map((t) => [t.date, t.type, t.amount, t.category, t.from, t.to, t.description])
+    snap.transactions.map((txn) => [
+      txn.occurred_on,
+      formatMonth(txn.occurred_on),
+      txn.type,
+      txn.amount,
+      txn.category_id != null ? (categoryName.get(txn.category_id) ?? "") : "",
+      txn.source_wallet_id != null
+        ? (walletName.get(txn.source_wallet_id) ?? "")
+        : "",
+      txn.dest_wallet_id != null ? (walletName.get(txn.dest_wallet_id) ?? "") : "",
+      txn.description ?? "",
+    ]),
+    [
+      "TOTAL",
+      "",
+      `${snap.transactions.length} rows`,
+      snap.transactions.reduce((sum, t) => sum + t.amount, 0),
+      "",
+      "",
+      "",
+      "",
+    ]
   );
 
-  // ---- Wallets (year-end) ----
-  sheet(
-    wb,
+  // --- Wallets -------------------------------------------------------------
+  addSheet(
+    workbook,
     "Wallets",
-    [{ h: "Wallet", w: 20 }, { h: "Balance (Rp)", w: 18, money: true }],
-    s.wallets.map((r) => [r.name, r.balance]),
-    ["TOTAL", s.netWorth]
+    [
+      { header: "Wallet", width: 24 },
+      { header: "Balance at year end", width: 22, money: true },
+      { header: "Archived", width: 10 },
+    ],
+    snap.wallets.map((wallet) => [
+      wallet.name,
+      snap.endBalances.get(wallet.id) ?? 0,
+      wallet.archived ? "yes" : "",
+    ]),
+    ["TOTAL", snap.endNetWorth, ""]
   );
 
-  // ---- Savings (year-end) ----
-  sheet(
-    wb,
+  // --- Savings -------------------------------------------------------------
+  addSheet(
+    workbook,
     "Savings",
-    [{ h: "Bucket", w: 20 }, { h: "Kind", w: 12 }, { h: "Balance (Rp)", w: 18, money: true }],
-    s.savings.map((r) => [r.name, r.kind, r.balance]),
-    ["TOTAL", "", s.savingsTotal]
+    [
+      { header: "Bucket", width: 26 },
+      { header: "Kind", width: 12 },
+      { header: "In", width: 16, money: true },
+      { header: "Out", width: 16, money: true },
+      { header: "Balance", width: 16, money: true },
+    ],
+    snap.savings.map((bucket) => [
+      bucket.name,
+      bucket.kind,
+      bucket.contributed,
+      bucket.withdrawn,
+      bucket.balance,
+    ]),
+    [
+      "TOTAL",
+      "",
+      snap.savings.reduce((sum, b) => sum + b.contributed, 0),
+      snap.savings.reduce((sum, b) => sum + b.withdrawn, 0),
+      snap.savingsTotal,
+    ]
   );
 
-  // ---- Stocks (year-end) ----
-  sheet(
-    wb,
+  // --- Stocks --------------------------------------------------------------
+  addSheet(
+    workbook,
     "Stocks",
     [
-      { h: "Ticker", w: 12 },
-      { h: "Lots", w: 10 },
-      { h: "Avg/share", w: 12, money: true },
-      { h: "Cost (Rp)", w: 16, money: true },
-      { h: "Price", w: 12, money: true },
-      { h: "Market value (Rp)", w: 18, money: true },
-      { h: "Unrealized P/L", w: 16, money: true },
+      { header: "Ticker", width: 12 },
+      { header: "Lots", width: 8 },
+      { header: "Cost basis", width: 16, money: true },
+      { header: "Price", width: 12, money: true },
+      { header: "Market value", width: 16, money: true },
+      { header: "Unrealized P/L", width: 16, money: true },
+      { header: "Realized P/L", width: 16, money: true },
+      { header: "Dividends", width: 16, money: true },
     ],
-    s.stocks.map((r) => [r.ticker, r.lots, r.avgPerShare, r.cost, r.price, r.value, r.pl]),
-    ["TOTAL", "", "", s.stocksCost, "", s.stocksValue || null, s.isCurrentYear ? s.stocksValue - s.stocksCost : null]
+    snap.stocks.holdings.map((holding) => [
+      holding.ticker,
+      holding.lots,
+      holding.costBasis,
+      holding.price ?? "",
+      holding.value ?? "",
+      holding.unrealizedPl ?? "",
+      holding.realizedPl,
+      holding.dividends,
+    ]),
+    [
+      "TOTAL",
+      snap.stocks.holdings.reduce((sum, h) => sum + h.lots, 0),
+      snap.stocks.totalCost,
+      "",
+      snap.stocks.pricedValue,
+      snap.stocks.unrealizedPl,
+      snap.stocks.lifetimeRealizedPl,
+      snap.stocks.totalDividends,
+    ]
   );
 
-  // ---- Bonds (year-end) ----
-  sheet(
-    wb,
+  // --- Bonds ---------------------------------------------------------------
+  addSheet(
+    workbook,
     "Bonds",
     [
-      { h: "Bond", w: 16 },
-      { h: "Units", w: 10 },
-      { h: "Principal (Rp)", w: 16, money: true },
-      { h: "Coupons (Rp)", w: 16, money: true },
+      { header: "Bond", width: 30 },
+      { header: "Units", width: 14 },
+      { header: "Principal", width: 16, money: true },
+      { header: "Coupons", width: 16, money: true },
     ],
-    s.bonds.map((r) => [r.name, r.units, r.principal, r.coupons]),
-    ["TOTAL", "", s.bondsPrincipal, s.bondsCoupons]
+    snap.bonds.holdings.map((holding) => [
+      holding.name,
+      holding.units,
+      holding.invested,
+      holding.coupons,
+    ]),
+    ["TOTAL", "", snap.bonds.totalInvested, snap.bonds.totalCoupons]
   );
 
-  // ---- Forex (year-end) ----
-  sheet(
-    wb,
+  // --- Forex ---------------------------------------------------------------
+  addSheet(
+    workbook,
     "Forex",
     [
-      { h: "Account", w: 16 },
-      { h: "Currency", w: 10 },
-      { h: "Units", w: 14 },
-      { h: "Rate (IDR)", w: 14, money: true },
-      { h: "Value (IDR)", w: 16, money: true },
+      { header: "Account", width: 20 },
+      { header: "Currency", width: 10 },
+      { header: "Units", width: 16 },
+      { header: "Invested (IDR)", width: 18, money: true },
+      { header: "Value (IDR)", width: 18, money: true },
+      { header: "Realized P/L", width: 16, money: true },
+      { header: "Rate", width: 14, money: true },
     ],
-    s.forex.map((r) => [r.name, r.currency, r.units, Math.round(r.rate), r.idr]),
-    ["TOTAL", "", "", "", s.forexTotal]
+    snap.forex.map((row) => [
+      row.name,
+      row.currency,
+      row.units,
+      row.invested,
+      row.value,
+      row.realizedPl,
+      Math.round(row.rate),
+    ]),
+    [
+      "TOTAL",
+      "",
+      "",
+      snap.forex.reduce((sum, f) => sum + f.invested, 0),
+      snap.forexTotal,
+      snap.forex.reduce((sum, f) => sum + f.realizedPl, 0),
+      "",
+    ]
   );
 
-  // ---- Loans (current status) ----
-  sheet(
-    wb,
+  // --- Loans ---------------------------------------------------------------
+  addSheet(
+    workbook,
     "Loans",
     [
-      { h: "Person", w: 18 },
-      { h: "Installment (Rp)", w: 16, money: true },
-      { h: "Months left", w: 12 },
-      { h: "Outstanding (Rp)", w: 18, money: true },
+      { header: "Person", width: 22 },
+      { header: "Via", width: 18 },
+      { header: "Monthly", width: 14, money: true },
+      { header: "Expected", width: 16, money: true },
+      { header: "Collected", width: 16, money: true },
+      { header: "Outstanding", width: 16, money: true },
+      { header: "Note", width: 28 },
     ],
-    s.loans.map((r) => [r.person, r.installment, r.monthsLeft, r.outstanding]),
-    ["TOTAL", "", "", s.loansOutstanding]
+    snap.loans.map((loan) => [
+      loan.person,
+      loan.lender ?? "",
+      loan.installment,
+      loan.expected,
+      loan.collected,
+      loan.outstanding,
+      loan.note ?? "",
+    ]),
+    [
+      "TOTAL",
+      "",
+      "",
+      snap.loans.reduce((sum, l) => sum + l.expected, 0),
+      snap.loans.reduce((sum, l) => sum + l.collected, 0),
+      snap.loansOutstanding,
+      "",
+    ]
   );
 
-  // ---- Paylater (current status) ----
-  sheet(
-    wb,
+  // --- Paylater ------------------------------------------------------------
+  addSheet(
+    workbook,
     "Paylater",
     [
-      { h: "Item", w: 22 },
-      { h: "Monthly (Rp)", w: 16, money: true },
-      { h: "Months left", w: 12 },
-      { h: "Remaining (Rp)", w: 18, money: true },
+      { header: "Item", width: 28 },
+      { header: "Monthly", width: 14, money: true },
+      { header: "First month", width: 14 },
+      { header: "Last month", width: 14 },
+      { header: "Paid months", width: 12 },
+      { header: "Total months", width: 12 },
+      { header: "Remaining", width: 16, money: true },
     ],
-    s.paylater.map((r) => [r.item, r.monthly, r.monthsLeft, r.remaining]),
-    ["TOTAL", "", "", s.paylaterRemaining]
+    snap.paylater.map((item) => [
+      item.item,
+      item.monthly_amount,
+      formatMonth(item.first_month_date),
+      formatMonth(item.last_month_date),
+      item.paidMonths,
+      item.totalMonths,
+      item.remaining,
+    ]),
+    ["TOTAL", "", "", "", "", "", snap.paylaterRemaining]
   );
 
-  const buffer = await wb.xlsx.writeBuffer();
-  return new Response(buffer, {
+  const buffer = await workbook.xlsx.writeBuffer();
+
+  return new Response(buffer as ArrayBuffer, {
     headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="finance-snapshot-${s.year}.xlsx"`,
+      "Content-Type":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="finance-snapshot-${year}.xlsx"`,
       "Cache-Control": "no-store",
     },
   });

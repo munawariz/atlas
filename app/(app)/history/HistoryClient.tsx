@@ -1,499 +1,479 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { formatRupiah, formatDateShort } from "@/lib/format";
-import { TXN_TYPES, type Transaction, type TxnType } from "@/lib/types";
+import { useEffect, useMemo, useState } from "react";
+import { formatDateShort, formatNumber, formatRupiah } from "@/lib/format";
+import { TXN_TYPES, type Category, type Transaction, type TxnType, type Wallet } from "@/lib/types";
+import { Search, X, Check } from "@/components/icons";
 import { bulkUpdateTransactions } from "./actions";
 
-const SIGN: Record<TxnType, { color: string; prefix: string }> = {
-  expense: { color: "text-clay", prefix: "−" },
-  income: { color: "text-jade", prefix: "+" },
-  saving: { color: "text-sky", prefix: "→" },
-  investment: { color: "text-plum", prefix: "→" },
-  transfer: { color: "text-paper-dim", prefix: "" },
-  withdrawal: { color: "text-sky", prefix: "←" },
+const FILTERS_KEY = "ft_history_filters";
+
+/** Sign prefix + colour per type. Money in is positive-500; money out stays near-black. */
+const TYPE_STYLE: Record<TxnType, { prefix: string; className: string }> = {
+  expense: { prefix: "−", className: "text-negative-600" },
+  income: { prefix: "+", className: "text-positive-600" },
+  saving: { prefix: "→", className: "text-info-600" },
+  investment: { prefix: "→", className: "text-forest-800" },
+  withdrawal: { prefix: "←", className: "text-info-600" },
+  transfer: { prefix: "", className: "text-ink-800" },
 };
 
-// Which wallet field(s) each type uses — drives the bulk-edit pickers.
-const WALLET_FIELDS: Record<TxnType, { source: boolean; dest: boolean }> = {
-  expense: { source: true, dest: false },
-  saving: { source: true, dest: false },
-  investment: { source: true, dest: false },
-  income: { source: false, dest: true },
-  withdrawal: { source: false, dest: true },
-  transfer: { source: true, dest: true },
-};
+interface HistoryClientProps {
+  transactions: Transaction[];
+  categories: Category[];
+  wallets: Wallet[];
+  monthKey: string;
+}
 
-// Category kinds a type's category can be (empty = no category, e.g. transfers).
-const CATEGORY_KINDS: Record<TxnType, string[]> = {
-  expense: ["expense"],
-  income: ["income"],
-  saving: ["saving"],
-  investment: ["investment"],
-  withdrawal: ["saving", "investment"], // a withdrawal draws from a saving/investment bucket
-  transfer: [],
-};
+interface Filters {
+  query: string;
+  type: string;
+  categoryId: string;
+}
 
-const typeLabel = (t: TxnType) => TXN_TYPES.find((x) => x.value === t)?.label ?? t;
+const EMPTY_FILTERS: Filters = { query: "", type: "", categoryId: "" };
 
-type Cat = { id: number; name: string; kind: string };
-type Wal = { id: number; name: string };
-
-// Client-side filtering over the month's transactions (already loaded), so search and
-// the type/category filters are instant — no per-keystroke server round-trips.
 export default function HistoryClient({
   transactions,
   categories,
   wallets,
-}: {
-  transactions: Transaction[];
-  categories: Cat[];
-  wallets: Wal[];
-}) {
-  const router = useRouter();
-  const [query, setQuery] = useState("");
-  const [type, setType] = useState<TxnType | "all">("all");
-  const [catId, setCatId] = useState<number | "all">("all");
+  monthKey,
+}: HistoryClientProps) {
+  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [hydrated, setHydrated] = useState(false);
-
-  // ---- bulk select mode ----
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [bulkSource, setBulkSource] = useState<number | "">("");
-  const [bulkDest, setBulkDest] = useState<number | "">("");
-  const [bulkCategory, setBulkCategory] = useState<number | "">("");
-  const [bulkDate, setBulkDate] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
 
-  // Keep the search + filters for the session so they survive leaving the page to edit a
-  // transaction (the edit redirect remounts this component) and other in-app navigations.
+  const catById = useMemo(
+    () => new Map(categories.map((c) => [c.id, c])),
+    [categories]
+  );
+  const walletById = useMemo(
+    () => new Map(wallets.map((w) => [w.id, w])),
+    [wallets]
+  );
+
+  // --- Restore, THEN persist (ATLAS.md §14.8) --------------------------------
   useEffect(() => {
     try {
-      const s = JSON.parse(sessionStorage.getItem("ft_history_filters") ?? "{}");
-      if (typeof s.query === "string") setQuery(s.query);
-      if (s.type === "all" || TXN_TYPES.some((t) => t.value === s.type)) setType(s.type);
-      if (s.catId === "all" || typeof s.catId === "number") setCatId(s.catId);
-    } catch {}
+      const raw = sessionStorage.getItem(FILTERS_KEY);
+      if (raw) setFilters({ ...EMPTY_FILTERS, ...JSON.parse(raw) });
+    } catch {
+      // Ignore corrupt state and start clean.
+    }
     setHydrated(true);
   }, []);
 
-  // Only persist AFTER restoring — otherwise the default empty state would overwrite the
-  // saved value on mount (and, under StrictMode's double-invoked effects, reset it).
   useEffect(() => {
     if (!hydrated) return;
     try {
-      sessionStorage.setItem("ft_history_filters", JSON.stringify({ query, type, catId }));
-    } catch {}
-  }, [hydrated, query, type, catId]);
+      sessionStorage.setItem(FILTERS_KEY, JSON.stringify(filters));
+    } catch {
+      // Non-fatal.
+    }
+  }, [filters, hydrated]);
 
-  const catName = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
-  const walName = useMemo(() => new Map(wallets.map((w) => [w.id, w.name])), [wallets]);
-
-  const meta = (t: Transaction): string => {
-    const cat = t.category_id ? catName.get(t.category_id) : undefined;
-    const src = t.source_wallet_id ? walName.get(t.source_wallet_id) : undefined;
-    const dst = t.dest_wallet_id ? walName.get(t.dest_wallet_id) : undefined;
-    if (t.type === "transfer") return `${src ?? "?"} → ${dst ?? "?"}`;
-    if (t.type === "withdrawal") return `${cat ?? "?"} → ${dst ?? "?"}`;
-    if (t.type === "income") return [cat, dst].filter(Boolean).join(" · ");
-    return [cat, src].filter(Boolean).join(" · ");
-  };
-
-  // Offer the categories that appear in this month — plus the active selection, so a
-  // filter you set keeps working (and stays shown) as you move between months.
-  const catOptions = useMemo(() => {
-    const ids = new Set<number>();
-    for (const t of transactions) if (t.category_id) ids.add(t.category_id);
-    if (catId !== "all") ids.add(catId);
-    return categories.filter((c) => ids.has(c.id));
-  }, [transactions, categories, catId]);
-
-  // Precompute a searchable string per transaction (note + category + wallets + amount,
-  // raw and formatted) so typing only does a substring check, not a rebuild each keystroke.
+  /**
+   * One lowercase haystack per row — note, category, both wallets, and the amount both raw
+   * and formatted. Typing then costs a single substring check instead of re-deriving names.
+   */
   const searchIndex = useMemo(() => {
-    const idx = new Map<number, string>();
-    for (const t of transactions) {
-      idx.set(
-        t.id,
-        [
-          t.description ?? "",
-          t.category_id ? catName.get(t.category_id) ?? "" : "",
-          t.source_wallet_id ? walName.get(t.source_wallet_id) ?? "" : "",
-          t.dest_wallet_id ? walName.get(t.dest_wallet_id) ?? "" : "",
-          String(t.amount),
-          formatRupiah(t.amount),
-        ]
-          .join(" ")
-          .toLowerCase()
+    const index = new Map<number, string>();
+    for (const txn of transactions) {
+      const parts = [
+        txn.description ?? "",
+        txn.category_id != null ? catById.get(txn.category_id)?.name ?? "" : "",
+        txn.source_wallet_id != null
+          ? walletById.get(txn.source_wallet_id)?.name ?? ""
+          : "",
+        txn.dest_wallet_id != null
+          ? walletById.get(txn.dest_wallet_id)?.name ?? ""
+          : "",
+        String(txn.amount),
+        formatNumber(txn.amount),
+        txn.type,
+      ];
+      index.set(txn.id, parts.join(" ").toLowerCase());
+    }
+    return index;
+  }, [transactions, catById, walletById]);
+
+  /**
+   * Category options are the categories present THIS month, plus whatever is currently
+   * selected — so stepping to a month without that category does not silently drop the filter.
+   */
+  const categoryOptions = useMemo(() => {
+    const ids = new Set<number>();
+    for (const txn of transactions) {
+      if (txn.category_id != null) ids.add(txn.category_id);
+    }
+    if (filters.categoryId) ids.add(parseInt(filters.categoryId, 10));
+    return [...ids]
+      .map((id) => catById.get(id))
+      .filter((c): c is Category => Boolean(c))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [transactions, filters.categoryId, catById]);
+
+  const visible = useMemo(() => {
+    const query = filters.query.trim().toLowerCase();
+    const categoryId = filters.categoryId ? parseInt(filters.categoryId, 10) : null;
+
+    return transactions
+      .filter((txn) => {
+        if (filters.type && txn.type !== filters.type) return false;
+        if (categoryId && txn.category_id !== categoryId) return false;
+        if (query && !(searchIndex.get(txn.id) ?? "").includes(query)) return false;
+        return true;
+      })
+      .sort((a, b) =>
+        a.occurred_on === b.occurred_on
+          ? b.id - a.id
+          : a.occurred_on < b.occurred_on
+            ? 1
+            : -1
       );
-    }
-    return idx;
-  }, [transactions, catName, walName]);
+  }, [transactions, filters, searchIndex]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return transactions.filter((t) => {
-      if (type !== "all" && t.type !== type) return false;
-      if (catId !== "all" && t.category_id !== catId) return false;
-      if (!q) return true;
-      return (searchIndex.get(t.id) ?? "").includes(q);
-    });
-  }, [transactions, type, catId, query, searchIndex]);
-
+  // Group by day for the date headers.
   const groups = useMemo(() => {
-    const m = new Map<string, Transaction[]>();
-    for (const t of filtered) {
-      const key = t.occurred_on.slice(0, 10);
-      (m.get(key) ?? m.set(key, []).get(key)!).push(t);
+    const byDay = new Map<string, Transaction[]>();
+    for (const txn of visible) {
+      const list = byDay.get(txn.occurred_on);
+      if (list) list.push(txn);
+      else byDay.set(txn.occurred_on, [txn]);
     }
-    return [...m.entries()];
-  }, [filtered]);
+    return [...byDay.entries()];
+  }, [visible]);
 
-  const hasFilter = query.trim() !== "" || type !== "all" || catId !== "all";
+  // Bulk edit only makes sense within a single type, so the first pick fixes the type.
+  const selectedRows = visible.filter((t) => selected.has(t.id));
+  const selectedType = selectedRows[0]?.type ?? null;
 
-  // The single type the selection is locked to (all selected rows share one type so the
-  // wallet fields are consistent), and the type "Select all" would use.
-  const selType = useMemo<TxnType | null>(() => {
-    for (const t of transactions) if (selected.has(t.id)) return t.type;
-    return null;
-  }, [transactions, selected]);
-  const effType: TxnType | null = selType ?? (type !== "all" ? (type as TxnType) : null);
-  const fields = selType ? WALLET_FIELDS[selType] : null;
-  const catKinds = selType ? CATEGORY_KINDS[selType] : [];
-  const bulkCatOptions = catKinds.length ? categories.filter((c) => catKinds.includes(c.kind)) : [];
-  const canSelect = (t: Transaction) => !selType || t.type === selType || selected.has(t.id);
-
-  const exitSelect = () => {
-    setSelectMode(false);
-    setSelected(new Set());
-    setBulkSource("");
-    setBulkDest("");
-    setBulkCategory("");
-    setBulkDate("");
-    setError(null);
-  };
-
-  const toggle = (t: Transaction) => {
-    setError(null);
+  function toggleRow(txn: Transaction) {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(t.id)) next.delete(t.id);
-      else if (!selType || t.type === selType) next.add(t.id);
+      if (next.has(txn.id)) next.delete(txn.id);
+      else if (!selectedType || selectedType === txn.type) next.add(txn.id);
       return next;
     });
-  };
+  }
 
-  const selectAllFiltered = () => {
-    if (!effType) return;
-    setError(null);
-    setSelected(new Set(filtered.filter((t) => t.type === effType).map((t) => t.id)));
-  };
+  function exitSelect() {
+    setSelectMode(false);
+    setSelected(new Set());
+  }
 
-  const apply = () => {
-    const patch: { source_wallet_id?: number; dest_wallet_id?: number; category_id?: number; occurred_on?: string } = {};
-    if (fields?.source && bulkSource !== "") patch.source_wallet_id = Number(bulkSource);
-    if (fields?.dest && bulkDest !== "") patch.dest_wallet_id = Number(bulkDest);
-    if (catKinds.length && bulkCategory !== "") patch.category_id = Number(bulkCategory);
-    if (bulkDate) patch.occurred_on = bulkDate;
-    if (Object.keys(patch).length === 0) {
-      setError("Pick a wallet, category, or date to set.");
-      return;
+  function metaLine(txn: Transaction): string {
+    const cat = txn.category_id != null ? catById.get(txn.category_id)?.name : null;
+    const from =
+      txn.source_wallet_id != null
+        ? walletById.get(txn.source_wallet_id)?.name
+        : null;
+    const to =
+      txn.dest_wallet_id != null ? walletById.get(txn.dest_wallet_id)?.name : null;
+
+    if (txn.type === "transfer") return `${from ?? "?"} → ${to ?? "?"}`;
+    if (txn.type === "withdrawal") return `${cat ?? "?"} → ${to ?? "?"}`;
+    if (txn.type === "income") return [cat, to].filter(Boolean).join(" · ");
+    if (txn.type === "saving" || txn.type === "investment") {
+      return `${from ?? "?"} → ${cat ?? "?"}`;
     }
-    startTransition(async () => {
-      const res = await bulkUpdateTransactions([...selected], patch);
-      if (res.error) {
-        setError(res.error);
-        return;
-      }
-      exitSelect();
-      router.refresh();
-    });
-  };
+    return [cat, from].filter(Boolean).join(" · ");
+  }
+
+  const filtersActive =
+    Boolean(filters.query) || Boolean(filters.type) || Boolean(filters.categoryId);
 
   return (
-    <div className="space-y-3">
-      {/* Search */}
-      <div className="relative">
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.8}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-paper-faint"
-          aria-hidden
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="M21 21l-4.3-4.3" />
-        </svg>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search note, category, wallet, amount…"
-          className="field pl-9 pr-9"
-        />
-        {query && (
-          <button
-            type="button"
-            onClick={() => setQuery("")}
-            aria-label="Clear search"
-            className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-paper-faint active:text-paper"
+    <div className="space-y-4 privacy-scope">
+      {/* --- Search + filters ---------------------------------------------- */}
+      <div className="space-y-2">
+        <div className="relative">
+          <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center text-ink-300">
+            <Search size={18} />
+          </span>
+          <input
+            value={filters.query}
+            onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))}
+            placeholder="Search notes, categories, wallets, amounts"
+            aria-label="Search transactions"
+            className="field pl-11"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={filters.type}
+            onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value }))}
+            aria-label="Filter by type"
+            className="field"
           >
-            ✕
-          </button>
-        )}
-      </div>
+            <option value="">All types</option>
+            {TXN_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
 
-      {/* Category filter */}
-      <select
-        value={catId}
-        onChange={(e) => setCatId(e.target.value === "all" ? "all" : Number(e.target.value))}
-        className="field [color-scheme:dark]"
-      >
-        <option value="all" className="bg-ink-2">All categories</option>
-        {catOptions.map((c) => (
-          <option key={c.id} value={c.id} className="bg-ink-2">
-            {c.name}
-          </option>
-        ))}
-      </select>
-
-      {/* Type filter */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
-        <FilterChip label="All" active={type === "all"} onClick={() => setType("all")} />
-        {TXN_TYPES.map((t) => (
-          <FilterChip key={t.value} label={t.label} active={type === t.value} onClick={() => setType(t.value)} />
-        ))}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 px-1 text-[11px] text-paper-faint">
-        <span>
-          {filtered.length} of {transactions.length} {transactions.length === 1 ? "entry" : "entries"}
-          {hasFilter && (
-            <button
-              type="button"
-              onClick={() => {
-                setQuery("");
-                setType("all");
-                setCatId("all");
-              }}
-              className="ml-2 text-paper-dim underline decoration-dotted underline-offset-2 active:text-paper"
-            >
-              clear filters
-            </button>
-          )}
-        </span>
-        {!selectMode && transactions.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setSelectMode(true)}
-            className="shrink-0 font-medium text-gold active:opacity-70"
+          <select
+            value={filters.categoryId}
+            onChange={(e) =>
+              setFilters((f) => ({ ...f, categoryId: e.target.value }))
+            }
+            aria-label="Filter by category"
+            className="field"
           >
-            Bulk edit
-          </button>
-        )}
-      </div>
+            <option value="">All categories</option>
+            {categoryOptions.map((c) => (
+              <option key={c.id} value={String(c.id)}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {/* Bulk-edit toolbar */}
-      {selectMode && (
-        <div className="card space-y-2.5 border border-gold/30 p-3">
-          <div className="flex items-center justify-between gap-2 text-xs">
-            <button type="button" onClick={exitSelect} className="font-medium text-paper-dim active:text-paper">
-              Cancel
-            </button>
-            <span className="text-paper">
-              {selected.size} selected{selType ? <span className="text-paper-faint"> · {typeLabel(selType)}</span> : ""}
-            </span>
-            {selected.size > 0 ? (
-              <button type="button" onClick={() => setSelected(new Set())} className="font-medium text-paper-dim active:text-paper">
-                Clear
-              </button>
-            ) : (
+        <div className="flex items-center justify-between">
+          <span className="label">
+            {visible.length} {visible.length === 1 ? "entry" : "entries"}
+          </span>
+          <div className="flex items-center gap-3">
+            {filtersActive && (
               <button
                 type="button"
-                onClick={selectAllFiltered}
-                disabled={!effType}
-                className="font-medium text-gold disabled:text-paper-faint disabled:opacity-50"
+                onClick={() => setFilters(EMPTY_FILTERS)}
+                className="text-[13px] font-semibold text-forest-800"
               >
-                Select all
+                Clear filters
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}
+              className="text-[13px] font-semibold text-forest-800"
+            >
+              {selectMode ? "Done" : "Select"}
+            </button>
           </div>
-
-          {selected.size === 0 ? (
-            <p className="text-[11px] text-paper-faint">
-              Tap entries to select (one type at a time), then set their wallet, category, or date.
-              {!effType && " Filter by a type to enable Select all."}
-            </p>
-          ) : (
-            <>
-              {selType && effType && (
-                <button
-                  type="button"
-                  onClick={selectAllFiltered}
-                  className="text-[11px] text-gold underline decoration-dotted underline-offset-2 active:opacity-70"
-                >
-                  Select all {filtered.filter((t) => t.type === selType).length} {typeLabel(selType)} shown
-                </button>
-              )}
-              <div className="flex flex-col gap-2">
-                {fields?.source && (
-                  <label className="text-[11px] text-paper-dim">
-                    {selType === "transfer" ? "Set source (from) wallet" : "Set wallet (source)"}
-                    <select
-                      value={bulkSource}
-                      onChange={(e) => setBulkSource(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="field mt-1 [color-scheme:dark]"
-                    >
-                      <option value="" className="bg-ink-2">— keep current —</option>
-                      {wallets.map((w) => (
-                        <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {fields?.dest && (
-                  <label className="text-[11px] text-paper-dim">
-                    {selType === "transfer" ? "Set destination (to) wallet" : "Set wallet (destination)"}
-                    <select
-                      value={bulkDest}
-                      onChange={(e) => setBulkDest(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="field mt-1 [color-scheme:dark]"
-                    >
-                      <option value="" className="bg-ink-2">— keep current —</option>
-                      {wallets.map((w) => (
-                        <option key={w.id} value={w.id} className="bg-ink-2">{w.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                {bulkCatOptions.length > 0 && (
-                  <label className="text-[11px] text-paper-dim">
-                    Set category
-                    <select
-                      value={bulkCategory}
-                      onChange={(e) => setBulkCategory(e.target.value === "" ? "" : Number(e.target.value))}
-                      className="field mt-1 [color-scheme:dark]"
-                    >
-                      <option value="" className="bg-ink-2">— keep current —</option>
-                      {bulkCatOptions.map((c) => (
-                        <option key={c.id} value={c.id} className="bg-ink-2">{c.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <label className="text-[11px] text-paper-dim">
-                  Set date
-                  <input
-                    type="date"
-                    value={bulkDate}
-                    onChange={(e) => setBulkDate(e.target.value)}
-                    className="field mt-1 [color-scheme:dark]"
-                  />
-                </label>
-              </div>
-              {error && <p className="text-xs text-clay">{error}</p>}
-              <button
-                type="button"
-                onClick={apply}
-                disabled={pending}
-                className="w-full rounded-2xl bg-green py-2.5 text-sm font-semibold text-ink disabled:opacity-60"
-              >
-                {pending ? "Applying…" : `Apply to ${selected.size} ${selType ? typeLabel(selType).toLowerCase() : "txn"}${selected.size === 1 ? "" : "s"}`}
-              </button>
-            </>
-          )}
         </div>
+      </div>
+
+      {/* --- Bulk edit panel ------------------------------------------------ */}
+      {selectMode && selectedRows.length > 0 && selectedType && (
+        <BulkPanel
+          ids={selectedRows.map((t) => t.id)}
+          type={selectedType}
+          wallets={wallets}
+          categories={categories}
+          onDone={exitSelect}
+        />
       )}
 
-      {filtered.length === 0 ? (
-        <p className="pt-10 text-center text-sm text-paper-faint">
-          {transactions.length === 0 ? "No transactions for this month." : "No transactions match your filters."}
+      {/* --- Rows ------------------------------------------------------------ */}
+      {groups.length === 0 ? (
+        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          {transactions.length === 0
+            ? "Nothing recorded this month yet."
+            : "No entries match those filters."}
         </p>
       ) : (
-        <div className="stagger space-y-5">
-          {groups.map(([date, rows]) => (
-            <div key={date}>
-              <div className="label mb-2 px-1">{formatDateShort(date)}</div>
-              <div className="card overflow-hidden">
-                {rows.map((t, i) => {
-                  const s = SIGN[t.type];
-                  const border = i > 0 ? "hr-dash border-t" : "";
-                  const inner = (
+        <div className="space-y-4">
+          {groups.map(([day, rows]) => (
+            <section key={day}>
+              <h2 className="label mb-2">{formatDateShort(day)}</h2>
+              <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+                {rows.map((txn, i) => {
+                  const style = TYPE_STYLE[txn.type];
+                  const isSelected = selected.has(txn.id);
+                  const selectable = !selectedType || selectedType === txn.type;
+
+                  const body = (
                     <>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[15px] font-medium text-paper">
-                          {t.description || (t.category_id ? catName.get(t.category_id) : undefined) || t.type}
-                        </div>
-                        <div className="truncate text-xs text-paper-dim">{meta(t)}</div>
-                      </div>
-                      <div className={`shrink-0 font-display text-[15px] font-medium tabular-nums ${s.color}`}>
-                        {s.prefix}
-                        {formatRupiah(t.amount).replace("Rp", "").trim()}
-                      </div>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[15px] font-semibold text-ink-900">
+                          {txn.description ||
+                            (txn.category_id != null
+                              ? catById.get(txn.category_id)?.name
+                              : null) ||
+                            TXN_TYPES.find((t) => t.value === txn.type)?.label}
+                        </span>
+                        <span className="block truncate text-[13px] text-ink-500">
+                          {metaLine(txn)}
+                        </span>
+                      </span>
+                      <span
+                        className={`shrink-0 text-[15px] font-bold tabular-nums ${style.className}`}
+                      >
+                        {style.prefix}
+                        {formatRupiah(txn.amount).replace("-", "")}
+                      </span>
                     </>
                   );
 
+                  const rowClass = `flex w-full items-center gap-3 px-4 py-3 text-left ${
+                    i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                  }`;
+
                   if (selectMode) {
-                    const on = selected.has(t.id);
-                    const dim = !canSelect(t);
                     return (
                       <button
-                        key={t.id}
+                        key={txn.id}
                         type="button"
-                        onClick={() => toggle(t)}
-                        disabled={dim}
-                        className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors ${border} ${
-                          on ? "bg-green/10" : "active:bg-ink-3"
-                        } ${dim ? "opacity-40" : ""}`}
+                        onClick={() => toggleRow(txn)}
+                        disabled={!selectable}
+                        aria-pressed={isSelected}
+                        className={`${rowClass} ${selectable ? "" : "opacity-40"}`}
                       >
                         <span
-                          className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${
-                            on ? "border-green bg-green text-ink" : "border-line/70 text-transparent"
+                          aria-hidden="true"
+                          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${
+                            isSelected
+                              ? "border-forest-800 bg-forest-800 text-white"
+                              : "border-[var(--border-default)]"
                           }`}
                         >
-                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} className="h-3 w-3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
+                          {isSelected && <Check size={14} />}
                         </span>
-                        {inner}
+                        {body}
                       </button>
                     );
                   }
 
                   return (
                     <Link
-                      key={t.id}
-                      href={`/history/${t.id}`}
-                      className={`flex items-center justify-between gap-3 px-4 py-3.5 transition-colors active:bg-ink-3 ${border}`}
+                      key={txn.id}
+                      href={`/history/${txn.id}`}
+                      className={`${rowClass} no-underline`}
                     >
-                      {inner}
+                      {body}
                     </Link>
                   );
                 })}
               </div>
-            </div>
+            </section>
           ))}
         </div>
       )}
+
+      {/* Keeps the month in the URL available to the edit page's redirect. */}
+      <input type="hidden" value={monthKey} readOnly />
     </div>
   );
 }
 
-function FilterChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+/** Only the fields meaningful for the selected type are offered. */
+function BulkPanel({
+  ids,
+  type,
+  wallets,
+  categories,
+  onDone,
+}: {
+  ids: number[];
+  type: TxnType;
+  wallets: Wallet[];
+  categories: Category[];
+  onDone: () => void;
+}) {
+  const showSource =
+    type === "expense" || type === "saving" || type === "investment" || type === "transfer";
+  const showDest =
+    type === "income" || type === "withdrawal" || type === "transfer";
+  const showCategory = type !== "transfer";
+
+  const categoryChoices = categories.filter((c) => {
+    if (type === "withdrawal") return c.kind === "saving" || c.kind === "investment";
+    if (type === "expense") return c.kind === "expense";
+    if (type === "income") return c.kind === "income";
+    if (type === "saving") return c.kind === "saving";
+    if (type === "investment") return c.kind === "investment";
+    return false;
+  });
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
-        active ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
-      }`}
+    <form
+      action={async (formData: FormData) => {
+        await bulkUpdateTransactions(formData);
+        onDone();
+      }}
+      className="space-y-3 rounded-[var(--radius-card)] bg-sage-100 p-4"
     >
-      {label}
-    </button>
+      <input type="hidden" name="ids" value={ids.join(",")} />
+      <input type="hidden" name="type" value={type} />
+
+      <div className="flex items-center justify-between">
+        <span className="text-[14px] font-semibold text-forest-800">
+          Editing {ids.length} {ids.length === 1 ? "entry" : "entries"}
+        </span>
+        <button
+          type="button"
+          onClick={onDone}
+          aria-label="Cancel bulk edit"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-forest-800"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <p className="text-[13px] text-ink-700">
+        Leave a field blank to keep it as it is.
+      </p>
+
+      {showCategory && (
+        <select name="category_id" aria-label="Set category" className="field" defaultValue="">
+          <option value="">Category — unchanged</option>
+          {categoryChoices.map((c) => (
+            <option key={c.id} value={String(c.id)}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {showSource && (
+        <select
+          name="source_wallet_id"
+          aria-label="Set source wallet"
+          className="field"
+          defaultValue=""
+        >
+          <option value="">{type === "transfer" ? "From" : "Paid from"} — unchanged</option>
+          {wallets.map((w) => (
+            <option key={w.id} value={String(w.id)}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {showDest && (
+        <select
+          name="dest_wallet_id"
+          aria-label="Set destination wallet"
+          className="field"
+          defaultValue=""
+        >
+          <option value="">{type === "transfer" ? "To" : "Received in"} — unchanged</option>
+          {wallets.map((w) => (
+            <option key={w.id} value={String(w.id)}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <input
+        type="date"
+        name="occurred_on"
+        aria-label="Set date"
+        className="field"
+        defaultValue=""
+      />
+
+      <button type="submit" className="btn btn-primary w-full">
+        Apply to {ids.length}
+      </button>
+    </form>
   );
 }

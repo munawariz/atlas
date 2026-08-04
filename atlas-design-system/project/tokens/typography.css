@@ -1,0 +1,46 @@
+/* Atlas type scale. Display sizes are tight and near-black; body copy is grey and airy. */
+:root{
+  --weight-regular:400;
+  --weight-medium:500;
+  --weight-semibold:600;
+  --weight-bold:700;
+  --weight-extrabold:800;
+
+  /* Display — marketing headlines. Always -0.03em, always <=1.06 line-height. */
+  --text-display-1:76px;
+  --text-display-2:56px;
+  --text-display-3:44px;
+  --text-display-4:34px;
+  --leading-display:1.05;
+  --tracking-display:-0.03em;
+
+  /* Headings — in-product and card titles. */
+  --text-heading-1:28px;
+  --text-heading-2:24px;
+  --text-heading-3:20px;
+  --text-heading-4:18px;
+  --leading-heading:1.25;
+  --tracking-heading:-0.02em;
+
+  /* Body */
+  --text-body-lg:18px;
+  --text-body-md:16px;
+  --text-body-sm:14px;
+  --text-body-xs:13px;
+  --leading-body:1.7;
+  --leading-body-tight:1.5;
+  --tracking-body:0;
+
+  /* Labels & eyebrows — uppercase, widely tracked. */
+  --text-label-md:14px;
+  --text-label-sm:12px;
+  --text-eyebrow:13px;
+  --tracking-eyebrow:0.12em;
+  --tracking-label:0.02em;
+
+  /* Numerals — balances, stats, card numbers. */
+  --text-stat-lg:44px;
+  --text-stat-md:32px;
+  --text-stat-sm:22px;
+  --tracking-stat:-0.02em;
+}

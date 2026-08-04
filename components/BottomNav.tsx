@@ -2,70 +2,107 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import type { ComponentType } from "react";
+import {
+  House,
+  FileText,
+  Plus,
+  SlidersHorizontal,
+  Grid,
+  type IconProps,
+} from "./icons";
 
-const ICONS = {
-  dashboard: (
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M3 13.5 12 4l9 9.5M5 12v7.5a.5.5 0 0 0 .5.5H9v-5h6v5h3.5a.5.5 0 0 0 .5-.5V12"
-    />
-  ),
-  history: <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h10" />,
-  budget: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 12V3.2M12 12l6.4 4" />
-    </>
-  ),
-  more: (
-    <path
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      d="M4 5h7v7H4zM13 5h7v7h-7zM4 14h7v5H4zM13 14h7v5h-7z"
-    />
-  ),
+// The design system's tab bar is a flat white row with a lime underline on the active tab and
+// no backdrop blur anywhere. Atlas the ledger needs Add to stay the primary action, so the
+// centre slot keeps ATLAS.md's raised circle — recoloured to lime-500 with a forest glyph.
+
+type Slot = {
+  href: string;
+  label: string;
+  Icon: ComponentType<IconProps>;
+  /** Matches this tab when the pathname equals or sits under any of these. */
+  match: string[];
 };
 
-function Tab({ href, label, icon, active }: { href: string; label: string; icon: keyof typeof ICONS; active: boolean }) {
-  return (
-    <Link href={href} className="flex flex-1 flex-col items-center gap-1 py-1.5 text-[11px] font-medium">
-      <span
-        className={`flex h-9 w-12 items-center justify-center rounded-full transition-colors ${
-          active ? "bg-green/15 text-green" : "text-paper-faint"
-        }`}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="h-[22px] w-[22px]">
-          {ICONS[icon]}
-        </svg>
-      </span>
-      <span className={active ? "text-green" : "text-paper-faint"}>{label}</span>
-    </Link>
-  );
-}
+const SLOTS: Slot[] = [
+  { href: "/dashboard", label: "Home", Icon: House, match: ["/dashboard"] },
+  { href: "/history", label: "History", Icon: FileText, match: ["/history"] },
+  { href: "/add", label: "Add", Icon: Plus, match: ["/add"] },
+  {
+    href: "/more/budgets",
+    label: "Budget",
+    Icon: SlidersHorizontal,
+    match: ["/more/budgets"],
+  },
+  { href: "/more", label: "More", Icon: Grid, match: ["/more"] },
+];
 
 export default function BottomNav() {
-  const pathname = usePathname();
-  const is = (p: string) => pathname === p || pathname.startsWith(p + "/");
+  const pathname = usePathname() || "";
+
+  // Longest match wins, so /more/budgets lights Budget rather than More.
+  const activeHref = SLOTS.reduce<string | null>((best, slot) => {
+    const hit = slot.match.some(
+      (m) => pathname === m || pathname.startsWith(`${m}/`)
+    );
+    if (!hit) return best;
+    if (!best || slot.href.length > best.length) return slot.href;
+    return best;
+  }, null);
 
   return (
-    <nav className="sticky bottom-0 z-20 border-t border-line/60 bg-ink/85 backdrop-blur-xl safe-bottom">
-      <div className="mx-auto flex max-w-md items-end justify-around px-2 pb-1.5 pt-1">
-        <Tab href="/dashboard" label="Home" icon="dashboard" active={is("/dashboard")} />
-        <Tab href="/history" label="History" icon="history" active={is("/history")} />
+    <nav className="sticky bottom-0 z-30 mt-auto border-t border-[var(--border-subtle)] bg-white safe-bottom">
+      <div className="mx-auto flex max-w-md items-start justify-around px-3 pt-3 pb-2">
+        {SLOTS.map((slot) => {
+          const active = activeHref === slot.href;
 
-        {/* Primary action — larger, raised */}
-        <Link href="/add" className="flex flex-1 flex-col items-center">
-          <span className="-mt-7 flex h-16 w-16 items-center justify-center rounded-full bg-green text-ink shadow-[0_10px_28px_-6px_rgba(63,185,80,0.75)] ring-4 ring-ink transition-transform active:scale-95">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} className="h-8 w-8">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m7-7H5" />
-            </svg>
-          </span>
-          <span className="mt-1 text-[11px] font-semibold text-green">Add</span>
-        </Link>
+          if (slot.href === "/add") {
+            return (
+              <Link
+                key={slot.href}
+                href="/add"
+                aria-label="Add a transaction"
+                className="-mt-7 flex flex-col items-center gap-1.5 no-underline"
+              >
+                <span
+                  className="flex h-16 w-16 items-center justify-center rounded-full bg-lime-500 text-forest-800 ring-4 ring-white transition-colors hover:bg-lime-600"
+                  style={{ boxShadow: "0 18px 44px rgb(0 43 15 / 0.18)" }}
+                >
+                  <slot.Icon size={28} strokeWidth={2.5} />
+                </span>
+                <span className="text-[11px] font-semibold text-forest-800">
+                  {slot.label}
+                </span>
+              </Link>
+            );
+          }
 
-        <Tab href="/more/budgets" label="Budget" icon="budget" active={is("/more/budgets")} />
-        <Tab href="/more" label="More" icon="more" active={pathname === "/more" || (is("/more") && !is("/more/budgets"))} />
+          return (
+            <Link
+              key={slot.href}
+              href={slot.href}
+              aria-current={active ? "page" : undefined}
+              className="flex flex-col items-center gap-1.5 px-2.5 py-0.5 no-underline"
+            >
+              <slot.Icon
+                size={22}
+                className={active ? "text-forest-800" : "text-ink-300"}
+              />
+              <span
+                className={`text-[11px] font-semibold ${
+                  active ? "text-forest-800" : "text-ink-500"
+                }`}
+              >
+                {slot.label}
+              </span>
+              <span
+                className={`h-[3px] w-[18px] rounded-[3px] ${
+                  active ? "bg-lime-500" : "bg-transparent"
+                }`}
+              />
+            </Link>
+          );
+        })}
       </div>
     </nav>
   );

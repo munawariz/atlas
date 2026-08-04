@@ -1,0 +1,50 @@
+<!-- @dsCard group="Mobile app" viewport="1000x900" name="Atlas app" subtitle="Wallet, statistics, send money and cards — click-through" -->
+<!-- @startingPoint section="Mobile app" subtitle="Atlas mobile banking app" viewport="1000x900" -->
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Atlas — Mobile app</title><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>html,body{margin:0}body{background:var(--sage-100)}#root{padding:40px}</style></head>
+<body><div id="root"></div>
+<script type="text/babel" src="./AppShell.jsx"></script>
+<script type="text/babel" src="./HomeScreen.jsx"></script>
+<script type="text/babel" src="./TransactionsScreen.jsx"></script>
+<script type="text/babel" src="./StatisticsScreen.jsx"></script>
+<script type="text/babel" src="./SendMoneyScreen.jsx"></script>
+<script type="text/babel" src="./CardsScreen.jsx"></script>
+<script type="text/babel">
+const { PhoneFrame } = window.AtlasDesignSystem_92c2f4;
+const TITLES = { home: null, stats: "Statistics", send: "Send money", cards: "My cards", transactions: "Transactions" };
+function App(){
+  const [tab,setTab]=React.useState("home");
+  const jump=(action)=>{
+    if(action==="Transfer") setTab("send");
+    else if(action==="Request") setTab("transactions");
+    else if(action==="PayBill") setTab("send");
+    else setTab("transactions");
+  };
+  const screen = tab==="home" ? <window.HomeScreen onAction={jump}/>
+    : tab==="stats" ? <window.StatisticsScreen/>
+    : tab==="send" ? <window.SendMoneyScreen onDone={()=>setTab("home")}/>
+    : tab==="cards" ? <window.CardsScreen/>
+    : <window.TransactionsScreen/>;
+  return (
+    <div style={{display:"flex",gap:40,justifyContent:"center",alignItems:"flex-start",flexWrap:"wrap"}}>
+      <PhoneFrame width={390} bezel="forest">
+        <div style={{height:770,display:"flex",flexDirection:"column",background:"var(--cream-100)"}}>
+          <window.AppHeader title={TITLES[tab]} onBack={tab==="transactions"?()=>setTab("home"):undefined} />
+          {screen}
+          <window.TabBar active={tab==="transactions"?"home":tab} onChange={setTab} />
+        </div>
+      </PhoneFrame>
+      <div style={{maxWidth:280,paddingTop:16,display:"flex",flexDirection:"column",gap:14}}>
+        <span style={{fontFamily:"var(--font-display)",fontSize:28,fontWeight:700,letterSpacing:"-0.03em",color:"var(--ink-900)"}}>Atlas app</span>
+        <p style={{margin:0,fontSize:14,lineHeight:1.7,color:"var(--text-body)"}}>Tap the bottom tabs to move between wallet, statistics, transfers and cards. Quick actions, period chips, the amount field and the card controls are all live.</p>
+        <p style={{margin:0,fontSize:13,lineHeight:1.6,color:"var(--text-muted)"}}>Recreated from the app screens inside the brand reference. No photography was supplied, so avatars fall back to initials.</p>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script></body></html>

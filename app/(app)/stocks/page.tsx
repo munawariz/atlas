@@ -1,325 +1,422 @@
 import Link from "next/link";
-import { getWallets } from "@/lib/data";
-import { getStockDividends, getStockPortfolio, getStockTargetsForMonth, getStockTrades, type MonthStockTarget, type StockDividend, type StockTrade } from "@/lib/stocks";
-import { getSettings, mappedWalletId } from "@/lib/settings";
-import { formatRupiah, formatRupiahShort, formatDateShort, todayISO } from "@/lib/format";
+import PrivacyToggle from "@/components/PrivacyToggle";
+import RefreshOnFocus from "@/components/RefreshOnFocus";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
-import StockTradeForm from "./StockTradeForm";
-import StockDividendForm from "./StockDividendForm";
+import { ChevronRight, Trash } from "@/components/icons";
+import {
+  getStockDividends,
+  getStockPortfolio,
+  getStockTargetsForMonth,
+  getStockTrades,
+  LOT_SIZE,
+} from "@/lib/stocks";
+import { currentMonthKey, getWallets } from "@/lib/data";
+import { getSettings, mappedWalletId } from "@/lib/settings";
+import { formatDateShort, formatNumber, formatRupiah } from "@/lib/format";
+import { StockDividendForm, StockTradeForm } from "./StockForms";
 import { deleteStockDividend, deleteStockTrade } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-const pct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-paper-faint">{label}</span>
-      <span className={`tabular-nums ${tone ?? "text-paper"}`}>{value}</span>
-    </div>
-  );
-}
+export const metadata = { title: "Stocks · Atlas" };
 
 export default async function StocksPage() {
-  const [portfolio, wallets, trades, targets, dividends, settings] = await Promise.all([
-    getStockPortfolio(),
-    getWallets(),
-    getStockTrades(),
-    getStockTargetsForMonth(`${todayISO().slice(0, 7)}-01`),
-    getStockDividends(),
-    getSettings(),
-  ]);
-  const walletOpts = wallets.map((w) => ({ id: w.id, name: w.name }));
-  const defaultWalletId = mappedWalletId(settings, walletOpts, "wallet_stock", "stockbit");
-  const { holdings, totalCost, pricedValue, pricedCost, totalPL, missing } = portfolio;
-  const plPct = pricedCost ? (totalPL / pricedCost) * 100 : 0;
-  const up = totalPL >= 0;
-  const realizedTotal = trades.reduce((s, t) => s + (t.realized_pl ?? 0), 0);
-  const hasRealized = trades.some((t) => t.side === "sell");
+  const monthKey = currentMonthKey();
 
-  const ymNow = todayISO().slice(0, 7);
-  // Estimated monthly cash needed = Σ lots × 100 shares × price. Uses the target's speculative
-  // price if set, else the live price when the ticker is already held.
-  const heldPrice = new Map(holdings.filter((h) => h.price != null).map((h) => [h.ticker, h.price as number]));
-  const targetCost = (tg: MonthStockTarget) => {
-    const p = tg.price ?? heldPrice.get(tg.ticker) ?? null;
-    return p != null ? tg.lots * 100 * p : null;
-  };
-  const totalMonthly = targets.reduce((s, tg) => s + (targetCost(tg) ?? 0), 0);
+  const [portfolio, trades, dividends, wallets, settings, targets] =
+    await Promise.all([
+      getStockPortfolio(),
+      getStockTrades(),
+      getStockDividends(),
+      getWallets(),
+      getSettings(),
+      getStockTargetsForMonth(monthKey),
+    ]);
 
-  // Lifetime dividends per ticker (kept even after you sell out) + this-year total.
-  const divByTicker = new Map<string, number>();
-  for (const d of dividends) divByTicker.set(d.ticker, (divByTicker.get(d.ticker) ?? 0) + d.idr);
-  const totalDividends = dividends.reduce((s, d) => s + d.idr, 0);
-  const yearNow = ymNow.slice(0, 4);
-  const dividendsThisYear = dividends.filter((d) => d.occurred_on.slice(0, 4) === yearNow).reduce((s, d) => s + d.idr, 0);
-  const divTickerRows = [...divByTicker.entries()].sort((a, b) => b[1] - a[1]);
+  const defaultWalletId = mappedWalletId(settings, wallets, "wallet_stock");
 
-  // Per-ticker trade & dividend history, for the expandable holding cards.
-  const tradesByTicker = new Map<string, StockTrade[]>();
-  for (const t of trades) {
-    const k = t.ticker.toUpperCase();
-    const arr = tradesByTicker.get(k) ?? [];
-    arr.push(t);
-    tradesByTicker.set(k, arr);
+  const pctPl =
+    portfolio.pricedCost > 0
+      ? (portfolio.unrealizedPl / portfolio.pricedCost) * 100
+      : 0;
+
+  const tickers = [
+    ...new Set([
+      ...portfolio.holdings.map((h) => h.ticker),
+      ...trades.map((t) => t.ticker),
+    ]),
+  ].sort();
+
+  // Per-ticker dividend totals survive selling out, which is why they live in their own table.
+  const dividendByTicker = new Map<string, number>();
+  for (const dividend of dividends) {
+    dividendByTicker.set(
+      dividend.ticker,
+      (dividendByTicker.get(dividend.ticker) ?? 0) + dividend.idr
+    );
   }
-  const divsByTicker = new Map<string, StockDividend[]>();
-  for (const d of dividends) {
-    const k = d.ticker.toUpperCase();
-    const arr = divsByTicker.get(k) ?? [];
-    arr.push(d);
-    divsByTicker.set(k, arr);
-  }
+
+  const targetLots = targets.reduce((sum, t) => sum + t.lots, 0);
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">Stocks</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-5 privacy-scope">
+      <RefreshOnFocus />
 
-      {/* Portfolio hero */}
-      <div className="card relative overflow-hidden p-6">
-        <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-[radial-gradient(circle,rgba(163,113,247,0.18),transparent_70%)]" />
-        <div className="label">Market value · live</div>
-        <div className="mt-1.5 font-display text-3xl font-semibold tabular-nums text-paper">{formatRupiah(pricedValue)}</div>
-        <div className="mt-2 flex items-center gap-3 text-sm">
-          <span className={`font-display font-medium ${up ? "text-green" : "text-red"}`}>
-            {up ? "▲" : "▼"} {formatRupiahShort(Math.abs(totalPL))} ({pct(plPct)})
-          </span>
-          <span className="text-paper-faint">cost {formatRupiahShort(totalCost)}</span>
+      <header className="flex items-start justify-between gap-3">
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Stocks
+        </h1>
+        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+      </header>
+
+      {/* --- Portfolio hero ------------------------------------------------ */}
+      <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">
+        <div className="label" style={{ color: "var(--color-forest-300)" }}>
+          Market value
         </div>
-        {hasRealized && (
-          <div className="mt-2 text-[11px] text-paper-faint">
-            realized P/L:{" "}
-            <span className={realizedTotal >= 0 ? "text-green" : "text-red"}>
-              {realizedTotal >= 0 ? "+" : ""}
-              {formatRupiah(realizedTotal)}
-            </span>{" "}
-            (booked to Trading / Cut Loss)
-          </div>
-        )}
-        {missing.length > 0 && (
-          <p className="mt-2 text-[11px] text-amber">No live price for {missing.join(", ")} — not in the value above.</p>
-        )}
-      </div>
+        <div className="font-display text-[34px] font-extrabold leading-none tracking-[-0.03em] text-white tabular-nums">
+          {formatRupiah(portfolio.pricedValue)}
+        </div>
+        <div
+          className="mt-1.5 text-[13px] font-semibold tabular-nums"
+          style={{
+            color:
+              portfolio.unrealizedPl >= 0
+                ? "var(--color-lime-500)"
+                : "var(--color-negative-500)",
+          }}
+        >
+          {portfolio.unrealizedPl >= 0 ? "▲" : "▼"}{" "}
+          {formatRupiah(Math.abs(portfolio.unrealizedPl))} ({pctPl.toFixed(1)}%)
+        </div>
 
-      <StockTradeForm wallets={walletOpts} defaultWalletId={defaultWalletId} />
-
-      {/* Monthly buy targets → managed on their own page */}
-      <Link href="/stocks/targets" className="card flex items-center justify-between p-4 transition-colors active:bg-ink-3">
-        <div className="min-w-0">
-          <div className="label text-plum">Monthly buy targets</div>
-          {targets.length > 0 ? (
-            <div className="mt-0.5 text-sm">
-              <span className="font-display font-semibold tabular-nums text-plum">{formatRupiah(totalMonthly)}</span>
-              <span className="text-paper-faint">/mo · {targets.length} target{targets.length > 1 ? "s" : ""}</span>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {[
+            { label: "Cost basis", value: portfolio.pricedCost },
+            { label: "Realized P/L", value: portfolio.lifetimeRealizedPl },
+          ].map((cell) => (
+            <div
+              key={cell.label}
+              className="rounded-[14px] p-3"
+              style={{ background: "rgb(255 255 255 / 0.08)" }}
+            >
+              <div className="label" style={{ color: "var(--color-forest-300)" }}>
+                {cell.label}
+              </div>
+              <div className="font-display text-[16px] font-bold text-white tabular-nums">
+                {formatRupiah(cell.value)}
+              </div>
             </div>
-          ) : (
-            <div className="mt-0.5 text-xs text-paper-dim">Set recurring lots-per-month goals per ticker</div>
-          )}
+          ))}
         </div>
-        <span className="shrink-0 text-plum/70">›</span>
+
+        {portfolio.missing.length > 0 && (
+          <p
+            className="mt-3 text-[12px]"
+            style={{ color: "var(--color-warning-500)" }}
+          >
+            No live price for {portfolio.missing.join(", ")} — excluded from the
+            value and P/L above, so the percentage stays honest.
+          </p>
+        )}
+      </section>
+
+      {/* --- Trade form ---------------------------------------------------- */}
+      <section>
+        <h2 className="label mb-2">Record a trade</h2>
+        <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
+          <StockTradeForm wallets={wallets} defaultWalletId={defaultWalletId} />
+        </div>
+      </section>
+
+      {/* --- Targets link -------------------------------------------------- */}
+      <Link
+        href="/stocks/targets"
+        className="flex items-center gap-3 rounded-[var(--radius-card)] bg-sage-100 p-4 no-underline"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-semibold text-ink-900">
+            Monthly buy targets
+          </span>
+          <span className="block text-[13px] text-ink-700">
+            {targets.length === 0
+              ? "None set yet"
+              : `${targets.length} ticker${targets.length === 1 ? "" : "s"} · ${targetLots} lot${targetLots === 1 ? "" : "s"} a month`}
+          </span>
+        </span>
+        <ChevronRight size={18} className="shrink-0 text-forest-800" />
       </Link>
 
-      {/* Holdings */}
-      {holdings.length === 0 ? (
-        <p className="pt-4 text-center text-sm text-paper-faint">No holdings yet. Log a buy above.</p>
-      ) : (
-        <section className="space-y-2">
-          <h2 className="label text-plum">Holdings</h2>
-          {holdings.map((h) => {
-            const hUp = (h.pl ?? 0) >= 0;
-            const dv = divByTicker.get(h.ticker) ?? 0;
-            const tks = tradesByTicker.get(h.ticker) ?? [];
-            const dvs = divsByTicker.get(h.ticker) ?? [];
-            const invested = tks.filter((t) => t.side === "buy").reduce((s, t) => s + t.idr, 0);
-            const proceeds = tks.filter((t) => t.side === "sell").reduce((s, t) => s + t.idr, 0);
-            const realized = tks.reduce((s, t) => s + (t.realized_pl ?? 0), 0);
-            const hasSells = tks.some((t) => t.side === "sell");
-            // Merged buy/sell/dividend timeline, newest first.
-            type Ev = { date: string; kind: "buy" | "sell" | "dividend"; lots?: number; idr: number; pl?: number | null; note?: string | null };
-            const events: Ev[] = [
-              ...tks.map((t) => ({ date: t.occurred_on, kind: t.side, lots: t.lots, idr: t.idr, pl: t.realized_pl, note: t.opening ? "opening" : null })),
-              ...dvs.map((d) => ({ date: d.occurred_on, kind: "dividend" as const, idr: d.idr, note: d.note })),
-            ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+      {/* --- Holdings ------------------------------------------------------ */}
+      <section>
+        <h2 className="label mb-2">Holdings</h2>
+        {portfolio.holdings.length === 0 ? (
+          <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+            No open positions.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {portfolio.holdings.map((holding) => {
+              const timeline = [
+                ...trades
+                  .filter((t) => t.ticker === holding.ticker)
+                  .map((t) => ({
+                    id: `t${t.id}`,
+                    date: t.occurred_on,
+                    label: `${t.side === "buy" ? "Buy" : "Sell"} ${t.lots} lot`,
+                    amount: t.idr,
+                    tone: t.side === "buy" ? "text-ink-900" : "text-positive-600",
+                  })),
+                ...dividends
+                  .filter((d) => d.ticker === holding.ticker)
+                  .map((d) => ({
+                    id: `d${d.id}`,
+                    date: d.occurred_on,
+                    label: "Dividend",
+                    amount: d.idr,
+                    tone: "text-positive-600",
+                  })),
+              ].sort((a, b) => (a.date < b.date ? 1 : -1));
 
-            return (
-              <details key={h.ticker} className="card group overflow-hidden">
-                <summary className="flex cursor-pointer items-center justify-between gap-3 p-4 transition-colors active:bg-ink-3">
-                  <div className="min-w-0">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-display text-base font-semibold text-paper">{h.ticker}</span>
-                      <span className="text-xs text-paper-dim">{h.lots} lot</span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-paper-faint">
-                      avg Rp {Math.round(h.avgPerShare).toLocaleString("id-ID")}
-                      {h.price != null && <> → now Rp {h.price.toLocaleString("id-ID")}</>}
-                    </div>
-                    {dv > 0 && (
-                      <div className="mt-0.5 text-[11px] text-green">
-                        ◈ dividends {formatRupiah(dv)}
-                        {h.cost ? <span className="text-paper-faint"> · {((dv / h.cost) * 100).toFixed(1)}% on cost</span> : null}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <div className="text-right">
-                      <div className="font-display text-sm font-bold tabular-nums text-paper">
-                        {h.value != null ? formatRupiah(h.value) : "—"}
-                      </div>
-                      {h.pl != null && h.plPct != null && (
-                        <div className={`text-xs font-medium ${hUp ? "text-green" : "text-red"}`}>
-                          {hUp ? "+" : ""}
-                          {formatRupiahShort(h.pl)} ({pct(h.plPct)})
-                        </div>
+              const dividendPct =
+                holding.costBasis > 0
+                  ? (holding.dividends / holding.costBasis) * 100
+                  : 0;
+
+              return (
+                <details
+                  key={holding.ticker}
+                  className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]"
+                >
+                  <summary className="flex items-center gap-3 px-4 py-3">
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[15px] font-bold text-ink-900">
+                        {holding.ticker}
+                      </span>
+                      <span className="block text-[13px] text-ink-500 tabular-nums">
+                        {holding.lots} lot{holding.lots === 1 ? "" : "s"} ·{" "}
+                        {formatNumber(Math.round(holding.avgPerShare))}
+                        {holding.price != null && (
+                          <> → {formatNumber(Math.round(holding.price))}</>
+                        )}
+                      </span>
+                    </span>
+
+                    <span className="shrink-0 text-right">
+                      <span className="block text-[15px] font-bold text-ink-900 tabular-nums">
+                        {holding.value == null
+                          ? "—"
+                          : formatRupiah(holding.value)}
+                      </span>
+                      {holding.unrealizedPl != null && (
+                        <span
+                          className={`block text-[12px] font-semibold tabular-nums ${
+                            holding.unrealizedPl >= 0
+                              ? "text-positive-600"
+                              : "text-negative-600"
+                          }`}
+                        >
+                          {holding.unrealizedPl >= 0 ? "▲" : "▼"}{" "}
+                          {formatRupiah(Math.abs(holding.unrealizedPl))}
+                        </span>
                       )}
-                    </div>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-4 w-4 text-plum/70 transition-transform">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
-                    </svg>
-                  </div>
-                </summary>
+                    </span>
 
-                <div className="border-t border-line/40 px-4 py-3">
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                    <Stat label="Invested" value={formatRupiah(invested)} />
-                    <Stat label="Cost basis now" value={formatRupiah(h.cost)} />
-                    {dv > 0 && <Stat label="Dividends" value={formatRupiah(dv)} tone="text-green" />}
-                    {hasSells && <Stat label="Sold (proceeds)" value={formatRupiah(proceeds)} />}
-                    {hasSells && (
-                      <Stat label="Realized P/L" value={`${realized >= 0 ? "+" : ""}${formatRupiah(realized)}`} tone={realized >= 0 ? "text-green" : "text-red"} />
-                    )}
-                  </div>
+                    <span className="chevron shrink-0 text-ink-300">
+                      <ChevronRight size={18} />
+                    </span>
+                  </summary>
 
-                  <div className="mt-3 border-t border-line/30 pt-2">
-                    <div className="label mb-1.5">History</div>
-                    <div className="space-y-1.5">
-                      {events.map((e, i) => (
-                        <div key={i} className="flex items-baseline justify-between gap-2 text-xs">
-                          <span className="min-w-0">
-                            <span
-                              className={
-                                e.kind === "buy" ? "font-medium text-plum" : e.kind === "sell" ? "font-medium text-green" : "font-medium text-green"
-                              }
-                            >
-                              {e.kind === "buy" ? "Buy" : e.kind === "sell" ? "Sell" : "Dividend"}
-                            </span>{" "}
-                            {e.lots != null && <span className="text-paper-dim">{e.lots} lot </span>}
-                            <span className="text-paper-faint">{formatDateShort(e.date)}</span>
-                            {e.note && <span className="text-paper-faint"> · {e.note}</span>}
-                          </span>
-                          <span className="shrink-0 text-right tabular-nums">
-                            <span className="text-paper">{formatRupiah(e.idr)}</span>
-                            {e.kind === "sell" && e.pl != null && (
-                              <span className={e.pl >= 0 ? "text-green" : "text-red"}>
-                                {" "}
-                                ({e.pl >= 0 ? "+" : ""}
-                                {formatRupiahShort(e.pl)})
-                              </span>
-                            )}
-                          </span>
+                  <div className="border-t border-[var(--border-subtle)] p-4">
+                    <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[13px]">
+                      {[
+                        ["Invested", formatRupiah(holding.invested)],
+                        ["Cost basis now", formatRupiah(holding.costBasis)],
+                        [
+                          "Dividends",
+                          `${formatRupiah(holding.dividends)}${
+                            dividendPct > 0 ? ` (${dividendPct.toFixed(1)}%)` : ""
+                          }`,
+                        ],
+                        ["Proceeds", formatRupiah(holding.proceeds)],
+                        ["Realized P/L", formatRupiah(holding.realizedPl)],
+                      ].map(([label, value]) => (
+                        <div key={label} className="flex justify-between gap-2">
+                          <dt className="text-ink-500">{label}</dt>
+                          <dd className="font-semibold text-ink-900 tabular-nums">
+                            {value}
+                          </dd>
                         </div>
                       ))}
+                    </dl>
+
+                    <div className="mt-3 border-t border-[var(--border-subtle)] pt-3">
+                      <div className="label mb-1.5">Timeline</div>
+                      <ul className="space-y-1">
+                        {timeline.map((entry) => (
+                          <li
+                            key={entry.id}
+                            className="flex items-baseline justify-between gap-2 text-[13px]"
+                          >
+                            <span className="text-ink-700">
+                              {entry.label}
+                              <span className="ml-1.5 text-ink-300">
+                                {formatDateShort(entry.date)}
+                              </span>
+                            </span>
+                            <span
+                              className={`font-semibold tabular-nums ${entry.tone}`}
+                            >
+                              {formatRupiah(entry.amount)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   </div>
-                </div>
-              </details>
-            );
-          })}
-          <p className="px-1 text-[11px] text-paper-faint">
-            Cost is your average buy price; value uses live prices from Yahoo Finance (IDX). 1 lot = 100 shares.
-          </p>
-        </section>
-      )}
+                </details>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
-      {/* Dividends */}
-      <section className="space-y-2">
-        <h2 className="label text-green">Dividends</h2>
+      {/* --- Dividends ----------------------------------------------------- */}
+      <section>
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <h2 className="label">Dividends</h2>
+          <span className="text-[13px] font-semibold text-positive-600 tabular-nums">
+            {formatRupiah(portfolio.totalDividends)} received
+          </span>
+        </div>
 
-        {dividends.length > 0 && (
-          <div className="card p-4">
-            <div className="label">Total received</div>
-            <div className="mt-1 font-display text-2xl font-bold tabular-nums text-green">{formatRupiah(totalDividends)}</div>
-            <div className="mt-0.5 text-[11px] text-paper-faint">
-              {dividends.length} payment{dividends.length > 1 ? "s" : ""}
-              {dividendsThisYear > 0 && <> · {formatRupiah(dividendsThisYear)} in {yearNow}</>}
+        <div className="space-y-2">
+          <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
+            <StockDividendForm
+              wallets={wallets}
+              defaultWalletId={defaultWalletId}
+              tickers={tickers}
+            />
+          </div>
+
+          {dividendByTicker.size > 0 && (
+            <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+              {[...dividendByTicker.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .map(([ticker, total], i) => (
+                  <div
+                    key={ticker}
+                    className={`flex items-baseline justify-between gap-2 px-4 py-2.5 ${
+                      i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                    }`}
+                  >
+                    <span className="text-[14px] font-medium text-ink-900">
+                      {ticker}
+                    </span>
+                    <span className="text-[14px] font-semibold text-ink-900 tabular-nums">
+                      {formatRupiah(total)}
+                    </span>
+                  </div>
+                ))}
             </div>
-            {divTickerRows.length > 0 && (
-              <div className="mt-3 space-y-1.5 border-t border-line/40 pt-3">
-                {divTickerRows.map(([tk, amt]) => (
-                  <div key={tk} className="flex items-baseline justify-between text-sm">
-                    <span className="text-paper">{tk}</span>
-                    <span className="tabular-nums text-paper-dim">{formatRupiah(amt)}</span>
+          )}
+
+          {dividends.length > 0 && (
+            <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+              <summary className="px-4 py-3 text-[14px] font-semibold text-ink-900">
+                Dividend log ({dividends.length})
+              </summary>
+              <div className="border-t border-[var(--border-subtle)]">
+                {dividends.map((dividend, i) => (
+                  <div
+                    key={dividend.id}
+                    className={`flex items-center gap-2 px-4 py-2.5 ${
+                      i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14px] font-medium text-ink-900">
+                        {dividend.ticker}
+                      </span>
+                      <span className="block text-[12px] text-ink-500">
+                        {formatDateShort(dividend.occurred_on)}
+                        {dividend.note && ` · ${dividend.note}`}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-[14px] font-semibold text-ink-900 tabular-nums">
+                      {formatRupiah(dividend.idr)}
+                    </span>
+                    <form action={deleteStockDividend.bind(null, dividend.id)}>
+                      <SubmitButton
+                        label={`Delete ${dividend.ticker} dividend`}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
+                      >
+                        <Trash size={16} />
+                      </SubmitButton>
+                    </form>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
-
-        <StockDividendForm wallets={walletOpts} defaultWalletId={defaultWalletId} tickers={holdings.map((h) => h.ticker)} />
-
-        {dividends.length > 0 && (
-          <div className="card overflow-hidden">
-            {dividends.slice(0, 30).map((d, i) => (
-              <div key={d.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-paper">
-                    <span className="text-green">{d.ticker}</span> {formatRupiah(d.idr)}
-                  </div>
-                  <div className="text-xs text-paper-faint">
-                    {formatDateShort(d.occurred_on)}
-                    {d.note ? ` · ${d.note}` : ""}
-                  </div>
-                </div>
-                <form action={deleteStockDividend.bind(null, d.id)}>
-                  <SubmitButton label="Delete dividend" className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10">
-                    <TrashIcon className="h-[18px] w-[18px]" />
-                  </SubmitButton>
-                </form>
-              </div>
-            ))}
-          </div>
-        )}
-        <p className="px-1 text-[11px] text-paper-faint">
-          Logged as income (Dividen) into the chosen wallet. Lifetime total is tracked per ticker, even after you sell out.
-        </p>
+            </details>
+          )}
+        </div>
       </section>
 
-      {/* Recent trades */}
+      {/* --- Recent trades -------------------------------------------------- */}
       {trades.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="label">Trades</h2>
-          <div className="card overflow-hidden">
-            {trades.slice(0, 30).map((t, i) => (
-              <div key={t.id} className={`flex items-center justify-between gap-3 px-4 py-3 ${i > 0 ? "hr-dash border-t" : ""}`}>
-                <div className="min-w-0">
-                  <div className="text-sm font-medium text-paper">
-                    <span className={t.side === "buy" ? "text-plum" : "text-green"}>{t.side === "buy" ? "Buy" : "Sell"}</span>{" "}
-                    {t.ticker} <span className="text-xs text-paper-dim">{t.lots} lot{t.opening ? " · opening" : ""}</span>
-                  </div>
-                  <div className="text-xs text-paper-faint">
-                    {formatDateShort(t.occurred_on)} · {formatRupiah(t.idr)}
-                    {t.side === "sell" && t.realized_pl != null && (
-                      <span className={t.realized_pl >= 0 ? "text-green" : "text-red"}>
-                        {" · "}
-                        {t.realized_pl >= 0 ? "profit " : "loss "}
-                        {formatRupiahShort(Math.abs(t.realized_pl))}
-                      </span>
-                    )}
-                  </div>
+        <section>
+          <h2 className="label mb-2">Recent trades</h2>
+          <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+            {[...trades]
+              .reverse()
+              .slice(0, 20)
+              .map((trade, i) => (
+                <div
+                  key={trade.id}
+                  className={`flex items-center gap-2 px-4 py-2.5 ${
+                    i > 0 ? "border-t border-[var(--border-subtle)]" : ""
+                  }`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[14px] font-medium text-ink-900">
+                      {trade.side === "buy" ? "Buy" : "Sell"} {trade.ticker}{" "}
+                      {trade.lots} lot
+                      {trade.opening && (
+                        <span className="badge ml-1.5 bg-cream-200 text-ink-700">
+                          opening
+                        </span>
+                      )}
+                    </span>
+                    <span className="block text-[12px] text-ink-500">
+                      {formatDateShort(trade.occurred_on)}
+                      {trade.realized_pl != null && trade.realized_pl !== 0 && (
+                        <span
+                          className={
+                            trade.realized_pl > 0
+                              ? "text-positive-600"
+                              : "text-negative-600"
+                          }
+                        >
+                          {" "}
+                          · {trade.realized_pl > 0 ? "+" : "−"}
+                          {formatRupiah(Math.abs(trade.realized_pl))}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-[14px] font-semibold text-ink-900 tabular-nums">
+                    {formatRupiah(trade.idr)}
+                  </span>
+                  <form action={deleteStockTrade.bind(null, trade.id)}>
+                    <SubmitButton
+                      label={`Delete ${trade.ticker} trade`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
+                    >
+                      <Trash size={16} />
+                    </SubmitButton>
+                  </form>
                 </div>
-                <form action={deleteStockTrade.bind(null, t.id)}>
-                  <SubmitButton label="Delete trade" className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10">
-                    <TrashIcon className="h-[18px] w-[18px]" />
-                  </SubmitButton>
-                </form>
-              </div>
-            ))}
+              ))}
           </div>
         </section>
       )}

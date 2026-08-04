@@ -1,0 +1,13 @@
+/* Atlas webfonts.
+   SUBSTITUTION NOTICE: no font binaries were supplied with the brand reference.
+   The reference art uses a tight geometric grotesque (double-storey 'a', flat-sided 'G',
+   straight-tailed 'y'). Figtree is the closest Google Fonts match and is used as the
+   brand face until real files are provided. DM Mono covers tabular / card-number data.
+   Swap this file for local @font-face rules when the licensed files arrive. */
+@import url("https://fonts.googleapis.com/css2?family=Figtree:ital,wght@0,300..900;1,300..900&family=DM+Mono:wght@400;500&display=swap");
+
+:root{
+  --font-display:"Figtree","Helvetica Neue",Arial,sans-serif;
+  --font-text:"Figtree","Helvetica Neue",Arial,sans-serif;
+  --font-mono:"DM Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}

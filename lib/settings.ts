@@ -1,88 +1,295 @@
 import "server-only";
-import { supabaseServer } from "./supabaseServer";
-import type { Category } from "./types";
 
-// Categories used by automated transactions. `default` is the seeded fallback name so a
-// fresh clone (or one that hasn't configured settings) still works out of the box.
-export const CATEGORY_SETTINGS = [
-  { key: "cat_loan", label: "Loan collection", kind: "income", default: "Hutang", help: "Income booked when you collect a loan payment" },
-  { key: "cat_stock", label: "Stock holding", kind: "investment", default: "Stock", help: "Bucket money moves into when buying/selling stocks" },
-  { key: "cat_stock_profit", label: "Stock realized profit", kind: "income", default: "Trading", help: "Income when a stock is sold at a gain" },
-  { key: "cat_stock_loss", label: "Stock realized loss", kind: "expense", default: "Cut Loss", help: "Expense when a stock is sold at a loss" },
-  { key: "cat_stock_dividend", label: "Stock dividend", kind: "income", default: "Dividen", help: "Income when you log a stock dividend" },
-  { key: "cat_bond", label: "Bond holding", kind: "investment", default: "Bonds", help: "Bucket money moves into when buying/selling bonds" },
-  { key: "cat_bond_coupon", label: "Bond coupon", kind: "income", default: "Kupon", help: "Income when you log a bond coupon" },
-  { key: "cat_forex", label: "Forex holding", kind: "investment", default: "Forex", help: "Bucket money moves into when buying/selling forex" },
-  { key: "cat_forex_profit", label: "Forex realized profit", kind: "income", default: "Forex Profit", help: "Income when forex is sold at a gain" },
-  { key: "cat_forex_loss", label: "Forex realized loss", kind: "expense", default: "Forex Loss", help: "Expense when forex is sold at a loss" },
-] as const;
+import { cache } from "react";
+import { supabaseServer, isMissingTable } from "./supabaseServer";
+import { getCategories, getWallets } from "./data";
+import type { Category, CategoryKind, Wallet } from "./types";
 
-export const WALLET_SETTINGS = [
-  { key: "wallet_stock", label: "Default stock wallet", match: "stockbit", help: "Pre-selected when buying/selling stocks" },
-  { key: "wallet_bond", label: "Default bond wallet", match: "", help: "Pre-selected when buying/selling bonds" },
-] as const;
+/**
+ * The single point where the app decides which category an automated transaction uses.
+ *
+ * NO CATEGORY NAME MAY APPEAR ANYWHERE ELSE IN THE CODEBASE (ATLAS.md §14.14) — not in an
+ * action, not in a page, not in a migration. Everything resolves through `app_settings` by id.
+ * A name in application code will one day create a duplicate category against a database that
+ * named things differently, silently splitting history in two.
+ *
+ * Note what is absent below: no `default` name, no `match` hint. A key is either mapped to a
+ * real category id or it is unmapped. There is no third state where the app guesses.
+ */
 
-export const SETTING_KEYS = [...CATEGORY_SETTINGS.map((s) => s.key), ...WALLET_SETTINGS.map((s) => s.key)];
+export interface CategorySetting {
+  key: string;
+  label: string;
+  kind: CategoryKind;
+  help: string;
+}
 
-export async function getSettings(): Promise<Record<string, string>> {
-  const { data, error } = await supabaseServer().from("app_settings").select("key, value");
-  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
-  const out: Record<string, string> = {};
-  for (const r of (data ?? []) as { key: string; value: string | null }[]) if (r.value) out[r.key] = r.value;
-  return out;
+export const CATEGORY_SETTINGS: CategorySetting[] = [
+  {
+    key: "cat_loan",
+    label: "Loan collection",
+    kind: "income",
+    help: "Income booked when you collect a month of a loan someone owes you.",
+  },
+  {
+    key: "cat_stock",
+    label: "Stock holding",
+    kind: "investment",
+    help: "The bucket your stock purchases move money into.",
+  },
+  {
+    key: "cat_stock_profit",
+    label: "Stock realized profit",
+    kind: "income",
+    help: "Income booked when you sell a stock above its average cost.",
+  },
+  {
+    key: "cat_stock_loss",
+    label: "Stock realized loss",
+    kind: "expense",
+    help: "Expense booked when you sell a stock below its average cost.",
+  },
+  {
+    key: "cat_stock_dividend",
+    label: "Stock dividend",
+    kind: "income",
+    help: "Income booked when you log a dividend.",
+  },
+  {
+    key: "cat_bond",
+    label: "Bond holding",
+    kind: "investment",
+    help: "The bucket your bond principal moves into.",
+  },
+  {
+    key: "cat_bond_coupon",
+    label: "Bond coupon",
+    kind: "income",
+    help: "Income booked when a bond pays a coupon.",
+  },
+  {
+    key: "cat_forex",
+    label: "Forex holding",
+    kind: "investment",
+    help: "The bucket your foreign-currency purchases move money into.",
+  },
+  {
+    key: "cat_forex_profit",
+    label: "Forex realized profit",
+    kind: "income",
+    help: "Income booked when you sell foreign currency above its average cost.",
+  },
+  {
+    key: "cat_forex_loss",
+    label: "Forex realized loss",
+    kind: "expense",
+    help: "Expense booked when you sell foreign currency below its average cost.",
+  },
+];
+
+export interface WalletSetting {
+  key: string;
+  label: string;
+  help: string;
+}
+
+export const WALLET_SETTINGS: WalletSetting[] = [
+  {
+    key: "wallet_stock",
+    label: "Default stock wallet",
+    help: "Pre-selected on the stock trade form.",
+  },
+  {
+    key: "wallet_bond",
+    label: "Default bond wallet",
+    help: "Pre-selected on the bond trade form.",
+  },
+];
+
+/**
+ * Ordered candidate names per key. The FIRST case-insensitive exact match on a category of the
+ * right kind wins.
+ *
+ * This is the ONLY place name-matching is allowed, it runs interactively from the Auto-detect
+ * button, and it never writes without the user confirming. The legacy Indonesian names are
+ * deliberate — they are what lets an existing database adopt this build without duplicates
+ * (ATLAS.md §18) — and they cost nothing, because these strings are never consulted at runtime.
+ */
+export const DETECT_HINTS: Record<string, string[]> = {
+  cat_loan: ["Loan Repayment", "Loan Collection", "Hutang"],
+  cat_stock: ["Stock", "Stocks", "Saham"],
+  cat_stock_profit: ["Trading Profit", "Trading", "Realized Gain"],
+  cat_stock_loss: ["Realized Loss", "Cut Loss", "Trading Loss"],
+  cat_stock_dividend: ["Dividend", "Dividends", "Dividen"],
+  cat_bond: ["Bonds", "Bond", "Obligasi"],
+  cat_bond_coupon: ["Bond Coupon", "Coupon", "Kupon"],
+  cat_forex: ["Forex", "FX", "Foreign Currency"],
+  cat_forex_profit: ["Forex Profit", "FX Profit"],
+  cat_forex_loss: ["Forex Loss", "FX Loss"],
+};
+
+// =============================================================================
+// Read
+// =============================================================================
+
+export const getSettings = cache(
+  async (): Promise<Record<string, string>> => {
+    const sb = supabaseServer();
+    const { data, error } = await sb.from("app_settings").select("key, value");
+    if (error) {
+      if (isMissingTable(error)) return {};
+      throw error;
+    }
+    const settings: Record<string, string> = {};
+    for (const row of (data ?? []) as { key: string; value: string | null }[]) {
+      if (row.value != null) settings[row.key] = row.value;
+    }
+    return settings;
+  }
+);
+
+export async function getSetting(key: string): Promise<string | null> {
+  const settings = await getSettings();
+  return settings[key] ?? null;
 }
 
 /**
- * Resolve the category id for an auto-transaction: the configured one if set & still
- * exists, else look up by the default name (creating it if missing). Used in action paths.
+ * Pure read path — no writes, no guessing.
+ *
+ * Returns null when the key is unmapped OR when the mapped id points at a category that no
+ * longer exists. A stale id from a deleted category counts as unmapped.
  */
-export async function resolveCategoryId(key: string, defaultName: string, kind: string): Promise<number | null> {
-  const sb = supabaseServer();
-  const { data: setting } = await sb.from("app_settings").select("value").eq("key", key).maybeSingle();
-  const id = setting?.value ? parseInt(setting.value, 10) : NaN;
-  if (Number.isFinite(id) && id > 0) {
-    const { data: exists } = await sb.from("categories").select("id").eq("id", id).maybeSingle();
-    if (exists) return id;
-  }
-  let { data: cat } = await sb.from("categories").select("id").eq("kind", kind).eq("name", defaultName).maybeSingle();
-  if (!cat) {
-    const ins = await sb.from("categories").insert({ kind, name: defaultName }).select("id").single();
-    cat = ins.data;
-  }
-  return cat?.id ?? null;
-}
-
-/** Pure resolver for read paths (dashboard/budgets) given preloaded settings + categories. */
 export function mappedCategoryId(
   settings: Record<string, string>,
-  cats: Category[],
-  key: string,
-  defaultName: string,
-  kind: string
+  categories: Category[],
+  key: string
 ): number | null {
-  const v = settings[key];
-  if (v) {
-    const id = parseInt(v, 10);
-    if (cats.some((c) => c.id === id)) return id;
-  }
-  return cats.find((c) => c.kind === kind && c.name === defaultName)?.id ?? null;
+  const raw = settings[key];
+  if (!raw) return null;
+  const id = parseInt(raw, 10);
+  if (!Number.isFinite(id)) return null;
+  return categories.some((c) => c.id === id) ? id : null;
 }
 
-/** Pure resolver for a default wallet: configured id, else a name hint, else the first wallet. */
 export function mappedWalletId(
   settings: Record<string, string>,
-  wallets: { id: number; name: string }[],
-  key: string,
-  matchHint: string
+  wallets: Wallet[],
+  key: string
 ): number | null {
-  const v = settings[key];
-  if (v) {
-    const id = parseInt(v, 10);
-    if (wallets.some((w) => w.id === id)) return id;
+  const raw = settings[key];
+  if (!raw) return null;
+  const id = parseInt(raw, 10);
+  if (!Number.isFinite(id)) return null;
+  return wallets.some((w) => w.id === id) ? id : null;
+}
+
+/**
+ * Write path — used inside server actions. NEVER creates a category.
+ *
+ * Returns null rather than inventing anything, so the caller can refuse with a readable
+ * message and write nothing at all.
+ */
+export async function resolveCategoryId(key: string): Promise<number | null> {
+  const [settings, categories] = await Promise.all([
+    getSettings(),
+    getCategories(true),
+  ]);
+  return mappedCategoryId(settings, categories, key);
+}
+
+export async function resolveWalletId(key: string): Promise<number | null> {
+  const [settings, wallets] = await Promise.all([
+    getSettings(),
+    getWallets(true),
+  ]);
+  return mappedWalletId(settings, wallets, key);
+}
+
+/** The standard refusal copy. Every automated action uses this, so the wording never drifts. */
+export function unmappedError(key: string): string {
+  const label = CATEGORY_SETTINGS.find((s) => s.key === key)?.label ?? key;
+  return `No category is mapped for "${label}". Set it in More → Settings.`;
+}
+
+/** Which required keys are still unmapped. Drives the dashboard setup banner. */
+export async function missingSettings(): Promise<
+  { key: string; label: string; kind: string }[]
+> {
+  const [settings, categories] = await Promise.all([
+    getSettings(),
+    getCategories(true),
+  ]);
+  return CATEGORY_SETTINGS.filter(
+    (setting) => mappedCategoryId(settings, categories, setting.key) === null
+  ).map(({ key, label, kind }) => ({ key, label, kind }));
+}
+
+// =============================================================================
+// Write
+// =============================================================================
+
+/**
+ * Persist a set of key/value settings.
+ *
+ * A BLANK VALUE DELETES THE ROW rather than being filtered out — otherwise a mapping is
+ * impossible to clear once set, and the Settings page's "— not set —" option is a lie.
+ */
+export async function saveSettings(
+  entries: Record<string, string>
+): Promise<void> {
+  const sb = supabaseServer();
+
+  const upserts: { key: string; value: string }[] = [];
+  const deletes: string[] = [];
+
+  for (const [key, value] of Object.entries(entries)) {
+    const trimmed = String(value ?? "").trim();
+    if (trimmed) upserts.push({ key, value: trimmed });
+    else deletes.push(key);
   }
-  if (matchHint) {
-    const m = wallets.find((w) => w.name.toLowerCase().includes(matchHint));
-    if (m) return m.id;
+
+  if (upserts.length > 0) {
+    const { error } = await sb
+      .from("app_settings")
+      .upsert(upserts, { onConflict: "key" });
+    if (error) throw new Error(error.message);
   }
-  return wallets[0]?.id ?? null;
+
+  if (deletes.length > 0) {
+    const { error } = await sb.from("app_settings").delete().in("key", deletes);
+    if (error) throw new Error(error.message);
+  }
+}
+
+/**
+ * Run DETECT_HINTS against the existing categories.
+ *
+ * Returns proposals only — the Settings page fills its selects with these and the user presses
+ * Save. Nothing is written here, and no category is ever created.
+ */
+export async function autoDetectSettings(): Promise<{
+  matched: Record<string, number>;
+  unmatched: string[];
+}> {
+  const categories = await getCategories(true);
+  const matched: Record<string, number> = {};
+  const unmatched: string[] = [];
+
+  for (const setting of CATEGORY_SETTINGS) {
+    const candidates = DETECT_HINTS[setting.key] ?? [];
+    const hit = candidates
+      .map((name) =>
+        categories.find(
+          (c) =>
+            c.kind === setting.kind &&
+            c.name.toLowerCase() === name.toLowerCase()
+        )
+      )
+      .find(Boolean);
+
+    if (hit) matched[setting.key] = hit.id;
+    else unmatched.push(setting.label);
+  }
+
+  return { matched, unmatched };
 }

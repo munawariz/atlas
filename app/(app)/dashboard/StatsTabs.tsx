@@ -1,42 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
-// Tab switcher for the home page: the day Overview, an Installments breakdown by provider,
-// and a Saving & Investment view (monthly stock buying + this month's contributions). All
-// are server-rendered and passed in; switching is instant.
+/**
+ * Three panels, instant switch.
+ *
+ * All three are rendered on the server and passed in as props, so switching costs nothing —
+ * no fetch, no spinner, no layout shift. The cost is one larger initial payload, which is the
+ * right trade for a phone-first app people flick between tabs on.
+ */
 export default function StatsTabs({
   overview,
-  providers,
+  installments,
   savingInvestment,
 }: {
-  overview: React.ReactNode;
-  providers: React.ReactNode;
-  savingInvestment: React.ReactNode;
+  overview: ReactNode;
+  installments: ReactNode;
+  savingInvestment: ReactNode;
 }) {
-  const [tab, setTab] = useState<"overview" | "providers" | "savinv">("overview");
-  const tabs: { key: "overview" | "providers" | "savinv"; label: string }[] = [
-    { key: "overview", label: "Overview" },
-    { key: "providers", label: "Installments" },
-    { key: "savinv", label: "Saving & Investment" },
+  const [active, setActive] = useState(0);
+
+  const tabs = [
+    { label: "Overview", panel: overview },
+    { label: "Installments", panel: installments },
+    { label: "Saving", panel: savingInvestment },
   ];
+
   return (
-    <>
-      <div className="flex gap-1.5">
-        {tabs.map((t) => (
+    <div className="space-y-4">
+      <div
+        role="tablist"
+        aria-label="Dashboard sections"
+        className="flex gap-1 rounded-full bg-cream-200 p-1"
+      >
+        {tabs.map((tab, i) => (
           <button
-            key={t.key}
+            key={tab.label}
+            role="tab"
             type="button"
-            onClick={() => setTab(t.key)}
-            className={`flex-1 rounded-full px-1 py-1.5 text-xs font-semibold leading-tight transition-colors ${
-              tab === t.key ? "bg-gold text-ink" : "border border-line/60 bg-ink-3 text-paper-dim"
+            id={`stats-tab-${i}`}
+            aria-selected={i === active}
+            aria-controls={`stats-panel-${i}`}
+            onClick={() => setActive(i)}
+            className={`h-9 flex-1 rounded-full text-[13px] font-semibold transition-colors ${
+              i === active
+                ? "bg-white text-forest-800 shadow-[var(--shadow-xs)]"
+                : "text-ink-500"
             }`}
           >
-            {t.label}
+            {tab.label}
           </button>
         ))}
       </div>
-      {tab === "overview" ? overview : tab === "providers" ? providers : savingInvestment}
-    </>
+
+      {tabs.map((tab, i) => (
+        <div
+          key={tab.label}
+          role="tabpanel"
+          id={`stats-panel-${i}`}
+          aria-labelledby={`stats-tab-${i}`}
+          hidden={i !== active}
+        >
+          {tab.panel}
+        </div>
+      ))}
+    </div>
   );
 }

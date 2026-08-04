@@ -3,69 +3,100 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { supabaseServer } from "@/lib/supabaseServer";
-import { parseTransactionForm } from "@/lib/txnForm";
+import { parseTransactionForm, optInt } from "@/lib/txnForm";
+import { monthKeyOf } from "@/lib/data";
+import type { TxnType } from "@/lib/types";
 
-export interface EditState {
-  error?: string;
+/** Revalidate every page a ledger row feeds. */
+function revalidateLedger() {
+  revalidatePath("/dashboard");
+  revalidatePath("/history");
+  revalidatePath("/savings");
+  revalidatePath("/charts");
+  revalidatePath("/balances");
 }
-
-// Return to the History view scoped to a transaction's month, so editing/deleting an
-// entry lands you back where you were rather than on the current month.
-const historyHref = (date?: string | null) => (date ? `/history?m=${date.slice(0, 7)}-01` : "/history");
 
 export async function updateTransaction(
   id: number,
-  _prev: EditState,
   formData: FormData
-): Promise<EditState> {
+): Promise<void> {
   const { row, error } = parseTransactionForm(formData);
-  if (error || !row) return { error: error ?? "Invalid entry." };
+  if (error || !row) throw new Error(error ?? "Could not save that.");
 
-  const { error: dbError } = await supabaseServer().from("transactions").update(row).eq("id", id);
-  if (dbError) return { error: dbError.message };
-
-  revalidatePath("/dashboard");
-  revalidatePath("/history");
-  redirect(historyHref(row.occurred_on));
-}
-
-// Bulk-set the source/destination wallet, category, and/or date on many transactions at
-// once (used by the History select mode). The caller restricts the selection to a single
-// type, so only the fields meaningful for that type are passed. The DB trigger reverses each
-// old row and applies the new one, so wallet balances stay correct (incl. date/month moves).
-export interface BulkPatch {
-  source_wallet_id?: number;
-  dest_wallet_id?: number;
-  category_id?: number;
-  occurred_on?: string; // YYYY-MM-DD
-}
-
-export async function bulkUpdateTransactions(
-  ids: number[],
-  patch: BulkPatch
-): Promise<{ error?: string; updated?: number }> {
-  if (!ids.length) return { error: "Nothing selected." };
-  const update: Record<string, number | string> = {};
-  if (patch.source_wallet_id != null) update.source_wallet_id = patch.source_wallet_id;
-  if (patch.dest_wallet_id != null) update.dest_wallet_id = patch.dest_wallet_id;
-  if (patch.category_id != null) update.category_id = patch.category_id;
-  if (patch.occurred_on && /^\d{4}-\d{2}-\d{2}$/.test(patch.occurred_on)) update.occurred_on = patch.occurred_on;
-  if (!Object.keys(update).length) return { error: "Pick something to change." };
-
-  const { error } = await supabaseServer().from("transactions").update(update).in("id", ids);
-  if (error) return { error: error.message };
-
-  revalidatePath("/dashboard");
-  revalidatePath("/history");
-  return { updated: ids.length };
-}
-
-export async function deleteTransaction(id: number): Promise<void> {
   const sb = supabaseServer();
-  const { data: txn } = await sb.from("transactions").select("occurred_on").eq("id", id).maybeSingle();
+  const { error: updateError } = await sb
+    .from("transactions")
+    .update(row)
+    .eq("id", id);
+  if (updateError) throw new Error(updateError.message);
+
+  revalidateLedger();
+  // Land back on the month the row now belongs to, not on the current month.
+  redirect(`/history?m=${monthKeyOf(row.occurred_on)}`);
+}
+
+export async function deleteTransaction(
+  id: number,
+  formData: FormData
+): Promise<void> {
+  const sb = supabaseServer();
+
+  // Read the month before deleting, so the redirect can return to it.
+  const { data: existing } = await sb
+    .from("transactions")
+    .select("occurred_on")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await sb.from("transactions").delete().eq("id", id);
-  if (error) throw error;
-  revalidatePath("/dashboard");
-  revalidatePath("/history");
-  redirect(historyHref(txn?.occurred_on as string | undefined));
+  if (error) throw new Error(error.message);
+
+  revalidateLedger();
+
+  const month =
+    (formData.get("month") as string | null) ||
+    (existing?.occurred_on ? monthKeyOf(String(existing.occurred_on)) : null);
+  redirect(month ? `/history?m=${month}` : "/history");
+}
+
+/**
+ * Apply one set of field changes to many rows at once.
+ *
+ * The client only offers fields that are meaningful for the selected type, and only allows a
+ * selection of a SINGLE type — so this never has to reason about mixed-type normalization.
+ * Blank fields are left untouched rather than nulled.
+ */
+export async function bulkUpdateTransactions(formData: FormData): Promise<void> {
+  const ids = String(formData.get("ids") ?? "")
+    .split(",")
+    .map((v) => parseInt(v, 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (ids.length === 0) return;
+
+  const type = String(formData.get("type") ?? "") as TxnType;
+  const patch: Record<string, unknown> = {};
+
+  const sourceWalletId = optInt(formData.get("source_wallet_id"));
+  const destWalletId = optInt(formData.get("dest_wallet_id"));
+  const categoryId = optInt(formData.get("category_id"));
+  const occurredOn = String(formData.get("occurred_on") ?? "").trim();
+
+  // Only assign columns the type actually uses, so a bulk edit can never write a wallet into
+  // a slot the balance rule expects to be null.
+  if (sourceWalletId && (type === "expense" || type === "saving" || type === "investment" || type === "transfer")) {
+    patch.source_wallet_id = sourceWalletId;
+  }
+  if (destWalletId && (type === "income" || type === "withdrawal" || type === "transfer")) {
+    patch.dest_wallet_id = destWalletId;
+  }
+  if (categoryId && type !== "transfer") patch.category_id = categoryId;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(occurredOn)) patch.occurred_on = occurredOn;
+
+  if (Object.keys(patch).length === 0) return;
+
+  const sb = supabaseServer();
+  const { error } = await sb.from("transactions").update(patch).in("id", ids);
+  if (error) throw new Error(error.message);
+
+  revalidateLedger();
 }

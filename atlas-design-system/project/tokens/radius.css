@@ -1,0 +1,17 @@
+/* Atlas corner radii. Soft-but-not-bubbly cards; fully-round pills for nav CTAs and chips. */
+:root{
+  --radius-xs:8px;
+  --radius-sm:12px;
+  --radius-md:16px;
+  --radius-lg:24px;
+  --radius-xl:28px;
+  --radius-2xl:40px;
+  --radius-full:999px;
+
+  --radius-button:10px;
+  --radius-input:12px;
+  --radius-card:24px;
+  --radius-card-lg:28px;
+  --radius-chip:999px;
+  --radius-phone:44px;
+}

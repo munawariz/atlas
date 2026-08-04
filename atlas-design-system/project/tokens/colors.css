@@ -1,0 +1,84 @@
+/* Atlas colour system. Base values sampled directly from the brand reference art. */
+:root{
+  /* Forest — the brand primary. #003511 is the sampled hero/marquee/footer green. */
+  --forest-900:#002b0f;
+  --forest-800:#003511;
+  --forest-700:#0a3d1c;
+  --forest-600:#1a5230;
+  --forest-500:#2f6a44;
+  --forest-300:#8fae9c;
+  --forest-200:#bcd0c3;
+  --forest-100:#d5e2d9;
+  --forest-50:#eaf1ec;
+
+  /* Lime — the single accent. #d3fa53 is the sampled sparkle / CTA / icon-chip lime. */
+  --lime-700:#a8d21f;
+  --lime-600:#c2ee36;
+  --lime-500:#d3fa53;
+  --lime-400:#dffb7d;
+  --lime-300:#eafda8;
+  --lime-200:#f2fecc;
+
+  /* Cream & sage — the two tinted card grounds. Both sampled. */
+  --cream-200:#efe9dd;
+  --cream-100:#f7f4ed;
+  --sage-300:#b3c2bd;
+  --sage-200:#cdd8d4;
+  --sage-100:#e2e9e6;
+
+  /* Ink — near-black headlines, warm-neutral greys for body copy. */
+  --ink-900:#111111;
+  --ink-800:#2b2b2b;
+  --ink-700:#4e4e4e;
+  --ink-500:#7a7a7a;
+  --ink-300:#b5b5b5;
+  --ink-200:#e3e3e3;
+  --ink-100:#f1f1f1;
+  --white:#ffffff;
+
+  /* Semantic money / status colours. Derived to sit beside the sampled palette. */
+  --positive-600:#0f7a3a;
+  --positive-500:#159a4a;
+  --positive-100:#e2f5e9;
+  --negative-600:#a63424;
+  --negative-500:#c8452f;
+  --negative-100:#fbe9e5;
+  --warning-500:#e8a33d;
+  --warning-100:#fdf2df;
+  --info-500:#2f6bd8;
+  --info-100:#e7eefc;
+
+  /* ---- Semantic aliases: use these in product code ---- */
+  --text-heading:var(--ink-900);
+  --text-body:var(--ink-700);
+  --text-muted:var(--ink-500);
+  --text-inverse:var(--white);
+  --text-inverse-muted:var(--forest-200);
+  --text-on-accent:var(--forest-800);
+  --text-brand:var(--forest-800);
+  --text-link:var(--forest-800);
+  --text-link-hover:var(--forest-600);
+
+  --surface-page:var(--white);
+  --surface-card:var(--white);
+  --surface-card-cream:var(--cream-100);
+  --surface-card-sage:var(--sage-100);
+  --surface-sunken:var(--cream-100);
+  --surface-inverse:var(--forest-800);
+  --surface-inverse-raised:var(--forest-700);
+  --surface-accent:var(--lime-500);
+  --surface-accent-soft:var(--lime-200);
+  --surface-chip:var(--sage-200);
+
+  --border-subtle:rgba(0,53,17,.10);
+  --border-default:rgba(0,53,17,.16);
+  --border-strong:var(--forest-800);
+  --border-inverse:rgba(255,255,255,.22);
+  --border-accent:var(--lime-500);
+
+  --accent:var(--lime-500);
+  --accent-hover:var(--lime-600);
+  --accent-press:var(--lime-700);
+  --focus-ring:var(--lime-500);
+  --focus-ring-inverse:var(--lime-400);
+}

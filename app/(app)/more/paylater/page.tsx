@@ -1,242 +1,282 @@
 import Link from "next/link";
-import { getPaylaterItems, getPaylaterPayments, getPaylaterProviders, getWallets } from "@/lib/data";
-import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
-import { TrashIcon } from "@/components/icons";
-import { addPaylater, deletePaylater } from "../actions";
 import MoneyInput from "@/components/MoneyInput";
-import PaylaterToggle from "./PaylaterToggle";
-import PaylaterEdit from "./PaylaterEdit";
-import PaylaterMonths from "./PaylaterMonths";
-import PaylaterPayGroup from "./PaylaterPayGroup";
+import { ChevronLeft } from "@/components/icons";
+import {
+  currentMonthKey,
+  getPaylaterItems,
+  getPaylaterPayments,
+  getPaylaterProviders,
+  getWallets,
+} from "@/lib/data";
+import { itemActiveIn } from "@/lib/autoBudget";
+import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
+import type { PaylaterItem } from "@/lib/types";
+import PaylaterItemCard from "./PaylaterItemCard";
+import { addPaylaterItem, payPaylaterMonths } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-// Every first-of-month from `first` to `last`, inclusive.
-const monthsBetween = (first: string, last: string) => {
-  const out: string[] = [];
-  let [y, m] = first.slice(0, 7).split("-").map(Number);
-  const [ly, lm] = last.slice(0, 7).split("-").map(Number);
-  while (y < ly || (y === ly && m <= lm)) {
-    out.push(`${y}-${String(m).padStart(2, "0")}-01`);
-    if (++m > 12) {
-      m = 1;
-      y++;
-    }
-  }
-  return out;
-};
+export const metadata = { title: "My Installment · Atlas" };
 
-const span = (a: string, b: string) => {
-  const [ay, am] = a.slice(0, 7).split("-").map(Number);
-  const [by, bm] = b.slice(0, 7).split("-").map(Number);
-  return by * 12 + bm - (ay * 12 + am) + 1;
-};
+/** Total months in an item's schedule. */
+function totalMonths(item: PaylaterItem): number {
+  const fy = parseInt(item.first_month_date.slice(0, 4), 10);
+  const fm = parseInt(item.first_month_date.slice(5, 7), 10);
+  const ly = parseInt(item.last_month_date.slice(0, 4), 10);
+  const lm = parseInt(item.last_month_date.slice(5, 7), 10);
+  return Math.max(1, (ly - fy) * 12 + (lm - fm) + 1);
+}
 
-export default async function PaylaterPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
-  const sp = await searchParams;
-  const monthKey = sp.m ?? `${todayISO().slice(0, 7)}-01`;
+export default async function PaylaterPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ m?: string }>;
+}) {
+  const { m } = await searchParams;
+  const monthKey = /^\d{4}-\d{2}-\d{2}$/.test(m ?? "")
+    ? (m as string)
+    : currentMonthKey();
 
-  const [items, paid, wallets, providers] = await Promise.all([
+  const [items, payments, providers, wallets] = await Promise.all([
     getPaylaterItems(),
     getPaylaterPayments(),
+    getPaylaterProviders(),
     getWallets(),
-    getPaylaterProviders(true), // include archived so existing groupings still render
   ]);
-  const providerById = new Map(providers.map((pr) => [pr.id, pr]));
-  // Active providers are offered in the add/edit pickers; archived ones only label groups.
-  const pickProviders = providers.filter((pr) => !pr.archived).map((pr) => ({ id: pr.id, name: pr.name }));
-  const paidSet = new Set(paid.map((p) => `${p.item_id}:${p.month}`));
-  const isPaid = (p: (typeof items)[number]) => paidSet.has(`${p.id}:${monthKey}`);
-  const paidWithTxn = new Set(paid.filter((p) => p.expense_txn_id != null).map((p) => `${p.item_id}:${p.month}`));
-  const hasExpense = (p: (typeof items)[number]) => paidWithTxn.has(`${p.id}:${monthKey}`);
 
-  const active = items.filter((p) => p.first_month_date <= monthKey && monthKey <= p.last_month_date);
-  // Sort by: (0) one-month "1/1" installments first (top priority), then (1) months left
-  // owed (most first), (2) shorter total installment — so a 6-month/1-left ranks above a
-  // 12-month/1-left. (Provider grouping handles clustering by provider.)
-  const totalMonths = (p: (typeof items)[number]) => span(p.first_month_date, p.last_month_date);
-  active.sort((a, b) => {
-    const oneA = totalMonths(a) === 1;
-    const oneB = totalMonths(b) === 1;
-    if (oneA !== oneB) return oneA ? -1 : 1;
-    const leftA = span(monthKey, a.last_month_date);
-    const leftB = span(monthKey, b.last_month_date);
-    if (leftA !== leftB) return leftB - leftA; // most months still owed first
-    return totalMonths(a) - totalMonths(b);
-  });
-  const owed = active.filter((p) => !isPaid(p));
-  const dueTotal = owed.reduce((a, p) => a + p.monthly_amount, 0);
-  const paidTotal = active.filter(isPaid).reduce((a, p) => a + p.monthly_amount, 0);
+  const paidByItem = new Map<number, Set<string>>();
+  for (const payment of payments) {
+    const set = paidByItem.get(payment.item_id) ?? new Set<string>();
+    set.add(payment.month);
+    paidByItem.set(payment.item_id, set);
+  }
 
-  // Group the month's active installments by provider (provider sort_order; an archived
-  // provider still labels its group). Items with no/deleted provider fall into a trailing
-  // "Other" group. With no providers defined at all, the list renders flat (no headers).
-  type ActiveItem = (typeof active)[number];
-  const itemsByProvider = new Map<number, ActiveItem[]>();
-  const ungrouped: ActiveItem[] = [];
-  for (const p of active) {
-    const pid = p.provider_id ?? null;
-    if (pid && providerById.has(pid)) {
-      (itemsByProvider.get(pid) ?? itemsByProvider.set(pid, []).get(pid)!).push(p);
-    } else {
-      ungrouped.push(p);
+  const active = items.filter((item) => itemActiveIn(item, monthKey));
+
+  const owedItems = active.filter(
+    (item) => !paidByItem.get(item.id)?.has(monthKey)
+  );
+  const owed = owedItems.reduce((sum, item) => sum + item.monthly_amount, 0);
+  const paid = active
+    .filter((item) => paidByItem.get(item.id)?.has(monthKey))
+    .reduce((sum, item) => sum + item.monthly_amount, 0);
+
+  /**
+   * Sort: single-month items first, then most months still owed, then shorter total schedule.
+   * The last tiebreak is what puts a 6-month/1-left above a 12-month/1-left — it is closer to
+   * being finished in proportion, so it deserves the higher slot.
+   */
+  function rank(item: PaylaterItem): [number, number, number] {
+    const total = totalMonths(item);
+    const paidCount = paidByItem.get(item.id)?.size ?? 0;
+    return [total === 1 ? 0 : 1, -(total - paidCount), total];
+  }
+
+  const sorted = [...active].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    for (let i = 0; i < ra.length; i += 1) {
+      if (ra[i] !== rb[i]) return ra[i] - rb[i];
     }
-  }
-  const groups: { key: string; name: string | null; items: ActiveItem[] }[] = [];
-  for (const pr of providers) {
-    const its = itemsByProvider.get(pr.id);
-    if (its && its.length) groups.push({ key: String(pr.id), name: pr.name, items: its });
-  }
-  if (ungrouped.length) groups.push({ key: "none", name: null, items: ungrouped });
-  const grouped = groups.some((g) => g.name !== null);
-  const groupOwed = (its: ActiveItem[]) => its.filter((p) => !isPaid(p)).reduce((a, p) => a + p.monthly_amount, 0);
+    return a.item.localeCompare(b.item);
+  });
 
-  const renderCard = (p: ActiveItem) => {
-    const paid = isPaid(p);
-    const months = span(p.first_month_date, p.last_month_date);
-    const monthsLeft = span(monthKey, p.last_month_date); // this month through the last
-    const monthList = monthsBetween(p.first_month_date, p.last_month_date).map((m) => ({
-      month: m,
-      paid: paidSet.has(`${p.id}:${m}`),
-    }));
-    return (
-      <div key={p.id} className="card px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-paper">{p.item}</div>
-            <div className="text-xs text-paper-dim">
-              {formatRupiah(p.monthly_amount)}/mo · {monthsLeft}/{months} {months > 1 ? "months" : "month"} left
-              {p.note ? ` · ${p.note}` : ""}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <PaylaterToggle
-              itemId={p.id}
-              item={p.item}
-              month={monthKey}
-              amount={p.monthly_amount}
-              paid={paid}
-              hasExpense={hasExpense(p)}
-              wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-            />
-            <PaylaterEdit
-              id={p.id}
-              item={p.item}
-              monthlyAmount={p.monthly_amount}
-              firstMonth={p.first_month_date}
-              lastMonth={p.last_month_date}
-              providerId={p.provider_id ?? null}
-              note={p.note}
-              providers={pickProviders}
-            />
-            <form action={deletePaylater.bind(null, p.id)}>
-              <SubmitButton
-                label="Delete"
-                className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
-              >
-                <TrashIcon className="h-[18px] w-[18px]" />
-              </SubmitButton>
-            </form>
-          </div>
-        </div>
-        <PaylaterMonths months={monthList} current={monthKey} />
-      </div>
-    );
-  };
+  // Group by provider, in provider sort order, with a trailing "Other".
+  const groups = providers.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    items: sorted.filter((item) => item.provider_id === provider.id),
+  }));
+  const orphans = sorted.filter(
+    (item) =>
+      item.provider_id == null ||
+      !providers.some((p) => p.id === item.provider_id)
+  );
+  if (orphans.length > 0) {
+    groups.push({ id: -1, name: "Other", items: orphans });
+  }
+  const populated = groups.filter((g) => g.items.length > 0);
+
+  const defaultWalletId = wallets[0]?.id ?? null;
 
   return (
-    <div className="space-y-4 pt-4">
-      <div className="flex items-center justify-between">
-        <Link href="/more" className="text-sm text-paper-dim active:text-paper">‹ More</Link>
-        <h1 className="font-display text-xl font-medium tracking-tight text-paper">My Installment</h1>
-        <span className="w-12" />
-      </div>
+    <div className="space-y-4 privacy-scope">
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          My Installment
+        </h1>
+      </header>
 
-      <div className="flex justify-end">
-        <Link href="/more/providers" className="text-xs text-paper-dim active:text-paper">Manage providers ›</Link>
-      </div>
+      <MonthSwitcher monthKey={monthKey} />
 
-      <MonthSwitcher monthKey={monthKey} basePath="/more/paylater" />
+      <section className="grid grid-cols-3 gap-2">
+        {[
+          { label: "Due", value: `${owedItems.length}`, money: false },
+          { label: "Owed", value: formatRupiah(owed), money: true },
+          { label: "Paid", value: formatRupiah(paid), money: true },
+        ].map((card) => (
+          <div
+            key={card.label}
+            className="rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
+          >
+            <div className="label">{card.label}</div>
+            <div
+              className={`mt-0.5 font-display text-[15px] font-bold text-ink-900 ${
+                card.money ? "tabular-nums" : ""
+              }`}
+            >
+              {card.value}
+            </div>
+          </div>
+        ))}
+      </section>
 
-      <div className="card p-4">
-        <div className="text-sm text-paper-dim">
-          {active.length} due in {formatMonth(monthKey)} ·{" "}
-          <span className="font-display text-sand">{formatRupiah(dueTotal)}</span> owed
-        </div>
-        <div className="mt-1 text-xs text-paper-faint">
-          <span className="text-green">{formatRupiah(paidTotal)}</span> already paid this month · {items.length} items total
-        </div>
-      </div>
+      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+        <summary className="px-4 py-3.5 text-[15px] font-semibold text-ink-900">
+          Add an installment
+        </summary>
+        <form
+          action={addPaylaterItem}
+          className="space-y-2 border-t border-[var(--border-subtle)] p-4"
+        >
+          <input
+            name="item"
+            placeholder="What you bought"
+            aria-label="Item name"
+            required
+            className="field"
+          />
+          <MoneyInput
+            name="monthly_amount"
+            placeholder="Monthly amount"
+            ariaLabel="Monthly amount"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="label mb-1 block">First month</span>
+              <input
+                type="month"
+                name="first_month_date"
+                defaultValue={monthKey.slice(0, 7)}
+                className="field"
+              />
+            </label>
+            <label className="block">
+              <span className="label mb-1 block">Last month</span>
+              <input
+                type="month"
+                name="last_month_date"
+                defaultValue={monthKey.slice(0, 7)}
+                className="field"
+              />
+            </label>
+          </div>
+          <select name="provider_id" aria-label="Provider" className="field" defaultValue="">
+            <option value="">No provider</option>
+            {providers.map((p) => (
+              <option key={p.id} value={String(p.id)}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <input
+            name="note"
+            placeholder="Note (optional)"
+            aria-label="Note"
+            className="field"
+          />
+          <SubmitButton className="btn btn-primary w-full">
+            Add installment
+          </SubmitButton>
+        </form>
+      </details>
 
-      <form action={addPaylater} className="card space-y-2 p-4">
-        <input name="item" placeholder="Item name" className="field" />
-        <MoneyInput name="monthly_amount" placeholder="Monthly Rp" className="field" />
-        <div className="flex gap-2">
-          <label className="flex-1 text-xs text-paper-dim">
-            First month
-            <input type="date" name="first_month" defaultValue={monthKey} className="field mt-1 [color-scheme:dark]" />
-          </label>
-          <label className="flex-1 text-xs text-paper-dim">
-            Last month
-            <input type="date" name="last_month" defaultValue={monthKey} className="field mt-1 [color-scheme:dark]" />
-          </label>
-        </div>
-        {pickProviders.length > 0 && (
-          <label className="block text-xs text-paper-dim">
-            Provider
-            <select name="provider_id" defaultValue="" className="field mt-1 [color-scheme:dark]">
-              <option value="" className="bg-ink-2">No provider</option>
-              {pickProviders.map((pr) => (
-                <option key={pr.id} value={pr.id} className="bg-ink-2">{pr.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
-        <input name="note" placeholder="Note (optional)" className="field" />
-        <SubmitButton pendingText="Adding…" className="w-full rounded-2xl bg-green py-2.5 font-semibold text-ink">
-          Add item
-        </SubmitButton>
-      </form>
-
-      {active.length === 0 ? (
-        <p className="pt-6 text-center text-sm text-paper-faint">Nothing due in {formatMonth(monthKey)}.</p>
-      ) : grouped ? (
-        <div className="space-y-5">
-          {groups.map((g) => {
-            const unpaid = g.items.filter((p) => !isPaid(p));
-            return (
-              <section key={g.key} className="space-y-2">
-                <div className="flex items-center justify-between gap-2 px-1">
-                  <div className="flex items-baseline gap-2">
-                    <h2 className="label text-amber">{g.name ?? "Other"}</h2>
-                    <span className="text-xs text-paper-faint">
-                      {g.items.length} item{g.items.length > 1 ? "s" : ""}
-                      {groupOwed(g.items) > 0 && (
-                        <>
-                          {" · "}
-                          <span className="text-sand">{formatRupiah(groupOwed(g.items))}</span> owed
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  {unpaid.length > 0 && (
-                    <PaylaterPayGroup
-                      groupName={g.name ?? "Other"}
-                      items={unpaid.map((p) => ({ id: p.id, item: p.item, amount: p.monthly_amount }))}
-                      month={monthKey}
-                      wallets={wallets.map((w) => ({ id: w.id, name: w.name }))}
-                    />
-                  )}
-                </div>
-                {g.items.map(renderCard)}
-              </section>
-            );
-          })}
-        </div>
+      {populated.length === 0 ? (
+        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          Nothing running in {formatMonth(monthKey)}.
+        </p>
       ) : (
-        <div className="space-y-2">{active.map(renderCard)}</div>
+        populated.map((group) => {
+          const unpaid = group.items.filter(
+            (item) => !paidByItem.get(item.id)?.has(monthKey)
+          );
+
+          return (
+            <section key={group.id}>
+              <div className="mb-2 flex items-baseline justify-between gap-2">
+                <h2 className="label">{group.name}</h2>
+                <span className="text-[12px] font-semibold text-ink-500 tabular-nums">
+                  {formatRupiah(
+                    unpaid.reduce((sum, i) => sum + i.monthly_amount, 0)
+                  )}{" "}
+                  owed
+                </span>
+              </div>
+
+              {unpaid.length > 1 && (
+                <details className="mb-2 overflow-hidden rounded-[var(--radius-card)] bg-sage-100">
+                  <summary className="px-4 py-3 text-[14px] font-semibold text-forest-800">
+                    Pay all {unpaid.length} in {group.name}
+                  </summary>
+                  <form action={payPaylaterMonths} className="space-y-2 p-4 pt-0">
+                    <input type="hidden" name="month" value={monthKey} />
+                    <input
+                      type="hidden"
+                      name="item_ids"
+                      value={unpaid.map((i) => i.id).join(",")}
+                    />
+                    <select
+                      name="wallet_id"
+                      defaultValue={defaultWalletId ?? ""}
+                      aria-label="Pay from wallet"
+                      className="field"
+                    >
+                      <option value="">Choose a wallet</option>
+                      {wallets.map((w) => (
+                        <option key={w.id} value={String(w.id)}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      name="occurred_on"
+                      defaultValue={todayISO()}
+                      aria-label="Payment date"
+                      className="field"
+                    />
+                    <SubmitButton className="btn btn-primary btn-sm w-full">
+                      Book {unpaid.length} expenses
+                    </SubmitButton>
+                  </form>
+                </details>
+              )}
+
+              <div className="space-y-2">
+                {group.items.map((item) => (
+                  <PaylaterItemCard
+                    key={item.id}
+                    item={item}
+                    monthKey={monthKey}
+                    paidMonths={paidByItem.get(item.id) ?? new Set()}
+                    wallets={wallets}
+                    providers={providers}
+                    defaultWalletId={defaultWalletId}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })
       )}
     </div>
   );

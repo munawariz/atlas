@@ -2,285 +2,363 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
-import { resolveCategoryId } from "@/lib/settings";
+import { resolveCategoryId, unmappedError } from "@/lib/settings";
+import { getStockTrades } from "@/lib/stocks";
+import type { SaveScope } from "@/lib/types";
 
-function digits(v: FormDataEntryValue | null): number {
-  return parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
-}
-function optInt(v: FormDataEntryValue | null): number | null {
+const digits = (v: FormDataEntryValue | null) =>
+  parseInt(String(v ?? "").replace(/\D/g, "") || "0", 10);
+const optInt = (v: FormDataEntryValue | null) => {
   const n = parseInt(String(v ?? ""), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
-}
+};
+const text = (v: FormDataEntryValue | null) => String(v ?? "").trim();
+const monthDate = (v: FormDataEntryValue | null) => {
+  const m = /^(\d{4}-\d{2})(?:-\d{2})?$/.exec(String(v ?? "").trim());
+  return m ? `${m[1]}-01` : null;
+};
 
 export interface StockState {
   ok?: boolean;
   error?: string;
   nonce?: number;
-  savedLabel?: string;
 }
 
-function revalidate() {
+function revalidateStocks() {
   revalidatePath("/stocks");
+  revalidatePath("/stocks/targets");
   revalidatePath("/dashboard");
   revalidatePath("/savings");
   revalidatePath("/history");
+  revalidatePath("/charts");
+  revalidatePath("/more/cashflow");
 }
 
-export async function addStockTrade(_prev: StockState, formData: FormData): Promise<StockState> {
-  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase();
-  const side = String(formData.get("side") ?? "buy") === "sell" ? "sell" : "buy";
-  const lots = digits(formData.get("lots"));
-  const idr = digits(formData.get("idr")); // money spent (buy) / received (sell)
+// =============================================================================
+// Trades
+// =============================================================================
+
+/**
+ * Record a buy or a sell.
+ *
+ * A sell books TWO ledger rows: a `withdrawal` of the cost basis back into the wallet, plus a
+ * separate P/L row — income on a profit, expense on a loss. Splitting them is what keeps the
+ * savings bucket balance honest: only the original cost comes back out of the bucket, and the
+ * gain or loss is recognised as its own flow.
+ *
+ * Every mapping is resolved BEFORE the first write (ATLAS.md §11). A sale inserts three rows;
+ * discovering `cat_stock_profit` unmapped halfway through would leave a half-booked trade.
+ */
+export async function recordStockTrade(
+  _prev: StockState,
+  formData: FormData
+): Promise<StockState> {
+  const ticker = text(formData.get("ticker")).toUpperCase();
+  const side = text(formData.get("side")) === "sell" ? "sell" : "buy";
+  const lots = optInt(formData.get("lots"));
+  const idr = digits(formData.get("idr"));
+  const occurredOn = text(formData.get("occurred_on"));
   const walletId = optInt(formData.get("wallet_id"));
-  const date = String(formData.get("date") ?? "");
+  // An opening position establishes cost basis without moving any money.
+  const opening = text(formData.get("opening")) === "1";
 
   if (!ticker) return { error: "Enter a ticker." };
-  if (!lots) return { error: "Enter the number of lots." };
-  if (!idr) return { error: side === "buy" ? "Enter money spent." : "Enter money received." };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Pick a date." };
-  if (!walletId) return { error: "Choose a wallet." };
+  if (!lots) return { error: "Enter how many lots." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurredOn)) return { error: "Pick a date." };
+  if (!opening && idr <= 0) return { error: "Enter an amount." };
+  if (!opening && !walletId) return { error: "Choose a wallet." };
 
   const sb = supabaseServer();
-  const stockCat = await resolveCategoryId("cat_stock", "Stock", "investment");
 
-  let txnId: number | null = null;
-  let plTxnId: number | null = null;
-  let realizedPl: number | null = null;
-  let savedLabel = `Bought ${ticker}`;
+  if (opening) {
+    const { error } = await sb.from("stock_trades").insert({
+      ticker,
+      side: "buy",
+      lots,
+      idr,
+      occurred_on: occurredOn,
+      opening: true,
+      wallet_id: null,
+      txn_id: null,
+    });
+    if (error) return { error: error.message };
+    revalidateStocks();
+    return { ok: true, nonce: Date.now() };
+  }
+
+  // --- Resolve every mapping this path needs, up front --------------------
+  const stockCategoryId = await resolveCategoryId("cat_stock");
+  if (stockCategoryId === null) return { error: unmappedError("cat_stock") };
 
   if (side === "buy") {
-    // Buy = investment out of the wallet into the Stock bucket.
-    const { data: txn, error } = await sb
+    const { data: created } = await sb
       .from("transactions")
       .insert({
-        occurred_on: date,
+        occurred_on: occurredOn,
         type: "investment",
         amount: idr,
-        description: `Beli ${ticker} ${lots} lot`,
-        category_id: stockCat,
+        description: `Buy ${ticker} ${lots} lot`,
+        category_id: stockCategoryId,
         source_wallet_id: walletId,
         dest_wallet_id: null,
       })
       .select("id")
-      .single();
+      .maybeSingle();
+
+    const { error } = await sb.from("stock_trades").insert({
+      ticker,
+      side: "buy",
+      lots,
+      idr,
+      occurred_on: occurredOn,
+      opening: false,
+      wallet_id: walletId,
+      txn_id: created ? Number(created.id) : null,
+    });
     if (error) return { error: error.message };
-    txnId = txn?.id ?? null;
-  } else {
-    // Sell = withdraw the COST BASIS of the sold lots back to the wallet, then book the
-    // realized P/L (proceeds − cost) as Income:Trading (profit) or Expense:Cut Loss (loss).
-    const { data: prior } = await sb.from("stock_trades").select("side, lots, idr").eq("ticker", ticker);
-    let buyLots = 0;
-    let buyIdr = 0;
-    for (const t of prior ?? []) {
-      if ((t as { side: string }).side === "buy") {
-        buyLots += (t as { lots: number }).lots;
-        buyIdr += (t as { idr: number }).idr;
-      }
-    }
-    const avgPerLot = buyLots ? buyIdr / buyLots : 0;
-    const realizedCost = Math.round(lots * avgPerLot);
-    realizedPl = idr - realizedCost; // proceeds − cost basis
 
-    if (realizedCost > 0) {
-      const { data: wtxn, error } = await sb
-        .from("transactions")
-        .insert({
-          occurred_on: date,
-          type: "withdrawal",
-          amount: realizedCost,
-          description: `Jual ${ticker} ${lots} lot`,
-          category_id: stockCat,
-          source_wallet_id: null,
-          dest_wallet_id: walletId,
-        })
-        .select("id")
-        .single();
-      if (error) return { error: error.message };
-      txnId = wtxn?.id ?? null;
-    }
-
-    if (realizedPl > 0) {
-      const tradingCat = await resolveCategoryId("cat_stock_profit", "Trading", "income");
-      const { data: ptxn, error } = await sb
-        .from("transactions")
-        .insert({
-          occurred_on: date,
-          type: "income",
-          amount: realizedPl,
-          description: `Profit ${ticker} ${lots} lot`,
-          category_id: tradingCat,
-          source_wallet_id: null,
-          dest_wallet_id: walletId,
-        })
-        .select("id")
-        .single();
-      if (error) return { error: error.message };
-      plTxnId = ptxn?.id ?? null;
-      savedLabel = `Sold ${ticker} · profit`;
-    } else if (realizedPl < 0) {
-      const cutCat = await resolveCategoryId("cat_stock_loss", "Cut Loss", "expense");
-      const { data: ptxn, error } = await sb
-        .from("transactions")
-        .insert({
-          occurred_on: date,
-          type: "expense",
-          amount: -realizedPl,
-          description: `Cut loss ${ticker} ${lots} lot`,
-          category_id: cutCat,
-          source_wallet_id: walletId,
-          dest_wallet_id: null,
-        })
-        .select("id")
-        .single();
-      if (error) return { error: error.message };
-      plTxnId = ptxn?.id ?? null;
-      savedLabel = `Sold ${ticker} · loss`;
-    } else {
-      savedLabel = `Sold ${ticker}`;
-    }
+    revalidateStocks();
+    return { ok: true, nonce: Date.now() };
   }
 
-  const { error: stErr } = await sb.from("stock_trades").insert({
-    ticker,
-    side,
-    lots,
-    idr,
-    occurred_on: date,
-    opening: false,
-    wallet_id: walletId,
-    txn_id: txnId,
-    pl_txn_id: plTxnId,
-    realized_pl: realizedPl,
-  });
-  if (stErr) return { error: stErr.message };
+  // --- Sell ---------------------------------------------------------------
+  const trades = await getStockTrades();
+  const forTicker = trades.filter((t) => t.ticker === ticker);
+  const buyLots = forTicker
+    .filter((t) => t.side === "buy")
+    .reduce((sum, t) => sum + t.lots, 0);
+  const sellLots = forTicker
+    .filter((t) => t.side === "sell")
+    .reduce((sum, t) => sum + t.lots, 0);
+  const held = buyLots - sellLots;
 
-  revalidate();
-  return { ok: true, nonce: Date.now(), savedLabel };
-}
+  if (held < lots) {
+    return { error: `You only hold ${held} lot${held === 1 ? "" : "s"} of ${ticker}.` };
+  }
 
-// Log a cash dividend received from a stock: books it as income ("Dividen") into the
-// chosen wallet and records it in stock_dividends for the per-ticker lifetime total.
-export async function addStockDividend(_prev: StockState, formData: FormData): Promise<StockState> {
-  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const idr = digits(formData.get("idr"));
-  const walletId = optInt(formData.get("wallet_id"));
-  const date = String(formData.get("date") ?? "");
-  const note = String(formData.get("note") ?? "").trim() || null;
+  // Average cost, per lot.
+  const buyIdr = forTicker
+    .filter((t) => t.side === "buy")
+    .reduce((sum, t) => sum + t.idr, 0);
+  const avgPerLot = buyLots > 0 ? buyIdr / buyLots : 0;
+  const realizedCost = Math.round(lots * avgPerLot);
+  const realizedPl = idr - realizedCost;
 
-  if (!ticker) return { error: "Enter a ticker." };
-  if (!idr) return { error: "Enter the dividend amount." };
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Pick a date." };
-  if (!walletId) return { error: "Choose a wallet." };
+  // Resolve the P/L category BEFORE writing anything.
+  const plKey = realizedPl >= 0 ? "cat_stock_profit" : "cat_stock_loss";
+  const plCategoryId = realizedPl === 0 ? null : await resolveCategoryId(plKey);
+  if (realizedPl !== 0 && plCategoryId === null) {
+    return { error: unmappedError(plKey) };
+  }
 
-  const sb = supabaseServer();
-  const divCat = await resolveCategoryId("cat_stock_dividend", "Dividen", "income");
-
-  const { data: txn, error } = await sb
+  // Cost basis comes back out of the bucket.
+  const { data: costRow } = await sb
     .from("transactions")
     .insert({
-      occurred_on: date,
-      type: "income",
-      amount: idr,
-      description: `Dividen ${ticker}`,
-      category_id: divCat,
+      occurred_on: occurredOn,
+      type: "withdrawal",
+      amount: realizedCost,
+      description: `Sell ${ticker} ${lots} lot`,
+      category_id: stockCategoryId,
       source_wallet_id: null,
       dest_wallet_id: walletId,
     })
     .select("id")
-    .single();
-  if (error) return { error: error.message };
+    .maybeSingle();
 
-  const { error: dErr } = await sb.from("stock_dividends").insert({
-    ticker,
-    idr,
-    occurred_on: date,
-    wallet_id: walletId,
-    txn_id: txn?.id ?? null,
-    note,
-  });
-  if (dErr) {
-    if (txn?.id) await sb.from("transactions").delete().eq("id", txn.id); // don't orphan the income row
-    return { error: dErr.message };
+  let plTxnId: number | null = null;
+  if (realizedPl !== 0 && plCategoryId !== null) {
+    const { data: plRow } = await sb
+      .from("transactions")
+      .insert({
+        occurred_on: occurredOn,
+        type: realizedPl > 0 ? "income" : "expense",
+        amount: Math.abs(realizedPl),
+        description: `${realizedPl > 0 ? "Profit" : "Loss"} ${ticker} ${lots} lot`,
+        category_id: plCategoryId,
+        source_wallet_id: realizedPl > 0 ? null : walletId,
+        dest_wallet_id: realizedPl > 0 ? walletId : null,
+      })
+      .select("id")
+      .maybeSingle();
+    plTxnId = plRow ? Number(plRow.id) : null;
   }
 
-  revalidate();
-  return { ok: true, nonce: Date.now(), savedLabel: `Dividend ${ticker}` };
+  const { error } = await sb.from("stock_trades").insert({
+    ticker,
+    side: "sell",
+    lots,
+    idr,
+    occurred_on: occurredOn,
+    opening: false,
+    wallet_id: walletId,
+    txn_id: costRow ? Number(costRow.id) : null,
+    pl_txn_id: plTxnId,
+    realized_pl: realizedPl,
+  });
+  if (error) return { error: error.message };
+
+  revalidateStocks();
+  return { ok: true, nonce: Date.now() };
 }
 
-export async function deleteStockDividend(id: number) {
+/** Delete a trade and both ledger rows it booked. */
+export async function deleteStockTrade(id: number): Promise<void> {
   const sb = supabaseServer();
-  const { data: d } = await sb.from("stock_dividends").select("txn_id").eq("id", id).maybeSingle();
+  const { data: trade } = await sb
+    .from("stock_trades")
+    .select("txn_id, pl_txn_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  const txnIds = [trade?.txn_id, trade?.pl_txn_id].filter(
+    (v): v is number => v != null
+  );
+  if (txnIds.length > 0) {
+    await sb.from("transactions").delete().in("id", txnIds);
+  }
+
+  await sb.from("stock_trades").delete().eq("id", id);
+  revalidateStocks();
+}
+
+// =============================================================================
+// Dividends
+// =============================================================================
+
+export async function recordStockDividend(
+  _prev: StockState,
+  formData: FormData
+): Promise<StockState> {
+  const ticker = text(formData.get("ticker")).toUpperCase();
+  const idr = digits(formData.get("idr"));
+  const occurredOn = text(formData.get("occurred_on"));
+  const walletId = optInt(formData.get("wallet_id"));
+
+  if (!ticker) return { error: "Enter a ticker." };
+  if (idr <= 0) return { error: "Enter an amount." };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(occurredOn)) return { error: "Pick a date." };
+  if (!walletId) return { error: "Choose a wallet." };
+
+  const categoryId = await resolveCategoryId("cat_stock_dividend");
+  if (categoryId === null) return { error: unmappedError("cat_stock_dividend") };
+
+  const sb = supabaseServer();
+  const { data: created } = await sb
+    .from("transactions")
+    .insert({
+      occurred_on: occurredOn,
+      type: "income",
+      amount: idr,
+      description: `Dividend ${ticker}`,
+      category_id: categoryId,
+      source_wallet_id: null,
+      dest_wallet_id: walletId,
+    })
+    .select("id")
+    .maybeSingle();
+
+  const { error } = await sb.from("stock_dividends").insert({
+    ticker,
+    idr,
+    occurred_on: occurredOn,
+    wallet_id: walletId,
+    txn_id: created ? Number(created.id) : null,
+    note: text(formData.get("note")) || null,
+  });
+  if (error) return { error: error.message };
+
+  revalidateStocks();
+  return { ok: true, nonce: Date.now() };
+}
+
+export async function deleteStockDividend(id: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data: dividend } = await sb
+    .from("stock_dividends")
+    .select("txn_id")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (dividend?.txn_id) {
+    await sb.from("transactions").delete().eq("id", dividend.txn_id);
+  }
   await sb.from("stock_dividends").delete().eq("id", id);
-  if (d?.txn_id) await sb.from("transactions").delete().eq("id", d.txn_id);
-  revalidate();
+  revalidateStocks();
 }
 
-function revalidateStockTargets() {
-  revalidatePath("/stocks");
-  revalidatePath("/stocks/targets");
-  revalidatePath("/dashboard");
-  revalidatePath("/more/cashflow");
-}
+// =============================================================================
+// Buy targets — the same three save scopes as budgets (ATLAS.md §3.4)
+// =============================================================================
 
-// Set a buy target of `lots` (optional speculative price) for a ticker. Same scopes as
-// category budgets: "month" = this month only (per-month override); "forward" = this month
-// and every month after (a base rule, clearing later rules/overrides); "all" = every month
-// (a single base rule from the beginning, clearing all rules/overrides).
-export async function saveStockTarget(formData: FormData) {
-  const ticker = String(formData.get("ticker") ?? "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const lots = digits(formData.get("lots"));
-  const price = digits(formData.get("price"));
-  const month = String(formData.get("month") ?? "");
-  const scope = String(formData.get("scope") ?? "forward");
-  if (!ticker || lots <= 0) return;
-  const priceVal = price > 0 ? price : null;
-  const validMonth = /^\d{4}-\d{2}-01$/.test(month);
+const FOREVER = "1900-01-01";
+
+export async function saveStockTarget(formData: FormData): Promise<void> {
+  const ticker = text(formData.get("ticker")).toUpperCase();
+  const month = monthDate(formData.get("month"));
+  const lots = optInt(formData.get("lots"));
+  const rawPrice = digits(formData.get("price"));
+  const price = rawPrice > 0 ? rawPrice : null;
+  const scope = String(formData.get("scope") ?? "forward") as SaveScope;
+
+  if (!ticker || !month || !lots) return;
+
   const sb = supabaseServer();
 
   if (scope === "all") {
-    // One base rule from the dawn of time; wipe every override and other rule.
     await sb.from("stock_targets").delete().eq("ticker", ticker);
     await sb.from("stock_target_months").delete().eq("ticker", ticker);
-    const { error } = await sb.from("stock_targets").insert({ ticker, lots, price: priceVal, effective_from: "1900-01-01" });
-    if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
-  } else if (scope === "month" && validMonth) {
-    const { error } = await sb
-      .from("stock_target_months")
-      .upsert({ ticker, month, lots, price: priceVal }, { onConflict: "ticker,month" });
-    if (error) throw new Error(`Couldn't save this month's target: ${error.message}`);
-  } else if (validMonth) {
-    // Authoritative from this month on: drop later rules + overrides, set the rule here.
-    await sb.from("stock_targets").delete().eq("ticker", ticker).gt("effective_from", month);
-    await sb.from("stock_target_months").delete().eq("ticker", ticker).gte("month", month);
-    const { error } = await sb
+    await sb
       .from("stock_targets")
-      .upsert({ ticker, lots, price: priceVal, effective_from: month }, { onConflict: "ticker,effective_from" });
-    if (error) throw new Error(`Couldn't save stock target: ${error.message}`);
+      .insert({ ticker, lots, price, effective_from: FOREVER });
+  } else if (scope === "forward") {
+    await sb
+      .from("stock_targets")
+      .delete()
+      .eq("ticker", ticker)
+      .gt("effective_from", month);
+    await sb
+      .from("stock_target_months")
+      .delete()
+      .eq("ticker", ticker)
+      .gte("month", month);
+    await sb
+      .from("stock_targets")
+      .upsert(
+        { ticker, lots, price, effective_from: month },
+        { onConflict: "ticker,effective_from" }
+      );
+  } else {
+    await sb
+      .from("stock_target_months")
+      .upsert({ ticker, month, lots, price }, { onConflict: "ticker,month" });
   }
-  revalidateStockTargets();
+
+  revalidateStocks();
 }
 
-// Remove a target entirely: the base and every per-month override for the ticker.
-export async function deleteStockTarget(ticker: string) {
+/** Drop this month's override so the base rule applies again. */
+export async function revertStockTarget(formData: FormData): Promise<void> {
+  const ticker = text(formData.get("ticker")).toUpperCase();
+  const month = monthDate(formData.get("month"));
+  if (!ticker || !month) return;
+
+  await supabaseServer()
+    .from("stock_target_months")
+    .delete()
+    .eq("ticker", ticker)
+    .eq("month", month);
+
+  revalidateStocks();
+}
+
+export async function deleteStockTarget(formData: FormData): Promise<void> {
+  const ticker = text(formData.get("ticker")).toUpperCase();
+  if (!ticker) return;
+
   const sb = supabaseServer();
   await sb.from("stock_targets").delete().eq("ticker", ticker);
   await sb.from("stock_target_months").delete().eq("ticker", ticker);
-  revalidateStockTargets();
-}
 
-// Drop just one month's override so the ticker reverts to its every-month base.
-export async function clearStockTargetMonth(ticker: string, month: string) {
-  if (!/^\d{4}-\d{2}-01$/.test(month)) return;
-  await supabaseServer().from("stock_target_months").delete().eq("ticker", ticker).eq("month", month);
-  revalidateStockTargets();
-}
-
-export async function deleteStockTrade(id: number) {
-  const sb = supabaseServer();
-  const { data: t } = await sb.from("stock_trades").select("txn_id, pl_txn_id").eq("id", id).maybeSingle();
-  await sb.from("stock_trades").delete().eq("id", id);
-  // Reverse both the cost-basis/investment movement and the realized-P/L entry.
-  if (t?.txn_id) await sb.from("transactions").delete().eq("id", t.txn_id);
-  if (t?.pl_txn_id) await sb.from("transactions").delete().eq("id", t.pl_txn_id);
-  revalidate();
+  revalidateStocks();
 }

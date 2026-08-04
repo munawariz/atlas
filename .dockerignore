@@ -1,17 +1,14 @@
-# Keep the build context small and never copy secrets/local state into the image.
 node_modules
 .next
 .git
 .gitignore
-.env*
-npm-debug.log*
+.env
+.env.local
+.env*.local
+README.md
+ATLAS.md
+atlas-design-system
 Dockerfile
 docker-compose.yml
-.dockerignore
-.vscode
-.idea
-.claude
-*.md
-source-data
-dontopen.txt
-*.csv
+npm-debug.log*
+*.tsbuildinfo

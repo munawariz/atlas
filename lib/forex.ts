@@ -1,92 +1,178 @@
 import "server-only";
-import { supabaseServer } from "./supabaseServer";
+
+import { supabaseServer, isMissingTable } from "./supabaseServer";
 import type { ForexAccount, ForexTransaction } from "./types";
 
-// Used only for the optional reference value on the Forex screen.
-const FALLBACK_RATE: Record<string, number> = { JPY: 110 };
+/**
+ * Foreign-currency holdings.
+ *
+ * These are tracked in their own currency and are NEVER counted in IDR net worth (ATLAS.md
+ * §3.2) — they appear on their own line with a live reference rate.
+ */
 
-function nextMonth(monthKey: string): string {
-  const [y, m] = monthKey.split("-").map(Number);
-  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
-}
+/** Used only when the rate API is unreachable. A reference figure, never a booked one. */
+export const FALLBACK_RATE: Record<string, number> = { JPY: 110 };
 
 export async function getForexAccounts(): Promise<ForexAccount[]> {
-  const { data, error } = await supabaseServer().from("forex_accounts").select("*").order("name");
-  if (error) throw error;
-  return (data ?? []).map((r) => ({ ...(r as ForexAccount), units: Number((r as ForexAccount).units) }));
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("forex_accounts")
+    .select("*")
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  // Postgres `numeric` comes back as a string (ATLAS.md §14.5).
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: Number(row.id),
+    name: String(row.name),
+    currency: String(row.currency),
+    units: Number(row.units ?? 0),
+  }));
 }
 
-export async function getForexTransactions(): Promise<ForexTransaction[]> {
-  const { data, error } = await supabaseServer()
-    .from("forex_transactions")
-    .select("*")
-    .order("occurred_on", { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((r) => ({ ...(r as ForexTransaction), units: Number((r as ForexTransaction).units) }));
+export async function getForexTransactions(
+  accountId?: number
+): Promise<ForexTransaction[]> {
+  const sb = supabaseServer();
+  let query = sb.from("forex_transactions").select("*");
+  if (accountId) query = query.eq("account_id", accountId);
+
+  const { data, error } = await query
+    .order("occurred_on", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: Number(row.id),
+    account_id: Number(row.account_id),
+    occurred_on: String(row.occurred_on),
+    direction: row.direction as "buy" | "sell",
+    idr: Number(row.idr ?? 0),
+    units: Number(row.units ?? 0),
+    wallet_id: row.wallet_id == null ? null : Number(row.wallet_id),
+    txn_id: row.txn_id == null ? null : Number(row.txn_id),
+    pl_txn_id: row.pl_txn_id == null ? null : Number(row.pl_txn_id),
+    realized_pl: row.realized_pl == null ? null : Number(row.realized_pl),
+  }));
 }
 
-/** The forex log row linked to a ledger transaction, if any (so the editor can tell a
- *  forex buy/sell apart from an ordinary investment/income entry). */
-export async function getForexTxnByTxnId(txnId: number): Promise<ForexTransaction | null> {
-  const { data, error } = await supabaseServer()
+/** Lets the history editor detect that a ledger row was booked by the forex module. */
+export async function getForexTxnByTxnId(
+  txnId: number
+): Promise<ForexTransaction | null> {
+  const sb = supabaseServer();
+  const { data, error } = await sb
     .from("forex_transactions")
     .select("*")
-    .eq("txn_id", txnId)
+    .or(`txn_id.eq.${txnId},pl_txn_id.eq.${txnId}`)
     .maybeSingle();
-  if (error) throw error;
-  return data ? { ...(data as ForexTransaction), units: Number((data as ForexTransaction).units) } : null;
+  if (error) {
+    if (isMissingTable(error)) return null;
+    throw error;
+  }
+  if (!data) return null;
+
+  const row = data as Record<string, unknown>;
+  return {
+    id: Number(row.id),
+    account_id: Number(row.account_id),
+    occurred_on: String(row.occurred_on),
+    direction: row.direction as "buy" | "sell",
+    idr: Number(row.idr ?? 0),
+    units: Number(row.units ?? 0),
+    wallet_id: row.wallet_id == null ? null : Number(row.wallet_id),
+    txn_id: row.txn_id == null ? null : Number(row.txn_id),
+    pl_txn_id: row.pl_txn_id == null ? null : Number(row.pl_txn_id),
+    realized_pl: row.realized_pl == null ? null : Number(row.realized_pl),
+  };
 }
 
-/** Average IDR cost per 1 unit of a holding, from its buy/sell log (average-cost method):
- *  buys add cost + units, sells remove cost proportionally. 0 if there's no buy history.
- *  Takes only the fields it needs, so action paths can pass partial query rows. */
+/**
+ * Average cost per unit — PURE, so it can be unit-reasoned about and reused by the sell path.
+ *
+ * A chronological walk: buys add units and cost; sells remove cost in proportion to the units
+ * sold. That proportionality is what makes it average-cost rather than FIFO.
+ */
 export function forexAvgCost(
-  accountTxns: Pick<ForexTransaction, "direction" | "idr" | "units" | "occurred_on">[]
+  txns: Pick<ForexTransaction, "direction" | "idr" | "units" | "occurred_on">[]
 ): number {
-  const chrono = [...accountTxns].sort((a, b) => a.occurred_on.localeCompare(b.occurred_on));
+  const ordered = [...txns].sort((a, b) =>
+    a.occurred_on === b.occurred_on ? 0 : a.occurred_on < b.occurred_on ? -1 : 1
+  );
+
   let units = 0;
   let cost = 0;
-  for (const t of chrono) {
-    if (t.direction === "buy") {
-      units += t.units;
-      cost += t.idr;
-    } else if (units > 0) {
-      const sold = Math.min(t.units, units);
+
+  for (const txn of ordered) {
+    if (txn.direction === "buy") {
+      units += txn.units;
+      cost += txn.idr;
+    } else {
+      if (units <= 0) continue;
+      const sold = Math.min(txn.units, units);
       cost -= cost * (sold / units);
       units -= sold;
     }
   }
+
   return units > 0 ? cost / units : 0;
 }
 
-/** Per-account foreign-currency balance at the END of `monthKey` (current minus later moves). */
-export async function forexUnitsAt(monthKey: string): Promise<Map<number, number>> {
-  const [accounts, txns] = await Promise.all([getForexAccounts(), getForexTransactions()]);
-  const end = nextMonth(monthKey);
-  const out = new Map<number, number>();
-  for (const a of accounts) {
-    let units = a.units;
-    for (const t of txns) {
-      if (t.account_id === a.id && t.occurred_on >= end) {
-        units -= t.direction === "buy" ? t.units : -t.units; // undo moves that happened after this month
-      }
-    }
-    out.set(a.id, units);
-  }
-  return out;
+/** Total IDR cost still tied up in the units held. */
+export function forexCostBasis(
+  txns: Pick<ForexTransaction, "direction" | "idr" | "units" | "occurred_on">[],
+  units: number
+): number {
+  return Math.round(forexAvgCost(txns) * units);
 }
 
-/** IDR per 1 unit of `currency` (live, cached ~1h) — reference only, not used in networth. */
+/**
+ * Units held at the end of a month.
+ *
+ * `forex_accounts.units` is the CURRENT balance, so this walks backwards: undo every move
+ * that happened after the month in question.
+ */
+export async function forexUnitsAt(
+  accountId: number,
+  monthKey: string,
+  currentUnits: number
+): Promise<number> {
+  const txns = await getForexTransactions(accountId);
+  const endOfMonth = `${monthKey.slice(0, 7)}-31`;
+
+  let units = currentUnits;
+  for (const txn of txns) {
+    if (txn.occurred_on <= endOfMonth) continue;
+    if (txn.direction === "buy") units -= txn.units;
+    else units += txn.units;
+  }
+  return units;
+}
+
+/**
+ * Live IDR rate for a currency. Reference only — nothing is ever booked at this rate.
+ *
+ * Never throws: a missing rate degrades to the fallback, which is better than a dead page.
+ */
 export async function getForexRate(currency: string): Promise<number> {
   try {
-    const res = await fetch(`https://open.er-api.com/v6/latest/${currency}`, { next: { revalidate: 3600 } });
-    if (res.ok) {
-      const data = await res.json();
-      const idr = data?.rates?.IDR;
-      if (typeof idr === "number" && idr > 0) return idr;
-    }
+    const res = await fetch(
+      `https://open.er-api.com/v6/latest/${encodeURIComponent(currency)}`,
+      { next: { revalidate: 3600 } }
+    );
+    if (!res.ok) return FALLBACK_RATE[currency] ?? 0;
+
+    const json = (await res.json()) as { rates?: Record<string, number> };
+    const rate = json.rates?.IDR;
+    return typeof rate === "number" && Number.isFinite(rate)
+      ? rate
+      : (FALLBACK_RATE[currency] ?? 0);
   } catch {
-    // ignore — fall back below
+    return FALLBACK_RATE[currency] ?? 0;
   }
-  return FALLBACK_RATE[currency] ?? 0;
 }

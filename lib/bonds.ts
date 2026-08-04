@@ -1,5 +1,11 @@
 import "server-only";
-import { supabaseServer } from "./supabaseServer";
+
+import { supabaseServer, isMissingTable } from "./supabaseServer";
+
+/**
+ * Bonds. Buying and selling moves principal in and out of the bond bucket; coupons are income
+ * and carry no units.
+ */
 
 export interface BondTrade {
   id: number;
@@ -12,21 +18,12 @@ export interface BondTrade {
   txn_id: number | null;
 }
 
-export async function getBondTrades(): Promise<BondTrade[]> {
-  const { data, error } = await supabaseServer()
-    .from("bond_trades")
-    .select("*")
-    .order("occurred_on", { ascending: false })
-    .order("id", { ascending: false });
-  if (error && error.code !== "42P01") throw error; // tolerate table not migrated yet
-  return (data ?? []).map((r) => ({ ...(r as BondTrade), units: Number((r as BondTrade).units) }));
-}
-
 export interface BondHolding {
   name: string;
-  units: number; // bought − sold (units still held)
-  invested: number; // Σbuy − Σsell (principal still held)
-  coupons: number; // Σcoupon (interest received, all time)
+  units: number;
+  /** Principal still in: Σbuy − Σsell. */
+  invested: number;
+  coupons: number;
 }
 
 export interface BondPortfolio {
@@ -35,23 +32,66 @@ export interface BondPortfolio {
   totalCoupons: number;
 }
 
-/** Per-bond principal held + coupons received, from the trade log (optionally up to `asOf`). */
-export async function getBondPortfolio(asOf?: string): Promise<BondPortfolio> {
-  const all = await getBondTrades();
-  const trades = asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
-  const agg = new Map<string, { buy: number; sell: number; coupon: number; buyU: number; sellU: number }>();
-  for (const t of trades) {
-    const a = agg.get(t.name) ?? { buy: 0, sell: 0, coupon: 0, buyU: 0, sellU: 0 };
-    a[t.side] += t.idr;
-    if (t.side === "buy") a.buyU += t.units;
-    else if (t.side === "sell") a.sellU += t.units;
-    agg.set(t.name, a);
+export async function getBondTrades(asOf?: string): Promise<BondTrade[]> {
+  const sb = supabaseServer();
+  let query = sb.from("bond_trades").select("*");
+  if (asOf) query = query.lte("occurred_on", asOf);
+
+  const { data, error } = await query
+    .order("occurred_on", { ascending: false })
+    .order("id", { ascending: false });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
   }
-  const holdings: BondHolding[] = [...agg.entries()]
-    .map(([name, a]) => ({ name, units: a.buyU - a.sellU, invested: a.buy - a.sell, coupons: a.coupon }))
-    .filter((h) => h.invested !== 0 || h.coupons !== 0 || h.units !== 0)
-    .sort((x, y) => y.invested - x.invested || y.coupons - x.coupons);
-  const totalInvested = holdings.reduce((s, h) => s + h.invested, 0);
-  const totalCoupons = holdings.reduce((s, h) => s + h.coupons, 0);
-  return { holdings, totalInvested, totalCoupons };
+
+  // `units` is numeric, which the client returns as a string (ATLAS.md §14.5).
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id: Number(row.id),
+    name: String(row.name),
+    side: row.side as BondTrade["side"],
+    units: Number(row.units ?? 0),
+    idr: Number(row.idr ?? 0),
+    occurred_on: String(row.occurred_on),
+    wallet_id: row.wallet_id == null ? null : Number(row.wallet_id),
+    txn_id: row.txn_id == null ? null : Number(row.txn_id),
+  }));
+}
+
+export async function getBondPortfolio(asOf?: string): Promise<BondPortfolio> {
+  const trades = await getBondTrades(asOf);
+
+  const byName = new Map<string, BondHolding>();
+  const of = (name: string): BondHolding => {
+    let holding = byName.get(name);
+    if (!holding) {
+      holding = { name, units: 0, invested: 0, coupons: 0 };
+      byName.set(name, holding);
+    }
+    return holding;
+  };
+
+  for (const trade of trades) {
+    const holding = of(trade.name);
+    if (trade.side === "buy") {
+      holding.units += trade.units;
+      holding.invested += trade.idr;
+    } else if (trade.side === "sell") {
+      holding.units -= trade.units;
+      holding.invested -= trade.idr;
+    } else {
+      holding.coupons += trade.idr;
+    }
+  }
+
+  // A fully sold bond keeps its coupon history but stops being a holding.
+  const holdings = [...byName.values()]
+    .filter((h) => h.units > 0 || h.invested > 0 || h.coupons > 0)
+    .sort((a, b) => b.invested - a.invested);
+
+  return {
+    holdings,
+    totalInvested: holdings.reduce((sum, h) => sum + h.invested, 0),
+    totalCoupons: holdings.reduce((sum, h) => sum + h.coupons, 0),
+  };
 }

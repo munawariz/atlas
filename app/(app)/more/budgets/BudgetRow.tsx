@@ -1,116 +1,153 @@
 "use client";
 
-import { formatRupiah } from "@/lib/format";
-import { BUDGET_PERIODS, type BudgetPeriod } from "@/lib/types";
-import SubmitButton from "@/components/SubmitButton";
+import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
-import CategoryPeriodSelect from "../categories/CategoryPeriodSelect";
-import { setBudget } from "../actions";
+import SubmitButton from "@/components/SubmitButton";
+import { BUDGET_PERIODS, type BudgetPeriod, type SaveScope } from "@/lib/types";
+import { formatRupiah } from "@/lib/format";
+import { clearBudgetOverride, saveBudget } from "./actions";
+import { setCategoryPeriod } from "../actions";
 
-// One editable budget row. The cadence is bound to the category (shown read-only here —
-// change it on the Categories page). Daily/weekly/monthly get a month scope; monthly also
-// offers "all months". Yearly is a single whole-year limit and warns on save. Installments
-// add on top for monthly.
+const SCOPES: { value: SaveScope; label: string; hint: string }[] = [
+  {
+    value: "forward",
+    label: "This month →",
+    hint: "Applies to this month and every month after it.",
+  },
+  {
+    value: "month",
+    label: "This month only",
+    hint: "A one-off override. Later months keep the recurring rule.",
+  },
+  {
+    value: "all",
+    label: "All months",
+    hint: "Replaces every rule and override for this category.",
+  },
+];
+
 export default function BudgetRow({
-  id,
+  categoryId,
   name,
-  kind,
-  amount,
   period,
-  recurring,
-  month,
-  instAmount,
+  amount,
+  monthKey,
+  source,
+  monthlyEquivalent,
 }: {
-  id: number;
+  categoryId: number;
   name: string;
-  kind: string;
-  amount: number;
   period: BudgetPeriod;
-  recurring: boolean;
-  month: string;
-  instAmount: number;
+  amount: number;
+  monthKey: string;
+  /** Whether the shown number came from a per-month override or the recurring rule. */
+  source: "month" | "rule" | "none";
+  monthlyEquivalent: number;
 }) {
-  const per = BUDGET_PERIODS.find((p) => p.value === period)?.per ?? "month";
-  const showScope = period !== "yearly";
+  const [scope, setScope] = useState<SaveScope>("forward");
+  const [open, setOpen] = useState(false);
+
+  const cadence =
+    BUDGET_PERIODS.find((p) => p.value === period)?.label ?? "Monthly";
 
   return (
-    <div className="card px-4 py-2.5">
-      {/* Budget-amount form. The period control is a sibling below — NOT nested — so changing
-          the period (a separate action + revalidation) can't interrupt editing/saving here. */}
-      <form
-        action={setBudget}
-        onSubmit={
-          period === "yearly"
-            ? (e) => {
-                if (
-                  !confirm(
-                    "This is the budget for the whole year — it'll be counted as 1/12 per month in the budgeting. Continue?"
-                  )
-                )
-                  e.preventDefault();
-              }
-            : undefined
-        }
+    <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-baseline justify-between gap-3 text-left"
       >
-        <input type="hidden" name="category_id" value={id} />
-        <input type="hidden" name="month" value={month} />
-        <div className="flex items-center justify-between gap-3">
-          <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-paper">
-            <span className="truncate">{name}</span>
-            {recurring && period === "monthly" && (
-              <span className="shrink-0 rounded bg-sky/15 px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-sky">
-                every mo
-              </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-semibold text-ink-900">
+            {name}
+          </span>
+          <span className="block text-[13px] text-ink-500">
+            {cadence}
+            {period !== "monthly" && amount > 0 && (
+              <> · {formatRupiah(monthlyEquivalent)}/mo</>
             )}
+            {source === "month" && " · this month only"}
           </span>
-          <span className="flex shrink-0 items-center gap-1.5">
-            <span className="text-xs text-paper-faint">Rp</span>
-            {/* key on period+amount so the field re-syncs to the stored value after a period
-                change or a save (MoneyInput seeds its state from defaultValue only on mount). */}
-            <MoneyInput
-              key={`${period}-${amount}`}
-              name="amount"
-              defaultValue={amount}
-              placeholder="0"
-              className="w-24 bg-transparent text-right font-display text-sm font-medium tabular-nums text-paper outline-none placeholder:text-paper-faint"
-            />
-            <span className="w-9 text-[10px] text-paper-faint">/{per}</span>
-          </span>
-        </div>
+        </span>
+        <span className="shrink-0 font-display text-[17px] font-bold text-ink-900 tabular-nums">
+          {amount > 0 ? formatRupiah(amount) : "—"}
+        </span>
+      </button>
 
-        {period === "monthly" && instAmount > 0 && (
-          <p className="mt-1 text-[11px] text-plum">
-            + {formatRupiah(instAmount)} from installments → effective{" "}
-            <span className="text-paper-dim">{formatRupiah(amount + instAmount)}</span>
-          </p>
-        )}
+      {open && (
+        <div className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
+          <form action={saveBudget} className="space-y-3">
+            <input type="hidden" name="category_id" value={categoryId} />
+            <input type="hidden" name="month" value={monthKey} />
+            <input type="hidden" name="scope" value={scope} />
 
-        <div className="mt-2 flex items-center justify-end gap-2">
-          {showScope && (
-            <select
-              name="scope"
-              defaultValue={recurring ? "forward" : "month"}
-              className="rounded-lg border border-line/60 bg-ink-3 px-2 py-1 text-xs text-paper-dim outline-none [color-scheme:dark]"
-            >
-              <option value="forward" className="bg-ink-2">This month →</option>
-              {period === "monthly" && <option value="all" className="bg-ink-2">All months</option>}
-              <option value="month" className="bg-ink-2">This month only</option>
-            </select>
+            <div>
+              <label htmlFor={`amount-${categoryId}`} className="label mb-1 block">
+                {period === "yearly" ? "Whole-year limit" : `Per ${period.replace("ly", "")}`}
+              </label>
+              <MoneyInput
+                id={`amount-${categoryId}`}
+                name="amount"
+                defaultValue={amount}
+              />
+            </div>
+
+            <div>
+              <span className="label mb-1 block">Apply to</span>
+              <div className="flex flex-wrap gap-2">
+                {SCOPES.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setScope(option.value)}
+                    aria-pressed={scope === option.value}
+                    className={`chip ${scope === option.value ? "chip-on" : ""}`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 text-[13px] text-ink-500">
+                {SCOPES.find((s) => s.value === scope)?.hint}
+              </p>
+            </div>
+
+            <SubmitButton className="btn btn-primary btn-sm w-full" pendingChildren="Saving…">
+              Save budget
+            </SubmitButton>
+          </form>
+
+          <form action={setCategoryPeriod.bind(null, categoryId)}>
+            <label className="flex items-center justify-between gap-2">
+              <span className="label">Cadence</span>
+              <select
+                name="period"
+                defaultValue={period}
+                onChange={(e) => e.currentTarget.form?.requestSubmit()}
+                aria-label="Budget cadence"
+                className="field h-10 w-auto py-0 text-[14px]"
+              >
+                {BUDGET_PERIODS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </form>
+
+          {source === "month" && (
+            <form action={clearBudgetOverride}>
+              <input type="hidden" name="category_id" value={categoryId} />
+              <input type="hidden" name="month" value={monthKey} />
+              <button type="submit" className="btn btn-sm btn-ghost w-full">
+                Revert to the recurring rule
+              </button>
+            </form>
           )}
-          <SubmitButton
-            pendingText="Saving…"
-            className="rounded-full bg-green/15 px-3 py-1 text-xs font-semibold text-green active:bg-green/25"
-          >
-            Save
-          </SubmitButton>
         </div>
-      </form>
-
-      <div className="mt-2 flex items-center gap-1.5 border-t border-line/40 pt-2.5">
-        <span className="text-[10px] uppercase tracking-wider text-paper-faint">Period</span>
-        <CategoryPeriodSelect id={id} period={period} />
-        <span className="text-[10px] text-paper-faint">· limit is per {per}</span>
-      </div>
+      )}
     </div>
   );
 }

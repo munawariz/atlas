@@ -1,112 +1,161 @@
 "use client";
 
-import { formatRupiah } from "@/lib/format";
-import SubmitButton from "@/components/SubmitButton";
+import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
-import { TrashIcon } from "@/components/icons";
-import { clearStockTargetMonth, deleteStockTarget, saveStockTarget } from "../actions";
+import SubmitButton from "@/components/SubmitButton";
+import { formatRupiah } from "@/lib/format";
+import type { SaveScope } from "@/lib/types";
+import { deleteStockTarget, revertStockTarget, saveStockTarget } from "../actions";
 
-// One editable target row for the selected month. Set lots/price with a scope — "Every month"
-// updates the recurring base (and clears this month's override); "This month only" writes a
-// per-month override. Mirrors the category BudgetRow.
+const SCOPES: { value: SaveScope; label: string }[] = [
+  { value: "forward", label: "This month →" },
+  { value: "all", label: "All months" },
+  { value: "month", label: "This month only" },
+];
+
 export default function StockTargetRow({
   ticker,
   lots,
   price,
+  monthKey,
   source,
   hasBase,
-  month,
   bought,
-  cost,
+  /** Where the estimate came from, so the row can say so honestly. */
   priceSource,
+  estimate,
 }: {
   ticker: string;
   lots: number;
   price: number | null;
+  monthKey: string;
   source: "month" | "base";
   hasBase: boolean;
-  month: string;
   bought: number;
-  cost: number | null;
   priceSource: "own" | "live" | "none";
+  estimate: number | null;
 }) {
-  const done = bought >= lots;
-  const pctT = lots ? (bought / lots) * 100 : 0;
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<SaveScope>("forward");
+
+  const pct = lots > 0 ? (bought / lots) * 100 : 0;
 
   return (
-    <div className="card space-y-2 p-3.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className="font-display text-sm font-semibold text-paper">{ticker}</span>
-          {source === "month" ? (
-            <span className="rounded bg-sky/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-sky">this month</span>
-          ) : (
-            <span className="rounded bg-ink-3 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-paper-dim">every mo</span>
-          )}
-          {done && (
-            <span className="rounded bg-green/15 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-green">✓ met</span>
-          )}
-        </span>
-        <span className="flex items-center gap-2.5">
-          <span className="text-xs tabular-nums text-paper-dim">
-            <span className={done ? "text-green" : "text-paper"}>{bought}</span> / {lots} lot{lots > 1 ? "s" : ""}
+    <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full text-left"
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[15px] font-bold text-ink-900">
+            {ticker}
+            {source === "month" && (
+              <span className="badge ml-2 bg-cream-200 text-ink-700">
+                this month
+              </span>
+            )}
           </span>
-          <form action={deleteStockTarget.bind(null, ticker)}>
-            <SubmitButton label="Remove target" className="grid h-7 w-7 place-items-center rounded-lg text-clay active:bg-clay/10">
-              <TrashIcon className="h-4 w-4" />
+          <span className="text-[13px] text-ink-500 tabular-nums">
+            {bought} / {lots} lot{lots === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-cream-200">
+          <div
+            className="h-full rounded-full bg-forest-800"
+            style={{ width: `${Math.min(100, pct)}%` }}
+          />
+        </div>
+
+        <div className="mt-1.5 text-[13px] text-ink-500 tabular-nums">
+          {estimate == null ? (
+            <span className="text-warning-600">
+              No price — not counted in cashflow
+            </span>
+          ) : (
+            <>
+              ≈ {formatRupiah(estimate)}/mo
+              <span className="text-ink-300">
+                {" "}
+                ·{" "}
+                {priceSource === "own"
+                  ? "your price"
+                  : priceSource === "live"
+                    ? "live price"
+                    : "average buy"}
+              </span>
+            </>
+          )}
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
+          <form action={saveStockTarget} className="space-y-2">
+            <input type="hidden" name="ticker" value={ticker} />
+            <input type="hidden" name="month" value={monthKey} />
+            <input type="hidden" name="scope" value={scope} />
+
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <span className="label mb-1 block">Lots / month</span>
+                <input
+                  type="number"
+                  name="lots"
+                  min={1}
+                  defaultValue={lots}
+                  className="field"
+                />
+              </label>
+              <label className="block">
+                <span className="label mb-1 block">Price / share</span>
+                <MoneyInput
+                  name="price"
+                  defaultValue={price}
+                  placeholder="optional"
+                  ariaLabel="Speculative price per share"
+                />
+              </label>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {SCOPES.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setScope(option.value)}
+                  aria-pressed={scope === option.value}
+                  className={`chip ${scope === option.value ? "chip-on" : ""}`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <SubmitButton className="btn btn-primary btn-sm w-full">
+              Save target
             </SubmitButton>
           </form>
-        </span>
-      </div>
 
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-line/40">
-        <div className={`h-full rounded-full ${done ? "bg-green" : "bg-plum"}`} style={{ width: `${Math.min(100, pctT)}%` }} />
-      </div>
-      <div className="text-[11px] tabular-nums text-paper-faint">
-        {cost != null ? (
-          <>≈ {formatRupiah(cost)}/mo{priceSource === "live" && <span className="text-paper-dim"> · live price</span>}</>
-        ) : (
-          <span className="text-amber">Set a price/share to include in the estimate</span>
-        )}
-      </div>
+          {source === "month" && hasBase && (
+            <form action={revertStockTarget}>
+              <input type="hidden" name="ticker" value={ticker} />
+              <input type="hidden" name="month" value={monthKey} />
+              <SubmitButton className="btn btn-sm btn-ghost w-full">
+                Revert to base target
+              </SubmitButton>
+            </form>
+          )}
 
-      <form action={saveStockTarget} className="flex items-center gap-2">
-        <input type="hidden" name="ticker" value={ticker} />
-        <input type="hidden" name="month" value={month} />
-        <input
-          name="lots"
-          inputMode="numeric"
-          defaultValue={lots}
-          aria-label="Lots per month"
-          className="field w-16 py-1.5 text-center text-sm"
-        />
-        <MoneyInput
-          name="price"
-          defaultValue={price ?? undefined}
-          placeholder="Price/share"
-          className="field min-w-0 flex-1 py-1.5 text-sm"
-        />
-        <select
-          name="scope"
-          defaultValue={source === "month" ? "month" : "forward"}
-          aria-label="Apply to"
-          className="rounded-lg border border-line/60 bg-ink-3 px-2 py-1.5 text-xs text-paper-dim outline-none [color-scheme:dark]"
-        >
-          <option value="forward" className="bg-ink-2">This month →</option>
-          <option value="all" className="bg-ink-2">All months</option>
-          <option value="month" className="bg-ink-2">This month only</option>
-        </select>
-        <SubmitButton pendingText="…" className="rounded-full bg-plum/20 px-3 py-1.5 text-xs font-semibold text-plum active:bg-plum/30">
-          Save
-        </SubmitButton>
-      </form>
-
-      {source === "month" && hasBase && (
-        <form action={clearStockTargetMonth.bind(null, ticker, month)}>
-          <SubmitButton className="text-[11px] text-paper-faint underline active:text-paper-dim">
-            Reset to the recurring target
-          </SubmitButton>
-        </form>
+          <form action={deleteStockTarget}>
+            <input type="hidden" name="ticker" value={ticker} />
+            <SubmitButton className="btn btn-sm btn-ghost w-full text-negative-600">
+              Remove {ticker} target
+            </SubmitButton>
+          </form>
+        </div>
       )}
     </div>
   );

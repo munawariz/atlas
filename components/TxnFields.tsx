@@ -1,229 +1,343 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { TXN_TYPES, TYPE_TO_CATEGORY_KIND, type Category, type TxnType, type Wallet } from "@/lib/types";
+import { useEffect, useState } from "react";
 import { formatNumber, todayISO } from "@/lib/format";
+import {
+  TXN_TYPES,
+  TYPE_TO_CATEGORY_KIND,
+  type Category,
+  type Transaction,
+  type TxnType,
+  type Wallet,
+} from "@/lib/types";
 
-const ACCENT: Record<TxnType, string> = {
-  expense: "bg-clay text-ink",
-  income: "bg-jade text-ink",
-  saving: "bg-sky text-ink",
-  investment: "bg-plum text-ink",
-  transfer: "bg-sand text-ink",
-  withdrawal: "bg-sky text-ink",
+/**
+ * The shared transaction editor, used by both Add and Edit.
+ *
+ * Every value is submitted through a hidden input, so the parent only needs
+ * `<form action={…}>` — it never has to lift or thread state.
+ */
+
+const LAST_KEY = "ft_last";
+
+/**
+ * Per-type accent. The design system ships two brand hues, so the six ledger types borrow the
+ * derived semantic ramp: money out reads negative, money in reads positive, and the three
+ * "moved, not spent" types take the neutral/info/accent slots.
+ */
+const TYPE_ACCENT: Record<TxnType, { on: string; dot: string }> = {
+  expense: { on: "bg-negative-500 text-white border-negative-500", dot: "bg-negative-500" },
+  income: { on: "bg-positive-500 text-white border-positive-500", dot: "bg-positive-500" },
+  saving: { on: "bg-info-500 text-white border-info-500", dot: "bg-info-500" },
+  investment: { on: "bg-forest-800 text-white border-forest-800", dot: "bg-forest-800" },
+  transfer: { on: "bg-warning-500 text-forest-900 border-warning-500", dot: "bg-warning-500" },
+  withdrawal: { on: "bg-info-600 text-white border-info-600", dot: "bg-info-600" },
 };
 
-export interface TxnInitial {
-  type?: TxnType;
-  amount?: number;
-  date?: string;
-  description?: string;
-  categoryId?: number | null;
-  sourceWalletId?: number | null;
-  destWalletId?: number | null;
+/** Section labels change per type so the form reads as a sentence rather than a schema. */
+function categoryLabel(type: TxnType): string {
+  if (type === "saving" || type === "investment") return "Goes to";
+  if (type === "withdrawal") return "Take from";
+  return "Category";
 }
 
-function Chip({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3.5 py-2 text-sm font-medium transition-all active:scale-95 ${
-        selected
-          ? "bg-gold text-ink shadow-[0_4px_14px_-4px_rgba(63,185,80,0.5)]"
-          : "border border-line/60 bg-ink-3 text-paper-dim"
-      }`}
-    >
-      {label}
-    </button>
-  );
+function walletLabel(type: TxnType): string {
+  if (type === "expense") return "Paid from";
+  if (type === "income" || type === "withdrawal") return "Received in";
+  return "From wallet";
 }
 
 /**
- * Controlled transaction fields shared by Add and Edit. All values are submitted
- * via hidden inputs, so the parent only needs to wrap this in a <form action=…>.
+ * The hero amount shrinks as the number grows, inside a FIXED-HEIGHT slot — so the card never
+ * resizes and the layout never jumps mid-entry.
  */
+function amountFontSize(text: string): number {
+  const n = text.length;
+  if (n <= 7) return 42;
+  if (n <= 9) return 36;
+  if (n <= 11) return 30;
+  if (n <= 13) return 25;
+  return 21;
+}
+
+interface TxnFieldsProps {
+  wallets: Wallet[];
+  categories: Category[];
+  /** Editing an existing row. Omit for Add. */
+  initial?: Transaction;
+  /**
+   * Add only: restore the last-used type and wallets from localStorage on mount, and write
+   * them back on change. Amount, description and category are deliberately never persisted.
+   */
+  persist?: boolean;
+}
+
 export default function TxnFields({
   wallets,
   categories,
   initial,
-  initialToday,
   persist = false,
-}: {
-  wallets: Wallet[];
-  categories: Category[];
-  initial?: TxnInitial;
-  initialToday: string;
-  persist?: boolean;
-}) {
+}: TxnFieldsProps) {
   const [type, setType] = useState<TxnType>(initial?.type ?? "expense");
-  const [amount, setAmount] = useState(initial?.amount ? String(initial.amount) : "");
-  const [date, setDate] = useState(initial?.date ?? initialToday);
+  const [amount, setAmount] = useState(
+    initial ? formatNumber(initial.amount) : ""
+  );
+  const [categoryId, setCategoryId] = useState<number | null>(
+    initial?.category_id ?? null
+  );
+  const [sourceWalletId, setSourceWalletId] = useState<number | null>(
+    initial?.source_wallet_id ?? null
+  );
+  const [destWalletId, setDestWalletId] = useState<number | null>(
+    initial?.dest_wallet_id ?? null
+  );
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [categoryId, setCategoryId] = useState<number | null>(initial?.categoryId ?? null);
-  const [sourceWalletId, setSourceWalletId] = useState<number | null>(initial?.sourceWalletId ?? null);
-  const [destWalletId, setDestWalletId] = useState<number | null>(initial?.destWalletId ?? null);
+  const [occurredOn, setOccurredOn] = useState(
+    initial?.occurred_on ?? todayISO()
+  );
+  const [hydrated, setHydrated] = useState(false);
 
+  // --- Restore, THEN persist -------------------------------------------------
+  // Gated on `hydrated` because StrictMode double-invokes effects: without the flag the
+  // second pass writes the freshly-mounted defaults back over the saved value (ATLAS.md §14.8).
   useEffect(() => {
     if (!persist) return;
-    setDate(todayISO());
+    setOccurredOn(todayISO());
     try {
-      const s = JSON.parse(localStorage.getItem("ft_last") ?? "{}");
-      if (s.type) setType(s.type);
-      if (s.sourceWalletId) setSourceWalletId(s.sourceWalletId);
-      if (s.destWalletId) setDestWalletId(s.destWalletId);
-    } catch {}
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      const raw = localStorage.getItem(LAST_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as {
+          type?: TxnType;
+          sourceWalletId?: number | null;
+          destWalletId?: number | null;
+        };
+        if (saved.type && TXN_TYPES.some((t) => t.value === saved.type)) {
+          setType(saved.type);
+        }
+        if (saved.sourceWalletId != null) setSourceWalletId(saved.sourceWalletId);
+        if (saved.destWalletId != null) setDestWalletId(saved.destWalletId);
+      }
+    } catch {
+      // Corrupt or unavailable storage just means we start from the defaults.
+    }
+    setHydrated(true);
+  }, [persist]);
 
   useEffect(() => {
-    if (!persist) return;
+    if (!persist || !hydrated) return;
     try {
-      localStorage.setItem("ft_last", JSON.stringify({ type, sourceWalletId, destWalletId }));
-    } catch {}
-  }, [persist, type, sourceWalletId, destWalletId]);
+      localStorage.setItem(
+        LAST_KEY,
+        JSON.stringify({ type, sourceWalletId, destWalletId })
+      );
+    } catch {
+      // Non-fatal: the form still works, it just will not pre-fill next time.
+    }
+  }, [persist, hydrated, type, sourceWalletId, destWalletId]);
 
+  // --- Derived ---------------------------------------------------------------
   const kind = TYPE_TO_CATEGORY_KIND[type];
-  // Withdrawal draws from any saving OR investment bucket.
-  const cats = useMemo(() => {
-    if (type === "withdrawal") return categories.filter((c) => c.kind === "saving" || c.kind === "investment");
-    return kind ? categories.filter((c) => c.kind === kind) : [];
-  }, [categories, kind, type]);
-  const showCategory = kind !== null || type === "withdrawal";
-  const usesDestWallet = type === "income" || type === "withdrawal";
+  const visibleCategories = categories.filter((c) => {
+    if (type === "transfer") return false;
+    // A withdrawal draws from either bucket kind, so it shows both.
+    if (type === "withdrawal") return c.kind === "saving" || c.kind === "investment";
+    return c.kind === kind;
+  });
 
-  const grouped = amount ? formatNumber(parseInt(amount, 10)) : "";
-  const walletLabel =
-    type === "expense" ? "Paid from" : usesDestWallet ? "Received in" : "From wallet";
+  const showCategory = type !== "transfer";
+  const showSource = type === "expense" || type === "saving" || type === "investment";
+  const showDest = type === "income" || type === "withdrawal";
+  const isTransfer = type === "transfer";
+  const noteLabel =
+    type === "saving" || type === "investment" || type === "withdrawal"
+      ? "Note"
+      : "Description";
 
-  // Shrink the hero amount as it gets longer so big numbers never crop.
-  const amtLen = grouped.length || 1;
-  const amtPx = amtLen <= 7 ? 42 : amtLen <= 9 ? 36 : amtLen <= 11 ? 30 : amtLen <= 13 ? 25 : 21;
+  function changeType(next: TxnType) {
+    setType(next);
+    // The old category almost certainly belongs to the wrong kind now.
+    setCategoryId(null);
+  }
+
+  const amountText = amount || "0";
 
   return (
-    <div className="space-y-6">
-      {/* Type switcher */}
-      <div className="flex gap-1.5 overflow-x-auto pb-1">
-        {TXN_TYPES.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            onClick={() => {
-              setType(t.value);
-              setCategoryId(null);
+    <div className="space-y-5">
+      {/* --- Type pills ----------------------------------------------------- */}
+      <div className="-mx-4 overflow-x-auto px-4 no-scrollbar">
+        <div className="flex w-max gap-2">
+          {TXN_TYPES.map((option) => {
+            const active = option.value === type;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => changeType(option.value)}
+                aria-pressed={active}
+                className={`chip ${active ? TYPE_ACCENT[option.value].on : ""}`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* --- Hero amount ---------------------------------------------------- */}
+      <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center shadow-[var(--shadow-sm)]">
+        <div className="label mb-2">Amount</div>
+        <div className="flex h-[52px] items-center justify-center gap-2">
+          <span className="font-display text-[20px] font-bold text-ink-300">
+            Rp
+          </span>
+          <input
+            value={amount}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/\D/g, "");
+              setAmount(raw ? formatNumber(parseInt(raw, 10)) : "");
             }}
-            className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-all active:scale-95 ${
-              type === t.value ? ACCENT[t.value] : "border border-line/50 bg-ink-3 text-paper-dim"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Amount — hero */}
-      <div className="card relative overflow-hidden p-6 text-center shadow-[0_18px_40px_-24px_rgba(63,185,80,0.45)]">
-        <div className="pointer-events-none absolute inset-x-0 -top-16 h-32 bg-[radial-gradient(60%_100%_at_50%_100%,rgba(63,185,80,0.16),transparent)]" />
-        <div className="label mb-3">Amount</div>
-        {/* Fixed-height slot so the card never changes size as the font scales */}
-        <div className="flex h-14 items-center justify-center">
-          <div className="flex items-baseline justify-center gap-2" style={{ fontSize: `${amtPx}px` }}>
-            <span className="font-display text-green" style={{ fontSize: "0.58em" }}>
-              Rp
-            </span>
-            <input
-              inputMode="numeric"
-              value={grouped}
-              onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))}
-              placeholder="0"
-              style={{ width: `${amtLen}ch` }}
-              className="bg-transparent text-center font-display text-[1em] font-medium leading-none tabular-nums text-paper outline-none placeholder:text-paper-faint"
-            />
-          </div>
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="0"
+            aria-label="Amount in rupiah"
+            style={{ fontSize: `${amountFontSize(amountText)}px` }}
+            className="w-full max-w-[280px] border-0 bg-transparent p-0 text-center font-display font-extrabold tracking-[-0.03em] text-ink-900 tabular-nums outline-none placeholder:text-ink-200"
+          />
         </div>
       </div>
 
-      {/* Category */}
+      {/* --- Category ------------------------------------------------------- */}
       {showCategory && (
-        <div>
-          <div className="label mb-2.5">
-            {type === "withdrawal" ? "Take from" : type === "saving" || type === "investment" ? "Goes to" : "Category"}
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {cats.map((c) => (
-              <Chip key={c.id} label={c.name} selected={categoryId === c.id} onClick={() => setCategoryId(c.id)} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Wallet(s) */}
-      {type !== "transfer" ? (
-        <div>
-          <div className="label mb-2.5">{walletLabel}</div>
-          <div className="flex flex-wrap gap-2">
-            {wallets.map((w) => (
-              <Chip
-                key={w.id}
-                label={w.name}
-                selected={(usesDestWallet ? destWalletId : sourceWalletId) === w.id}
-                onClick={() => (usesDestWallet ? setDestWalletId(w.id) : setSourceWalletId(w.id))}
-              />
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div>
-            <div className="label mb-2.5">From</div>
+        <section>
+          <div className="label mb-2">{categoryLabel(type)}</div>
+          {visibleCategories.length === 0 ? (
+            <p className="text-[14px] text-ink-500">
+              No categories yet. Add one under More → Categories.
+            </p>
+          ) : (
             <div className="flex flex-wrap gap-2">
-              {wallets.map((w) => (
-                <Chip key={w.id} label={w.name} selected={sourceWalletId === w.id} onClick={() => setSourceWalletId(w.id)} />
+              {visibleCategories.map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setCategoryId(cat.id)}
+                  aria-pressed={categoryId === cat.id}
+                  className={`chip ${categoryId === cat.id ? "chip-on" : ""}`}
+                >
+                  {cat.name}
+                </button>
               ))}
             </div>
-          </div>
-          <div>
-            <div className="label mb-2.5">To</div>
-            <div className="flex flex-wrap gap-2">
-              {wallets.map((w) => (
-                <Chip key={w.id} label={w.name} selected={destWalletId === w.id} onClick={() => setDestWalletId(w.id)} />
-              ))}
-            </div>
-          </div>
-        </div>
+          )}
+        </section>
       )}
 
-      {/* Description */}
-      <div>
-        <div className="label mb-2.5">
-          {type === "saving" || type === "investment" || type === "withdrawal" ? "Note" : "Description"}
+      {/* --- Wallets -------------------------------------------------------- */}
+      {isTransfer ? (
+        <>
+          <WalletChips
+            label="From"
+            wallets={wallets}
+            selected={sourceWalletId}
+            onSelect={setSourceWalletId}
+          />
+          <WalletChips
+            label="To"
+            wallets={wallets}
+            selected={destWalletId}
+            onSelect={setDestWalletId}
+          />
+        </>
+      ) : showDest ? (
+        <WalletChips
+          label={walletLabel(type)}
+          wallets={wallets}
+          selected={destWalletId}
+          onSelect={setDestWalletId}
+        />
+      ) : showSource ? (
+        <WalletChips
+          label={walletLabel(type)}
+          wallets={wallets}
+          selected={sourceWalletId}
+          onSelect={setSourceWalletId}
+        />
+      ) : null}
+
+      {/* --- Note + date ---------------------------------------------------- */}
+      <section className="space-y-3">
+        <div>
+          <label htmlFor="txn-description" className="label mb-2 block">
+            {noteLabel}
+          </label>
+          <input
+            id="txn-description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional"
+            autoComplete="off"
+            className="field"
+          />
         </div>
-        <input
-          name="description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="e.g. Order Food"
-          className="field"
-        />
-      </div>
+        <div>
+          <label htmlFor="txn-date" className="label mb-2 block">
+            Date
+          </label>
+          <input
+            id="txn-date"
+            type="date"
+            value={occurredOn}
+            onChange={(e) => setOccurredOn(e.target.value)}
+            className="field"
+          />
+        </div>
+      </section>
 
-      {/* Date */}
-      <div>
-        <div className="label mb-2.5">Date</div>
-        <input
-          type="date"
-          name="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="field [color-scheme:dark]"
-        />
-      </div>
-
+      {/* --- Hidden inputs: the actual form payload ------------------------- */}
       <input type="hidden" name="type" value={type} />
       <input type="hidden" name="amount" value={amount} />
       <input type="hidden" name="category_id" value={categoryId ?? ""} />
       <input type="hidden" name="source_wallet_id" value={sourceWalletId ?? ""} />
       <input type="hidden" name="dest_wallet_id" value={destWalletId ?? ""} />
+      <input type="hidden" name="description" value={description} />
+      <input type="hidden" name="occurred_on" value={occurredOn} />
     </div>
+  );
+}
+
+function WalletChips({
+  label,
+  wallets,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  wallets: Wallet[];
+  selected: number | null;
+  onSelect: (id: number) => void;
+}) {
+  return (
+    <section>
+      <div className="label mb-2">{label}</div>
+      {wallets.length === 0 ? (
+        <p className="text-[14px] text-ink-500">
+          No wallets yet. Add one under More → Wallets.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {wallets.map((wallet) => (
+            <button
+              key={wallet.id}
+              type="button"
+              onClick={() => onSelect(wallet.id)}
+              aria-pressed={selected === wallet.id}
+              className={`chip ${selected === wallet.id ? "chip-on" : ""}`}
+            >
+              {wallet.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

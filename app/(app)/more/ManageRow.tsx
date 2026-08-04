@@ -1,139 +1,180 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import SubmitButton from "@/components/SubmitButton";
-import { PencilIcon, CheckIcon, ChevronUpIcon, ChevronDownIcon, TrashIcon } from "@/components/icons";
+import { useState } from "react";
+import { Check, ChevronDown, ChevronUp, Pencil, Trash, X } from "@/components/icons";
 
-type Dir = "up" | "down";
-
-// A manageable list row (wallet or category): inline rename, move up/down, archive.
-// The server actions are passed in so the same row works for both lists. An optional
-// `remove` adds a hard-delete button (used where deletion is safe, e.g. providers).
-export default function ManageRow({
-  id,
-  name,
-  archived,
-  isFirst,
-  isLast,
-  rename,
-  move,
-  toggleArchive,
-  remove,
-  removeConfirm,
-  dragHandle,
-}: {
-  id: number;
+interface ManageRowProps {
   name: string;
   archived: boolean;
-  isFirst: boolean;
-  isLast: boolean;
-  rename: (id: number, formData: FormData) => Promise<void>;
-  move?: (id: number, dir: Dir) => Promise<void>; // omit to use a drag handle instead of arrows
-  toggleArchive: (id: number) => Promise<void>;
-  remove?: (id: number) => Promise<void>;
-  removeConfirm?: string;
-  dragHandle?: React.ReactNode;
-}) {
+  /** Bound server action taking a FormData with a `name` field. */
+  onRename: (formData: FormData) => void | Promise<void>;
+  onToggleArchive: () => void | Promise<void>;
+  /** Omit to hide delete entirely. Only ever offered once archived. */
+  onDelete?: () => void | Promise<void>;
+  onMoveUp?: () => void | Promise<void>;
+  onMoveDown?: () => void | Promise<void>;
+  /** Extra controls rendered under the name — period select, installment toggle, etc. */
+  children?: React.ReactNode;
+}
+
+/** One editable row in the wallets / categories / providers lists. */
+export default function ManageRow({
+  name,
+  archived,
+  onRename,
+  onToggleArchive,
+  onDelete,
+  onMoveUp,
+  onMoveDown,
+  children,
+}: ManageRowProps) {
   const [editing, setEditing] = useState(false);
-  const [pending, startTransition] = useTransition();
-
-  const onRename = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    startTransition(async () => {
-      await rename(id, fd);
-      setEditing(false);
-    });
-  };
-
-  if (editing) {
-    return (
-      <form onSubmit={onRename} className="flex items-center gap-2 px-4 py-2">
-        <input name="name" defaultValue={name} autoFocus disabled={pending} className="field flex-1 py-1.5" />
-        <button
-          type="submit"
-          disabled={pending}
-          aria-label="Save"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-green/15 text-green active:bg-green/25 disabled:opacity-50"
-        >
-          <CheckIcon className="h-[18px] w-[18px]" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setEditing(false)}
-          disabled={pending}
-          aria-label="Cancel"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-paper-dim active:bg-ink-3"
-        >
-          ✕
-        </button>
-      </form>
-    );
-  }
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
-    <div className="flex items-center justify-between gap-2 px-4 py-2">
-      {dragHandle}
-      <span className={`min-w-0 flex-1 truncate text-sm ${archived ? "text-paper-faint line-through" : "text-paper"}`}>
-        {name}
-      </span>
-      <div className="flex shrink-0 items-center gap-0.5">
-        {move && (
-          <>
-            <form action={move.bind(null, id, "up")}>
-              <ArrowBtn disabled={isFirst} label="Move up">
-                <ChevronUpIcon className="h-[18px] w-[18px]" />
-              </ArrowBtn>
-            </form>
-            <form action={move.bind(null, id, "down")}>
-              <ArrowBtn disabled={isLast} label="Move down">
-                <ChevronDownIcon className="h-[18px] w-[18px]" />
-              </ArrowBtn>
-            </form>
-          </>
-        )}
-        <button
-          type="button"
-          onClick={() => setEditing(true)}
-          aria-label="Rename"
-          className="grid h-8 w-8 place-items-center rounded-lg text-paper-dim active:bg-ink-3 active:text-paper"
+    <div
+      className={`rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)] ${
+        archived ? "opacity-60" : ""
+      }`}
+    >
+      {editing ? (
+        <form
+          action={async (formData: FormData) => {
+            await onRename(formData);
+            setEditing(false);
+          }}
+          className="flex items-center gap-2"
         >
-          <PencilIcon className="h-[17px] w-[17px]" />
-        </button>
-        <form action={toggleArchive.bind(null, id)}>
-          <SubmitButton className="ml-1 text-xs text-paper-dim active:text-paper">
-            {archived ? "Restore" : "Archive"}
-          </SubmitButton>
-        </form>
-        {remove && (
-          <form
-            action={remove.bind(null, id)}
-            onSubmit={(e) => {
-              if (!confirm(removeConfirm ?? `Delete "${name}"? This can't be undone.`)) e.preventDefault();
-            }}
+          <input
+            name="name"
+            defaultValue={name}
+            autoFocus
+            aria-label="New name"
+            className="field h-11 flex-1"
+          />
+          <button
+            type="submit"
+            aria-label="Save name"
+            title="Save name"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius-button)] bg-forest-800 text-white"
           >
-            <SubmitButton
-              label="Delete"
-              className="grid h-8 w-8 place-items-center rounded-lg text-clay active:bg-clay/10"
+            <Check size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            aria-label="Cancel rename"
+            title="Cancel rename"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius-button)] text-ink-500"
+          >
+            <X size={18} />
+          </button>
+        </form>
+      ) : (
+        <div className="flex items-center gap-1">
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-900">
+            {name}
+            {archived && (
+              <span className="badge ml-2 bg-cream-200 text-ink-700">
+                Archived
+              </span>
+            )}
+          </span>
+
+          {onMoveUp && (
+            <IconAction label="Move up" onClick={onMoveUp}>
+              <ChevronUp size={16} />
+            </IconAction>
+          )}
+          {onMoveDown && (
+            <IconAction label="Move down" onClick={onMoveDown}>
+              <ChevronDown size={16} />
+            </IconAction>
+          )}
+
+          <IconAction label={`Rename ${name}`} onClick={() => setEditing(true)}>
+            <Pencil size={16} />
+          </IconAction>
+
+          <form action={onToggleArchive} className="contents">
+            <button
+              type="submit"
+              aria-label={archived ? `Restore ${name}` : `Archive ${name}`}
+              title={archived ? "Restore" : "Archive"}
+              className="inline-flex h-9 shrink-0 items-center rounded-full px-3 text-[12px] font-semibold text-forest-800 transition-colors hover:bg-forest-50"
             >
-              <TrashIcon className="h-[18px] w-[18px]" />
-            </SubmitButton>
+              {archived ? "Restore" : "Archive"}
+            </button>
           </form>
-        )}
-      </div>
+
+          {/*
+            Delete is only offered on an archived row — archiving first is what makes the
+            FK cascade a deliberate act rather than an accident.
+          */}
+          {archived && onDelete && (
+            <IconAction
+              label={`Delete ${name}`}
+              onClick={() => setConfirmingDelete(true)}
+              className="text-negative-600"
+            >
+              <Trash size={16} />
+            </IconAction>
+          )}
+        </div>
+      )}
+
+      {children && <div className="mt-3">{children}</div>}
+
+      {confirmingDelete && onDelete && (
+        <div className="mt-3 rounded-[var(--radius-input)] bg-negative-100 p-3">
+          <p className="text-[13px] text-negative-600">
+            Delete <strong>{name}</strong> permanently? Past transactions keep
+            their history but lose this label.
+          </p>
+          <div className="mt-2 flex gap-2">
+            <form action={onDelete}>
+              <button
+                type="submit"
+                className="btn btn-sm bg-negative-500 text-white"
+              >
+                Delete
+              </button>
+            </form>
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+              className="btn btn-sm btn-ghost"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ArrowBtn({ disabled, label, children }: { disabled: boolean; label: string; children: React.ReactNode }) {
+function IconAction({
+  label,
+  onClick,
+  children,
+  className = "text-ink-500",
+}: {
+  label: string;
+  onClick: () => void | Promise<void>;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <button
-      type="submit"
-      disabled={disabled}
-      aria-label={label}
-      className="grid h-8 w-8 place-items-center rounded-lg text-paper-dim active:bg-ink-3 active:text-paper disabled:pointer-events-none disabled:opacity-25"
-    >
-      {children}
-    </button>
+    <form action={onClick} className="contents">
+      <button
+        type="submit"
+        aria-label={label}
+        title={label}
+        className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-forest-50 ${className}`}
+      >
+        {children}
+      </button>
+    </form>
   );
 }

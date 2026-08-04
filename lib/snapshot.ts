@@ -1,7 +1,8 @@
 import "server-only";
+
 import {
-  categoryMap,
   deriveWalletBalances,
+  getCategories,
   getLoanPayments,
   getLoans,
   getPaylaterItems,
@@ -9,188 +10,216 @@ import {
   getSavingsBuckets,
   getWallets,
   getYearTransactions,
-  walletMap,
+  monthKeyOf,
+  prevMonthKey,
+  sumBalances,
+  type SavingsBucket,
 } from "./data";
-import { getBondPortfolio } from "./bonds";
-import { getStockPortfolio } from "./stocks";
-import { getForexAccounts, getForexRate, forexUnitsAt } from "./forex";
-import { todayISO } from "./format";
+import { getBondPortfolio, type BondPortfolio } from "./bonds";
+import { getStockPortfolio, type StockPortfolio } from "./stocks";
+import { forexAvgCost, getForexAccounts, getForexRate, getForexTransactions } from "./forex";
+import type { Category, Loan, LoanPayment, PaylaterItem, Transaction, Wallet } from "./types";
 
-const span = (a: string, b: string) => {
-  const [ay, am] = a.slice(0, 7).split("-").map(Number);
-  const [by, bm] = b.slice(0, 7).split("-").map(Number);
-  return by * 12 + bm - (ay * 12 + am) + 1;
-};
-
-export interface SnapshotTxn {
-  date: string;
-  type: string;
-  amount: number;
-  category: string;
-  from: string;
-  to: string;
-  description: string;
+export interface ForexSnapshot {
+  name: string;
+  currency: string;
+  units: number;
+  invested: number;
+  value: number;
+  realizedPl: number;
+  rate: number;
 }
 
 export interface Snapshot {
   year: number;
-  generatedOn: string;
-  isCurrentYear: boolean;
-  // that year's flows
-  income: number;
-  expense: number;
-  saving: number;
-  investment: number;
-  net: number;
-  // net worth (wallet cash) at year start/end
-  netWorthStart: number;
-  netWorth: number;
-  transactions: SnapshotTxn[];
-  wallets: { name: string; balance: number }[];
-  savings: { name: string; kind: string; balance: number }[];
+  transactions: Transaction[];
+  categories: Category[];
+  wallets: Wallet[];
+  /** Wallet balances at the last day of the previous year and of this one. */
+  startNetWorth: number;
+  endNetWorth: number;
+  endBalances: Map<number, number>;
+  flows: { income: number; expense: number; saving: number; investment: number };
+  savings: SavingsBucket[];
   savingsTotal: number;
-  stocks: { ticker: string; lots: number; avgPerShare: number; cost: number; price: number | null; value: number | null; pl: number | null }[];
-  stocksCost: number;
-  stocksValue: number;
-  bonds: { name: string; units: number; principal: number; coupons: number }[];
-  bondsPrincipal: number;
-  bondsCoupons: number;
-  forex: { name: string; currency: string; units: number; rate: number; idr: number }[];
+  stocks: StockPortfolio;
+  bonds: BondPortfolio;
+  forex: ForexSnapshot[];
   forexTotal: number;
-  loans: { person: string; installment: number; monthsLeft: number; outstanding: number }[];
+  loans: (Loan & { expected: number; collected: number; outstanding: number })[];
   loansOutstanding: number;
-  paylater: { item: string; monthly: number; monthsLeft: number; remaining: number }[];
+  paylater: (PaylaterItem & { paidMonths: number; totalMonths: number; remaining: number })[];
   paylaterRemaining: number;
+  /** Everything the app tracks, netted into one figure. */
   trackedTotal: number;
 }
 
-/** Gather a year's financial status: that year's transactions + flows, plus holdings &
- *  balances as of the end of that year. */
+function monthsBetween(first: string, last: string): number {
+  const fy = parseInt(first.slice(0, 4), 10);
+  const fm = parseInt(first.slice(5, 7), 10);
+  const ly = parseInt(last.slice(0, 4), 10);
+  const lm = parseInt(last.slice(5, 7), 10);
+  return Math.max(1, (ly - fy) * 12 + (lm - fm) + 1);
+}
+
+/**
+ * Everything needed to render one year as a workbook.
+ *
+ * Holdings are taken AS OF YEAR-END, not as of today — a 2023 snapshot must describe 2023.
+ * Live stock prices are therefore skipped unless the year in question is the current one,
+ * where "as of year-end" and "now" are the same thing.
+ */
 export async function gatherSnapshot(year: number): Promise<Snapshot> {
-  const generatedOn = todayISO();
-  const isCurrentYear = year === Number(generatedOn.slice(0, 4));
-  const endMonth = `${year}-12-01`; // balances at end of December that year
-  const cutoff = `${year}-12-31`; // holdings up to year-end
+  const cutoff = `${year}-12-31`;
+  const endMonth = `${year}-12-01`;
+  const isCurrentYear = year === new Date().getFullYear();
 
-  const [txns, cats, ws, walletList, derivedEnd, derivedStart, savings, stockP, bondP, forexAccounts, loans, loanPayments, plItems, plPayments] =
-    await Promise.all([
-      getYearTransactions(year),
-      categoryMap(),
-      walletMap(),
-      getWallets(),
-      deriveWalletBalances(endMonth),
-      deriveWalletBalances(`${year - 1}-12-01`),
-      getSavingsBuckets(cutoff),
-      getStockPortfolio(cutoff, isCurrentYear),
-      getBondPortfolio(cutoff),
-      getForexAccounts(),
-      getLoans(),
-      getLoanPayments(),
-      getPaylaterItems(),
-      getPaylaterPayments(),
-    ]);
+  const [
+    transactions,
+    categories,
+    wallets,
+    endBalances,
+    startBalances,
+    savings,
+    stocks,
+    bonds,
+    forexAccounts,
+    loans,
+    loanPayments,
+    paylaterItems,
+    paylaterPayments,
+  ] = await Promise.all([
+    getYearTransactions(year),
+    getCategories(true),
+    getWallets(true),
+    deriveWalletBalances(endMonth),
+    deriveWalletBalances(prevMonthKey(`${year}-01-01`)),
+    getSavingsBuckets(cutoff),
+    getStockPortfolio(cutoff, isCurrentYear),
+    getBondPortfolio(cutoff),
+    getForexAccounts(),
+    getLoans(),
+    getLoanPayments(),
+    getPaylaterItems(),
+    getPaylaterPayments(),
+  ]);
 
-  // Transactions sheet rows
-  const transactions: SnapshotTxn[] = txns.map((t) => ({
-    date: t.occurred_on.slice(0, 10),
-    type: t.type,
-    amount: t.amount,
-    category: t.category_id ? cats.get(t.category_id)?.name ?? "" : "",
-    from: t.source_wallet_id ? ws.get(t.source_wallet_id) ?? "" : "",
-    to: t.dest_wallet_id ? ws.get(t.dest_wallet_id) ?? "" : "",
-    description: t.description ?? "",
-  }));
+  // --- Flows --------------------------------------------------------------
+  const kindOf = new Map(categories.map((c) => [c.id, c.kind]));
+  const flows = { income: 0, expense: 0, saving: 0, investment: 0 };
 
-  const sumType = (type: string) => txns.filter((t) => t.type === type).reduce((s, t) => s + t.amount, 0);
-  const income = sumType("income");
-  const expense = sumType("expense");
-  const saving = sumType("saving");
-  const investment = sumType("investment");
+  for (const txn of transactions) {
+    if (txn.type === "transfer") continue;
+    if (txn.type === "withdrawal") {
+      const kind = txn.category_id != null ? kindOf.get(txn.category_id) : undefined;
+      if (kind === "saving" || kind === "investment") flows[kind] -= txn.amount;
+      continue;
+    }
+    flows[txn.type] += txn.amount;
+  }
 
-  const wallets = walletList.map((w) => ({ name: w.name, balance: derivedEnd.get(w.id) ?? 0 }));
-  const netWorth = wallets.reduce((s, w) => s + w.balance, 0);
-  const netWorthStart = [...derivedStart.values()].reduce((s, v) => s + v, 0);
+  // --- Forex, valued at year-end units ------------------------------------
+  const forex: ForexSnapshot[] = await Promise.all(
+    forexAccounts.map(async (account) => {
+      const txns = await getForexTransactions(account.id);
 
-  const savingsRows = savings
-    .filter((b) => b.balance !== 0 || b.contributed !== 0 || b.withdrawn !== 0)
-    .map((b) => ({ name: b.name, kind: b.kind, balance: b.balance }));
-  const savingsTotal = savingsRows.reduce((s, b) => s + b.balance, 0);
+      // Walk back from the current balance to what was held at the cutoff.
+      let units = account.units;
+      for (const txn of txns) {
+        if (txn.occurred_on <= cutoff) continue;
+        units += txn.direction === "buy" ? -txn.units : txn.units;
+      }
 
-  const stocks = stockP.holdings.map((h) => ({
-    ticker: h.ticker,
-    lots: h.lots,
-    avgPerShare: Math.round(h.avgPerShare),
-    cost: h.cost,
-    price: h.price,
-    value: h.value,
-    pl: h.pl,
-  }));
+      const upToCutoff = txns.filter((t) => t.occurred_on <= cutoff);
+      const avgCost = forexAvgCost(upToCutoff);
+      const rate = await getForexRate(account.currency);
 
-  const bonds = bondP.holdings.map((h) => ({ name: h.name, units: h.units, principal: h.invested, coupons: h.coupons }));
-
-  // Forex units as of year-end × current reference rate.
-  const fxUnits = await forexUnitsAt(endMonth);
-  const fxCurrencies = [...new Set(forexAccounts.map((a) => a.currency))];
-  const fxRates = new Map<string, number>();
-  await Promise.all(fxCurrencies.map(async (c) => fxRates.set(c, await getForexRate(c))));
-  const forex = forexAccounts
-    .map((a) => {
-      const units = fxUnits.get(a.id) ?? a.units;
-      const rate = fxRates.get(a.currency) ?? 0;
-      return { name: a.name, currency: a.currency, units, rate, idr: Math.round(units * rate) };
+      return {
+        name: account.name,
+        currency: account.currency,
+        units,
+        invested: Math.round(avgCost * units),
+        value: Math.round(rate * units),
+        realizedPl: upToCutoff.reduce((sum, t) => sum + (t.realized_pl ?? 0), 0),
+        rate,
+      };
     })
-    .filter((a) => a.units !== 0);
-  const forexTotal = forex.reduce((s, a) => s + a.idr, 0);
+  );
 
-  const loanRows = loans
-    .map((l) => {
-      const unpaid = loanPayments.filter((p) => p.loan_id === l.id && !p.paid).length;
-      return { person: l.person, installment: l.installment, monthsLeft: unpaid, outstanding: unpaid * l.installment };
-    })
-    .filter((l) => l.outstanding > 0);
-  const loansOutstanding = loanRows.reduce((s, l) => s + l.outstanding, 0);
+  // --- Loans --------------------------------------------------------------
+  const paymentsByLoan = new Map<number, LoanPayment[]>();
+  for (const payment of loanPayments) {
+    const list = paymentsByLoan.get(payment.loan_id) ?? [];
+    list.push(payment);
+    paymentsByLoan.set(payment.loan_id, list);
+  }
 
-  const paylaterRows = plItems
-    .map((p) => {
-      const total = span(p.first_month_date, p.last_month_date);
-      const paidCount = plPayments.filter(
-        (pp) => pp.item_id === p.id && pp.month >= p.first_month_date && pp.month <= p.last_month_date
-      ).length;
-      const unpaid = Math.max(0, total - paidCount);
-      return { item: p.item, monthly: p.monthly_amount, monthsLeft: unpaid, remaining: unpaid * p.monthly_amount };
-    })
-    .filter((p) => p.remaining > 0);
-  const paylaterRemaining = paylaterRows.reduce((s, p) => s + p.remaining, 0);
+  const loanRows = loans.map((loan) => {
+    const schedule = paymentsByLoan.get(loan.id) ?? [];
+    const expected = schedule.reduce(
+      (sum, p) => sum + (p.amount ?? loan.installment),
+      0
+    );
+    const collected = schedule
+      .filter((p) => p.paid)
+      .reduce((sum, p) => sum + (p.amount ?? loan.installment), 0);
+    return { ...loan, expected, collected, outstanding: expected - collected };
+  });
 
-  const trackedTotal = netWorth + savingsTotal + forexTotal + loansOutstanding - paylaterRemaining;
+  // --- Installments -------------------------------------------------------
+  const paidByItem = new Map<number, number>();
+  for (const payment of paylaterPayments) {
+    if (payment.month > cutoff) continue;
+    paidByItem.set(payment.item_id, (paidByItem.get(payment.item_id) ?? 0) + 1);
+  }
+
+  const paylater = paylaterItems.map((item) => {
+    const totalMonths = monthsBetween(item.first_month_date, item.last_month_date);
+    const paidMonths = paidByItem.get(item.id) ?? 0;
+    return {
+      ...item,
+      totalMonths,
+      paidMonths,
+      remaining: Math.max(0, totalMonths - paidMonths) * item.monthly_amount,
+    };
+  });
+
+  const endNetWorth = sumBalances(endBalances);
+  const savingsTotal = savings.reduce((sum, b) => sum + b.balance, 0);
+  const forexTotal = forex.reduce((sum, f) => sum + f.value, 0);
+  const loansOutstanding = loanRows.reduce((sum, l) => sum + l.outstanding, 0);
+  const paylaterRemaining = paylater.reduce((sum, p) => sum + p.remaining, 0);
 
   return {
     year,
-    generatedOn,
-    isCurrentYear,
-    income,
-    expense,
-    saving,
-    investment,
-    net: income - expense - saving - investment,
-    netWorthStart,
-    netWorth,
     transactions,
+    categories,
     wallets,
-    savings: savingsRows,
+    startNetWorth: sumBalances(startBalances),
+    endNetWorth,
+    endBalances,
+    flows,
+    savings,
     savingsTotal,
     stocks,
-    stocksCost: stockP.totalCost,
-    stocksValue: stockP.pricedValue,
     bonds,
-    bondsPrincipal: bondP.totalInvested,
-    bondsCoupons: bondP.totalCoupons,
     forex,
     forexTotal,
     loans: loanRows,
     loansOutstanding,
-    paylater: paylaterRows,
+    paylater,
     paylaterRemaining,
-    trackedTotal,
+    // Wallets + buckets + forex + what is owed to you, less what you still owe.
+    trackedTotal:
+      endNetWorth +
+      savingsTotal +
+      forexTotal +
+      loansOutstanding -
+      paylaterRemaining,
   };
+}
+
+/** Convenience for the workbook's Transactions sheet. */
+export function monthOf(iso: string): string {
+  return monthKeyOf(iso);
 }

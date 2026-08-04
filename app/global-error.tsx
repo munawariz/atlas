@@ -1,53 +1,75 @@
-"use client"; // Error boundaries must be Client Components
+"use client";
 
-// Last-resort boundary for errors in the root/app layout itself (where the segment
-// error.tsx can't reach). Replaces the root layout, so it must ship its own <html>/
-// <body> and inline styles. Kept dependency-free on purpose.
 export default function GlobalError({
   error,
-  unstable_retry,
+  reset,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  reset: () => void;
 }) {
   return (
     <html lang="en">
       <body
         style={{
           margin: 0,
-          minHeight: "100vh",
+          minHeight: "100dvh",
           display: "flex",
-          flexDirection: "column",
           alignItems: "center",
           justifyContent: "center",
-          background: "#0b0e14",
-          color: "#e6edf3",
-          fontFamily: "system-ui, sans-serif",
-          textAlign: "center",
-          padding: "2rem",
+          padding: 24,
+          background: "#f7f4ed",
+          color: "#4e4e4e",
+          fontFamily: '"Figtree","Helvetica Neue",Arial,sans-serif',
         }}
       >
-        <title>Something went wrong · Atlas</title>
-        <div style={{ fontSize: "3rem" }}>⚠️</div>
-        <h1 style={{ fontWeight: 500, margin: "0.75rem 0 0.25rem" }}>Something went wrong</h1>
-        <p style={{ color: "#8a939e", maxWidth: 320, margin: 0 }}>
-          A temporary error occurred. Please try again.
-        </p>
-        <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 420,
+            padding: 32,
+            borderRadius: 24,
+            background: "#fff",
+            boxShadow: "0 4px 16px rgba(0,43,15,.06)",
+          }}
+        >
+          <h1
+            style={{
+              margin: 0,
+              fontSize: 28,
+              fontWeight: 700,
+              letterSpacing: "-0.02em",
+              color: "#111",
+            }}
+          >
+            Something broke.
+          </h1>
+          <p style={{ marginTop: 12, fontSize: 15, lineHeight: 1.7 }}>
+            Atlas hit an error it could not recover from. Your data is untouched.
+          </p>
+          {error.digest && (
+            <p style={{ marginTop: 8, fontSize: 13, color: "#7a7a7a" }}>
+              Reference: {error.digest}
+            </p>
+          )}
           <button
-            onClick={() => unstable_retry()}
-            style={{ background: "#3fb950", color: "#0b0e14", border: 0, borderRadius: 14, padding: "10px 20px", fontWeight: 600 }}
+            type="button"
+            onClick={reset}
+            style={{
+              marginTop: 24,
+              height: 48,
+              width: "100%",
+              border: "none",
+              borderRadius: 10,
+              background: "#003511",
+              color: "#fff",
+              fontSize: 16,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
           >
             Try again
           </button>
-          <button
-            onClick={() => window.location.reload()}
-            style={{ background: "transparent", color: "#8a939e", border: "1px solid #232c3a", borderRadius: 14, padding: "10px 20px" }}
-          >
-            Reload
-          </button>
         </div>
-        {error.digest && <p style={{ color: "#586069", fontSize: 11, marginTop: 16 }}>ref: {error.digest}</p>}
       </body>
     </html>
   );

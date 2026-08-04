@@ -1,0 +1,16 @@
+/* Atlas shadows: wide, soft, green-tinted. Never grey, never tight, never more than one layer of drama. */
+:root{
+  --shadow-none:none;
+  --shadow-xs:0 1px 2px rgba(0,43,15,.06);
+  --shadow-sm:0 4px 16px rgba(0,43,15,.06);
+  --shadow-md:0 12px 32px rgba(0,43,15,.08);
+  --shadow-lg:0 24px 64px rgba(0,43,15,.10);
+  --shadow-xl:0 40px 96px rgba(0,43,15,.12);
+  --shadow-float:0 18px 44px rgba(0,43,15,.14);
+  --shadow-inset-hairline:inset 0 0 0 1px rgba(0,53,17,.08);
+  --shadow-focus:0 0 0 3px rgba(211,250,83,.55);
+
+  /* Protection gradient for text over imagery. */
+  --scrim-bottom:linear-gradient(to top,rgba(0,43,15,.72),rgba(0,43,15,0)); /* @kind other */
+  --glow-lime:radial-gradient(closest-side,rgba(211,250,83,.35),rgba(211,250,83,0)); /* @kind other */
+}

@@ -1,32 +1,49 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useFormStatus } from "react-dom";
 
-// A submit <button> that automatically disables + dims while its form's server action
-// is in flight, so the click is acknowledged instantly even on a slow round-trip.
-// Drop it into any <form action={serverAction}> in place of a plain <button>.
+interface SubmitButtonProps {
+  children: ReactNode;
+  /** Sets both aria-label and title — required for icon-only buttons. */
+  label?: string;
+  className?: string;
+  /** Swapped in while the form action is in flight. Falls back to `children`. */
+  pendingChildren?: ReactNode;
+  disabled?: boolean;
+  name?: string;
+  value?: string;
+}
+
+/**
+ * A submit button that disables and dims itself while its form's action is in flight.
+ *
+ * `useFormStatus` only reports the status of the nearest ancestor <form>, so this must be
+ * rendered inside the form it submits — never as the form itself.
+ */
 export default function SubmitButton({
   children,
-  pendingText,
-  className = "",
   label,
-}: {
-  children: React.ReactNode;
-  pendingText?: React.ReactNode;
-  className?: string;
-  label?: string; // accessible name + tooltip (use for icon-only buttons)
-}) {
+  className = "btn btn-primary w-full",
+  pendingChildren,
+  disabled,
+  name,
+  value,
+}: SubmitButtonProps) {
   const { pending } = useFormStatus();
+
   return (
     <button
       type="submit"
-      disabled={pending}
-      aria-busy={pending}
+      name={name}
+      value={value}
+      disabled={pending || disabled}
       aria-label={label}
       title={label}
-      className={`${className} transition-opacity disabled:opacity-50`}
+      aria-busy={pending || undefined}
+      className={className}
     >
-      {pending ? pendingText ?? children : children}
+      {pending ? (pendingChildren ?? children) : children}
     </button>
   );
 }

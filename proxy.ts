@@ -1,27 +1,24 @@
+// Next 16 renamed `middleware.ts` to `proxy.ts` and the exported function to `proxy()`.
+// Same NextRequest/NextResponse API, same config.matcher, same project-root location.
+
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 
-// Next 16 renamed the "middleware" convention to "proxy" (same API).
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const token = req.cookies.get(SESSION_COOKIE)?.value;
-  const authed = await verifySessionToken(token);
+  const authed = await verifySessionToken(req.cookies.get(SESSION_COOKIE)?.value);
 
   if (pathname === "/login") {
-    // Already logged in? Skip the login screen.
     if (authed) return NextResponse.redirect(new URL("/add", req.url));
     return NextResponse.next();
   }
 
-  if (!authed) {
-    return NextResponse.redirect(new URL("/login", req.url));
-  }
+  if (!authed) return NextResponse.redirect(new URL("/login", req.url));
   return NextResponse.next();
 }
 
 export const config = {
-  // Protect everything except Next internals and PWA/static assets.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|icons/|offline.html|robots.txt).*)",
+    "/((?!_next/static|_next/image|favicon.ico|favicon.svg|manifest.webmanifest|sw.js|icons/|offline.html|robots.txt).*)",
   ],
 };

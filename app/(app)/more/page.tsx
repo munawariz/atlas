@@ -1,102 +1,164 @@
 import Link from "next/link";
+import {
+  ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
+  Coins,
+  CreditCard,
+  Download,
+  FileText,
+  Globe,
+  LineChart,
+  SlidersHorizontal,
+  Star,
+  Wallet as WalletIcon,
+} from "@/components/icons";
+import { missingSettings } from "@/lib/settings";
 import { logout } from "./actions";
+import type { ComponentType } from "react";
+import type { IconProps } from "@/components/icons";
 
-type Item = { href: string; label: string; desc: string };
+export const dynamic = "force-dynamic";
 
-const TOP: Item[] = [
-  { href: "/charts", label: "Charts", desc: "Trends & drilldown into your money" },
-  { href: "/more/cashflow", label: "Expected cashflow", desc: "Planned income, expense, saving & investment for a month" },
-  { href: "/balances", label: "Starting balances", desc: "Opening balance per wallet → live networth" },
-  { href: "/savings", label: "Savings", desc: "Balance in each saving & investment bucket" },
-];
+export const metadata = { title: "More · Atlas" };
 
-// Grouped under a collapsible "Investment" entry.
-const INVESTMENT: Item[] = [
-  { href: "/stocks", label: "Stocks", desc: "Per-ticker portfolio, live value & avg cost" },
-  { href: "/bonds", label: "Bonds", desc: "Bond buys/sells & coupon income" },
-  { href: "/more/forex", label: "Forex", desc: "Foreign currency holdings (live rate)" },
-];
-
-const BOTTOM: Item[] = [
-  { href: "/more/budgets", label: "Budgets", desc: "Set monthly targets" },
-  { href: "/more/paylater", label: "My Installment", desc: "Installment items & providers" },
-  { href: "/more/loans", label: "Loans", desc: "Money people owe you each month" },
-  { href: "/more/wallets", label: "Wallets", desc: "Add / archive wallets" },
-  { href: "/more/categories", label: "Categories", desc: "Add / archive categories" },
-  { href: "/more/settings", label: "Settings", desc: "Map auto-transaction categories & default wallets" },
-];
-
-function Row({ item, border, indent }: { item: Item; border: boolean; indent?: boolean }) {
-  return (
-    <Link
-      href={item.href}
-      className={`flex items-center justify-between py-4 pr-4 transition-colors active:bg-ink-3 ${
-        indent ? "bg-ink-2/40 pl-8" : "px-4"
-      } ${border ? "hr-dash border-t" : ""}`}
-    >
-      <div>
-        <div className="text-[15px] font-medium text-paper">{item.label}</div>
-        <div className="text-xs text-paper-dim">{item.desc}</div>
-      </div>
-      <span className="text-gold/70">›</span>
-    </Link>
-  );
+interface Item {
+  href: string;
+  label: string;
+  hint: string;
+  Icon: ComponentType<IconProps>;
 }
 
-export default function MorePage() {
+const PRIMARY: Item[] = [
+  { href: "/charts", label: "Charts", hint: "Net worth, cash flow, categories", Icon: LineChart },
+  { href: "/more/cashflow", label: "Expected cashflow", hint: "What a month is planned to do", Icon: ArrowUpRight },
+  { href: "/balances", label: "Starting balances", hint: "What each wallet opened with", Icon: WalletIcon },
+  { href: "/savings", label: "Savings", hint: "Money set aside, per bucket", Icon: Coins },
+];
+
+const INVESTMENT: Item[] = [
+  { href: "/stocks", label: "Stocks", hint: "Holdings, trades, dividends", Icon: LineChart },
+  { href: "/bonds", label: "Bonds", hint: "Principal held and coupons", Icon: FileText },
+  { href: "/more/forex", label: "Forex", hint: "Foreign currency, outside net worth", Icon: Globe },
+];
+
+const MANAGE: Item[] = [
+  { href: "/more/budgets", label: "Budgets", hint: "Limits and targets per category", Icon: SlidersHorizontal },
+  { href: "/more/paylater", label: "My Installment", hint: "Instalments and what is due", Icon: CreditCard },
+  { href: "/more/loans", label: "Loans", hint: "Money other people owe you", Icon: Coins },
+  { href: "/more/wallets", label: "Wallets", hint: "Where your cash lives", Icon: WalletIcon },
+  { href: "/more/categories", label: "Categories", hint: "Names, cadence, installment flags", Icon: FileText },
+  { href: "/more/providers", label: "Installment providers", hint: "Card, paylater, store credit", Icon: CreditCard },
+  { href: "/more/settings", label: "Settings", hint: "Categories automated actions book to", Icon: Star },
+];
+
+export default async function MorePage() {
+  const missing = await missingSettings();
+
   return (
-    <div className="space-y-5 pt-4">
+    <div className="space-y-6">
       <header>
-        <p className="label">Settings</p>
-        <h1 className="font-display text-3xl font-medium tracking-tight text-paper">More</h1>
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          More
+        </h1>
       </header>
 
-      <div className="card overflow-hidden">
-        {TOP.map((l, i) => (
-          <Row key={l.href} item={l} border={i > 0} />
-        ))}
+      {missing.length > 0 && (
+        <Link
+          href="/more/settings"
+          className="block rounded-[var(--radius-card)] border-l-4 border-warning-500 bg-warning-100 p-4 no-underline"
+        >
+          <div className="text-[15px] font-semibold text-ink-900">
+            {missing.length} setting{missing.length === 1 ? "" : "s"} still need a
+            category
+          </div>
+          <p className="mt-1 text-[13px] text-ink-700">
+            Automated transactions refuse until they know where to book. Open
+            Settings and press Auto-detect.
+          </p>
+        </Link>
+      )}
 
-        <details className="group hr-dash border-t">
-          <summary className="flex cursor-pointer items-center justify-between px-4 py-4 transition-colors active:bg-ink-3">
-            <div>
-              <div className="text-[15px] font-medium text-paper">Investment</div>
-              <div className="text-xs text-paper-dim">Stocks, bonds &amp; forex</div>
-            </div>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="chevron h-4 w-4 text-gold/70 transition-transform">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 6l6 6-6 6" />
-            </svg>
-          </summary>
-          {INVESTMENT.map((l) => (
-            <Row key={l.href} item={l} border indent />
+      <ItemList items={PRIMARY} />
+
+      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+        <summary className="flex items-center gap-3 px-4 py-3.5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-cream-100 text-forest-800">
+            <LineChart size={20} />
+          </span>
+          <span className="flex-1 text-[15px] font-semibold text-ink-900">
+            Investment
+          </span>
+          <span className="chevron text-ink-300">
+            <ChevronDown size={18} />
+          </span>
+        </summary>
+        <div className="border-t border-[var(--border-subtle)]">
+          {INVESTMENT.map((item, i) => (
+            <Row key={item.href} item={item} first={i === 0} />
           ))}
-        </details>
+        </div>
+      </details>
 
-        {BOTTOM.map((l) => (
-          <Row key={l.href} item={l} border />
-        ))}
-      </div>
+      <ItemList items={MANAGE} />
 
       <Link
         href="/backup"
-        className="card flex items-center justify-between px-4 py-4 transition-colors active:bg-ink-3"
+        className="flex items-center gap-3 rounded-[var(--radius-card)] bg-forest-800 p-4 no-underline"
       >
-        <div>
-          <div className="text-[15px] font-medium text-paper">Backup snapshot</div>
-          <div className="text-xs text-paper-dim">Download a year&apos;s financial status as an Excel file (.xlsx)</div>
-        </div>
-        <span className="text-gold/70">›</span>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-lime-500 text-forest-800">
+          <Download size={20} />
+        </span>
+        <span className="flex-1">
+          <span className="block text-[15px] font-semibold text-white">
+            Backup snapshot
+          </span>
+          <span className="block text-[13px]" style={{ color: "var(--color-forest-200)" }}>
+            Download a year as an Excel workbook
+          </span>
+        </span>
+        <ChevronRight size={18} className="shrink-0 text-forest-300" />
       </Link>
 
       <form action={logout}>
-        <button
-          type="submit"
-          className="w-full rounded-2xl border border-line/60 py-3 text-sm font-medium text-paper-dim transition-colors active:bg-ink-2"
-        >
+        <button type="submit" className="btn btn-outline w-full">
           Log out
         </button>
       </form>
-
-      <p className="pt-1 text-center font-display text-sm italic text-paper-faint">Atlas</p>
     </div>
+  );
+}
+
+function ItemList({ items }: { items: Item[] }) {
+  return (
+    <div className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+      {items.map((item, i) => (
+        <Row key={item.href} item={item} first={i === 0} />
+      ))}
+    </div>
+  );
+}
+
+function Row({ item, first }: { item: Item; first: boolean }) {
+  return (
+    <Link
+      href={item.href}
+      className={`flex items-center gap-3 px-4 py-3.5 no-underline ${
+        first ? "" : "border-t border-[var(--border-subtle)]"
+      }`}
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-cream-100 text-forest-800">
+        <item.Icon size={20} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[15px] font-semibold text-ink-900">
+          {item.label}
+        </span>
+        <span className="block truncate text-[13px] text-ink-500">
+          {item.hint}
+        </span>
+      </span>
+      <ChevronRight size={18} className="shrink-0 text-ink-300" />
+    </Link>
   );
 }
