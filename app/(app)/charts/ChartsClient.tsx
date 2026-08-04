@@ -14,9 +14,22 @@ import type { Category, CategoryKind } from "@/lib/types";
  * five simple shapes, and none of them match the design system's flat, axis-free style.
  */
 
+/**
+ * Bar fills, from the design system's STRONG tokens only. The full series ramp includes
+ * lime-500, sage-300 and forest-300, which all wash out against white/cream at a few
+ * pixels tall — so those pale entries are deliberately absent here.
+ */
 const PALETTE = [
-  "#003511", "#d3fa53", "#2f6bd8", "#a8d21f", "#e8a33d",
-  "#2f6a44", "#c8452f", "#8fae9c", "#1a5230", "#b3c2bd",
+  "#003511", // forest-800
+  "#2f6bd8", // info-500
+  "#e8a33d", // warning-500
+  "#2f6a44", // forest-500
+  "#c8452f", // negative-500
+  "#a8d21f", // lime-700
+  "#159a4a", // positive-500
+  "#24509f", // info-600
+  "#8a5b12", // warning-600
+  "#1a5230", // forest-600
 ];
 
 const FLOW_SERIES: { key: keyof MonthFlow; label: string; color: string }[] = [
@@ -475,7 +488,7 @@ export default function ChartsClient({
 
       {/* --- Category breakdown ---------------------------------------------- */}
       <section className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
-        <h2 className="label mb-2">Category breakdown</h2>
+        <h2 className="label mb-3">Category breakdown</h2>
 
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
           {KINDS.map((kind) => (
@@ -592,7 +605,7 @@ export default function ChartsClient({
 
       {/* --- Category over time ---------------------------------------------- */}
       <section className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
-        <h2 className="label mb-2">Category over time</h2>
+        <h2 className="label mb-3">Category over time</h2>
 
         <select
           value={overTimeCategory ?? ""}
@@ -640,7 +653,7 @@ export default function ChartsClient({
                     fill={
                       i % 2 === 0
                         ? "var(--color-forest-800)"
-                        : "var(--color-sage-300)"
+                        : "var(--color-forest-500)"
                     }
                   />
                 );
