@@ -16,3 +16,6 @@ yarn-error.log*
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+
+# Personal source data used for imports — never committed.
+source-data/
