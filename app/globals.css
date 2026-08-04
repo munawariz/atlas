@@ -472,7 +472,10 @@ details[open] > summary .chevron {
    also hides the length of the amount. CSS-only, so it applies before paint.
    =========================================================================== */
 
-.amounts-hidden .privacy-scope .tabular-nums {
+/* NEVER mask form inputs: an <input> cannot render the ::after dots below, so masking
+   one just blanks the field (invisible text in the edit sheet's amount, ATLAS.md §14.9).
+   Editing an amount is a deliberate act — typing would reveal it regardless. */
+.amounts-hidden .privacy-scope .tabular-nums:not(input) {
   color: transparent;
   position: relative;
 }

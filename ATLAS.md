@@ -712,11 +712,13 @@ Also define:
   `@media (prefers-reduced-motion: reduce) { animation: none }`.
 - `.safe-top` / `.safe-bottom` → `env(safe-area-inset-*)`.
 - Strip number-input spinners.
-- **Privacy mode** (see §9.4): under `.amounts-hidden .privacy-scope .tabular-nums`, set
-  `color: transparent; position: relative` and overlay `::after { content: "••••"; position: absolute; inset: 0 }`
+- **Privacy mode** (see §9.4): under `.amounts-hidden .privacy-scope .tabular-nums:not(input)`,
+  set `color: transparent; position: relative` and overlay `::after { content: "••••"; position: absolute; inset: 0 }`
   right-aligned by default, with `.priv-left` / `.priv-center` modifiers. Because the real text
   stays in flow and only turns transparent, **containers never change size**. CSS-only so it
-  applies before paint.
+  applies before paint. The `:not(input)` is load-bearing: an `<input>` cannot render `::after`
+  content, so masking one blanks the field entirely (invisible amount in the edit sheet) —
+  form inputs are always exempt.
 
 `app/layout.tsx` (root): load both Google fonts with `variable` + `display: "swap"`; set metadata
 (title "Atlas", manifest, apple-web-app capable, icon set) and `viewport`
