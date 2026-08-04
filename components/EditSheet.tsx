@@ -82,7 +82,7 @@ export default function EditSheet({
           />
 
           <div
-            className="absolute inset-x-0 bottom-0 mx-auto flex max-h-[90dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
+            className="absolute inset-x-0 bottom-0 mx-auto flex min-h-[50dvh] max-h-[80dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
             style={{
               boxShadow: "var(--shadow-float)",
               animation: "rise 0.34s var(--ease-standard) both",

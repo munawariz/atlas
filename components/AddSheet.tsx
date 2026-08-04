@@ -91,11 +91,16 @@ export default function AddSheet({
   // offset/width. `animate` is false only for the first paint after the sheet opens, so
   // the pill starts in place instead of sliding in from the edge.
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const tabRowRef = useRef<HTMLDivElement>(null);
   const [pill, setPill] = useState<{
     left: number;
     width: number;
     animate: boolean;
   } | null>(null);
+
+  // Swipe-through-tabs: a horizontal swipe on the category area steps to the
+  // neighbouring tab. Start point is captured here; the decision happens on release.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   // A fresh flow every time the sheet opens — staged reveal only works from a blank slate.
   useEffect(() => {
@@ -208,12 +213,44 @@ export default function AddSheet({
     }
     const el = tabRefs.current.get(tabKey);
     if (!el) return;
-    setPill((prev) => ({
-      left: el.offsetLeft,
-      width: el.offsetWidth,
-      animate: prev !== null,
-    }));
+    setPill((prev) => {
+      // Keep the active tab in view — centred where the row allows — so a swipe can
+      // never land you on a tab whose pill sits off-screen.
+      const row = tabRowRef.current;
+      if (row) {
+        row.scrollTo({
+          left: el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2,
+          behavior: prev !== null ? "smooth" : "auto",
+        });
+      }
+      return {
+        left: el.offsetLeft,
+        width: el.offsetWidth,
+        animate: prev !== null,
+      };
+    });
   }, [open, tabKey, tabs]);
+
+  function onPickerTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function onPickerTouchEnd(e: React.TouchEvent) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // A deliberate sideways swipe only: far enough, and clearly more horizontal than
+    // the vertical scroll gesture the sheet body already owns.
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const index = tabs.findIndex((tab) => tab.key === activeTab.key);
+    const next = index + (dx < 0 ? 1 : -1);
+    if (next < 0 || next >= tabs.length) return;
+    setTabKey(tabs[next].key);
+  }
 
   // --- Steps -----------------------------------------------------------------
   // The category decides everything: its kind IS the transaction type, which decides
@@ -256,7 +293,7 @@ export default function AddSheet({
 
           <form
             action={formAction}
-            className="absolute inset-x-0 bottom-0 mx-auto flex max-h-[90dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
+            className="absolute inset-x-0 bottom-0 mx-auto flex min-h-[50dvh] max-h-[80dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
             style={{
               boxShadow: "var(--shadow-float)",
               animation: "rise 0.34s var(--ease-standard) both",
@@ -288,6 +325,7 @@ export default function AddSheet({
 
             {/* --- The picker tabs, right below the date ------------------- */}
             <div
+              ref={tabRowRef}
               className="shrink-0 overflow-x-auto px-5 pb-2 no-scrollbar"
               onWheel={(e) => {
                 // Desktop mice only wheel vertically; steer it sideways so the row pans
@@ -343,14 +381,27 @@ export default function AddSheet({
             </div>
 
             <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {/* --- Step 1: pick the category from the active tab --------- */}
-              <section className="mb-4">
+              {/* --- Step 1: pick the category from the active tab. Swiping the picker
+                     sideways steps through the tabs. -------------------------------- */}
+              <section
+                className="mb-4"
+                onTouchStart={onPickerTouchStart}
+                onTouchEnd={onPickerTouchEnd}
+              >
                 {activeTab.categories.length === 0 ? (
-                  <p className="text-[14px] text-ink-500">
+                  <p
+                    key={activeTab.key}
+                    className="text-[14px] text-ink-500"
+                    style={{ animation: "pop 0.22s var(--ease-standard) both" }}
+                  >
                     {activeTab.emptyMessage}
                   </p>
                 ) : (
-                  <div className="grid grid-cols-2 gap-2">
+                  <div
+                    key={activeTab.key}
+                    className="grid grid-cols-2 gap-2"
+                    style={{ animation: "pop 0.22s var(--ease-standard) both" }}
+                  >
                     {activeTab.categories.map((category) => {
                       const active = categoryId === category.id;
                       return (
