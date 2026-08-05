@@ -2,7 +2,6 @@ import Link from "next/link";
 import {
   ArrowUpRight,
   ChevronDown,
-  ChevronRight,
   Coins,
   CreditCard,
   Download,
@@ -13,6 +12,7 @@ import {
   Star,
   Wallet as WalletIcon,
 } from "@/components/icons";
+import PendingChevron from "@/components/PendingChevron";
 import { missingSettings } from "@/lib/settings";
 import { logout } from "./actions";
 import type { ComponentType } from "react";
@@ -117,7 +117,7 @@ export default async function MorePage() {
             Download a year as an Excel workbook
           </span>
         </span>
-        <ChevronRight size={18} className="shrink-0 text-forest-300" />
+        <PendingChevron size={18} className="shrink-0 text-forest-300" />
       </Link>
 
       <form action={logout}>
@@ -158,7 +158,7 @@ function Row({ item, first }: { item: Item; first: boolean }) {
           {item.hint}
         </span>
       </span>
-      <ChevronRight size={18} className="shrink-0 text-ink-300" />
+      <PendingChevron size={18} className="shrink-0 text-ink-300" />
     </Link>
   );
 }

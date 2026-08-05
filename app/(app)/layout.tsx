@@ -1,6 +1,7 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import BottomNav from "@/components/BottomNav";
+import RouteProgress from "@/components/RouteProgress";
 import {
   getCategories,
   getCategoryGroups,
@@ -9,10 +10,10 @@ import {
   getWallets,
 } from "@/lib/data";
 
-export default async function AppLayout({
-  children,
-}: Readonly<{ children: ReactNode }>) {
-  // The Add sheet lives in the tab bar, so every page needs its options at hand.
+// The Add sheet lives in the tab bar, so every page needs its options at hand. Fetching
+// them here — behind Suspense — rather than in the layout body keeps the shell synchronous:
+// header, nav and the page skeleton stream immediately instead of waiting on five queries.
+async function NavWithOptions() {
   const [wallets, categories, groups, members, recentCategoryIds] =
     await Promise.all([
       getWallets(),
@@ -23,7 +24,22 @@ export default async function AppLayout({
     ]);
 
   return (
+    <BottomNav
+      wallets={wallets}
+      categories={categories}
+      groups={groups}
+      members={members}
+      recentCategoryIds={recentCategoryIds}
+    />
+  );
+}
+
+export default function AppLayout({
+  children,
+}: Readonly<{ children: ReactNode }>) {
+  return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
+      <RouteProgress />
       {/*
         Solid white header, no backdrop-filter. A sticky element that also has a backdrop
         filter silently stops sticking in Chromium (ATLAS.md §14.1) — and the design system
@@ -57,13 +73,9 @@ export default async function AppLayout({
 
       <main className="flex-1 px-4 pt-4 pb-6">{children}</main>
 
-      <BottomNav
-        wallets={wallets}
-        categories={categories}
-        groups={groups}
-        members={members}
-        recentCategoryIds={recentCategoryIds}
-      />
+      <Suspense fallback={<BottomNav loading />}>
+        <NavWithOptions />
+      </Suspense>
     </div>
   );
 }

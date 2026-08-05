@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { todayISO } from "@/lib/format";
 import type { Wallet } from "@/lib/types";
@@ -53,22 +54,19 @@ export function StockTradeForm({
       <input type="hidden" name="side" value={side} />
       <input type="hidden" name="opening" value={opening ? "1" : "0"} />
 
-      <div className="flex gap-2">
-        {(["buy", "sell"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => {
-              setSide(value);
-              if (value === "sell") setOpening(false);
-            }}
-            aria-pressed={side === value}
-            className={`chip flex-1 justify-center ${side === value ? "chip-on" : ""}`}
-          >
-            {value === "buy" ? "Buy" : "Sell"}
-          </button>
-        ))}
-      </div>
+      <PillSwitcher<"buy" | "sell">
+        options={[
+          { key: "buy", label: "Buy" },
+          { key: "sell", label: "Sell" },
+        ]}
+        value={side}
+        onChange={(value) => {
+          setSide(value);
+          if (value === "sell") setOpening(false);
+        }}
+        ariaLabel="Trade side"
+        grow
+      />
 
       <input
         name="ticker"

@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { Trash } from "@/components/icons";
 import type { ForexAccount, ForexTransaction, Wallet } from "@/lib/types";
@@ -47,21 +48,16 @@ export default function ForexEditForm({
       <form action={formAction} className="space-y-2">
         <input type="hidden" name="direction" value={direction} />
 
-        <div className="flex gap-2">
-          {(["buy", "sell"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setDirection(value)}
-              aria-pressed={direction === value}
-              className={`chip flex-1 justify-center ${
-                direction === value ? "chip-on" : ""
-              }`}
-            >
-              {value === "buy" ? "Buy" : "Sell"}
-            </button>
-          ))}
-        </div>
+        <PillSwitcher<"buy" | "sell">
+          options={[
+            { key: "buy", label: "Buy" },
+            { key: "sell", label: "Sell" },
+          ]}
+          value={direction}
+          onChange={setDirection}
+          ariaLabel="Direction"
+          grow
+        />
 
         <select
           name="account_id"

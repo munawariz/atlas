@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { X } from "@/components/icons";
 import { TYPE_ACCENT, amountFontSize, walletLabel } from "@/components/TxnFields";
@@ -54,6 +55,10 @@ export default function MoveSheet({
   const lastNonce = useRef<number | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Swipe between Transfer and Withdraw: a horizontal swipe anywhere on the sheet
+  // steps to the neighbouring type, mirroring AddSheet's tab swipe.
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+
   // A fresh flow every time the sheet opens.
   useEffect(() => {
     if (!open) return;
@@ -99,9 +104,16 @@ export default function MoveSheet({
     setToast(state.savedLabel ?? "Saved");
     router.refresh();
     onClose();
+  }, [state, router, onClose]);
+
+  // The dismiss timer lives in its own effect, keyed only by the toast. Sharing the
+  // success effect would let its cleanup (onClose gets a new identity when the parent
+  // re-renders) clear the timer before it ever fires, stranding the toast on screen.
+  useEffect(() => {
+    if (!toast) return;
     const timer = setTimeout(() => setToast(null), 1600);
     return () => clearTimeout(timer);
-  }, [state, router, onClose]);
+  }, [toast]);
 
   // --- Steps -----------------------------------------------------------------
   const isTransfer = type === "transfer";
@@ -136,6 +148,27 @@ export default function MoveSheet({
     if (destWalletId === id) setDestWalletId(null);
   }
 
+  function onSheetTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  }
+
+  function onSheetTouchEnd(e: React.TouchEvent) {
+    const start = touchStart.current;
+    touchStart.current = null;
+    if (!start || type === null) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    // A deliberate sideways swipe only: far enough, and clearly more horizontal than
+    // the vertical scroll gesture the sheet body already owns.
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const index = MOVE_TYPES.findIndex((option) => option.value === type);
+    const next = index + (dx < 0 ? 1 : -1);
+    if (next < 0 || next >= MOVE_TYPES.length) return;
+    changeType(MOVE_TYPES[next].value);
+  }
+
   const amountText = amount || "0";
 
   return (
@@ -156,6 +189,8 @@ export default function MoveSheet({
 
           <form
             action={formAction}
+            onTouchStart={onSheetTouchStart}
+            onTouchEnd={onSheetTouchEnd}
             className="absolute inset-x-0 bottom-0 mx-auto flex min-h-[50dvh] max-h-[80dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
             style={{
               boxShadow: "var(--shadow-float)",
@@ -184,25 +219,24 @@ export default function MoveSheet({
             </div>
 
             <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {/* --- Step 1: transfer or withdraw -------------------------- */}
+              {/* --- Step 1: transfer or withdraw. Borderless labels, one gliding
+                     pill — and a sideways swipe anywhere flips between them. ---- */}
               <section className="mb-4">
                 <div className="label mb-2">What are you doing?</div>
-                <div className="flex flex-wrap gap-2">
-                  {MOVE_TYPES.map((option) => {
-                    const active = option.value === type;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => changeType(option.value)}
-                        aria-pressed={active}
-                        className={`chip ${active ? TYPE_ACCENT[option.value].on : ""}`}
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                <PillSwitcher<TxnType>
+                  options={MOVE_TYPES.map((option) => ({
+                    key: option.value,
+                    label: option.label,
+                    pillClassName: TYPE_ACCENT[option.value].pill,
+                    activeTextClassName: TYPE_ACCENT[option.value].onText,
+                  }))}
+                  value={type}
+                  onChange={changeType}
+                  ariaLabel="What are you doing?"
+                  bordered={false}
+                  sizeClassName="h-[38px] px-4 text-[14px]"
+                  gapClassName="gap-1"
+                />
               </section>
 
               {/* --- Step 2: where the money comes from -------------------- */}

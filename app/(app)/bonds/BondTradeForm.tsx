@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { todayISO } from "@/lib/format";
 import type { Wallet } from "@/lib/types";
@@ -31,21 +32,13 @@ export default function BondTradeForm({
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="side" value={side} />
 
-      <div className="flex gap-2">
-        {SIDES.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => setSide(option.value)}
-            aria-pressed={side === option.value}
-            className={`chip flex-1 justify-center ${
-              side === option.value ? "chip-on" : ""
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <PillSwitcher<"buy" | "sell" | "coupon">
+        options={SIDES.map((option) => ({ key: option.value, label: option.label }))}
+        value={side}
+        onChange={setSide}
+        ariaLabel="Trade side"
+        grow
+      />
 
       <input
         name="name"

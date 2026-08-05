@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
 import OptionPicker from "@/components/OptionPicker";
+import PillSwitcher from "@/components/PillSwitcher";
 import { formatNumber, todayISO } from "@/lib/format";
 import {
   TXN_TYPES,
@@ -29,13 +30,46 @@ const NO_WALLETS = "No wallets yet. Add one under More → Wallets.";
  * derived semantic ramp: money out reads negative, money in reads positive, and the three
  * "moved, not spent" types take the neutral/info/accent slots.
  */
-export const TYPE_ACCENT: Record<TxnType, { on: string; dot: string }> = {
-  expense: { on: "bg-negative-500 text-white border-negative-500", dot: "bg-negative-500" },
-  income: { on: "bg-positive-500 text-white border-positive-500", dot: "bg-positive-500" },
-  saving: { on: "bg-info-500 text-white border-info-500", dot: "bg-info-500" },
-  investment: { on: "bg-forest-800 text-white border-forest-800", dot: "bg-forest-800" },
-  transfer: { on: "bg-warning-500 text-forest-900 border-warning-500", dot: "bg-warning-500" },
-  withdrawal: { on: "bg-info-600 text-white border-info-600", dot: "bg-info-600" },
+export const TYPE_ACCENT: Record<
+  TxnType,
+  { on: string; dot: string; pill: string; onText: string }
+> = {
+  expense: {
+    on: "bg-negative-500 text-white border-negative-500",
+    dot: "bg-negative-500",
+    pill: "bg-negative-500",
+    onText: "text-white",
+  },
+  income: {
+    on: "bg-positive-500 text-white border-positive-500",
+    dot: "bg-positive-500",
+    pill: "bg-positive-500",
+    onText: "text-white",
+  },
+  saving: {
+    on: "bg-info-500 text-white border-info-500",
+    dot: "bg-info-500",
+    pill: "bg-info-500",
+    onText: "text-white",
+  },
+  investment: {
+    on: "bg-forest-800 text-white border-forest-800",
+    dot: "bg-forest-800",
+    pill: "bg-forest-800",
+    onText: "text-white",
+  },
+  transfer: {
+    on: "bg-warning-500 text-forest-900 border-warning-500",
+    dot: "bg-warning-500",
+    pill: "bg-warning-500",
+    onText: "text-forest-900",
+  },
+  withdrawal: {
+    on: "bg-info-600 text-white border-info-600",
+    dot: "bg-info-600",
+    pill: "bg-info-600",
+    onText: "text-white",
+  },
 };
 
 /** Section labels change per type so the form reads as a sentence rather than a schema. */
@@ -168,24 +202,19 @@ export default function TxnFields({
   return (
     <div className="space-y-5">
       {/* --- Type pills ----------------------------------------------------- */}
-      <div className="-mx-4 overflow-x-auto px-4 no-scrollbar">
-        <div className="flex w-max gap-2">
-          {TXN_TYPES.map((option) => {
-            const active = option.value === type;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => changeType(option.value)}
-                aria-pressed={active}
-                className={`chip ${active ? TYPE_ACCENT[option.value].on : ""}`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <PillSwitcher<TxnType>
+        options={TXN_TYPES.map((option) => ({
+          key: option.value,
+          label: option.label,
+          pillClassName: TYPE_ACCENT[option.value].pill,
+          activeTextClassName: TYPE_ACCENT[option.value].onText,
+        }))}
+        value={type}
+        onChange={changeType}
+        ariaLabel="Transaction type"
+        scrollable
+        scrollClassName="-mx-4 px-4"
+      />
 
       {/* --- Hero amount ---------------------------------------------------- */}
       <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center shadow-[var(--shadow-sm)]">

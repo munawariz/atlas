@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import PillSwitcher from "@/components/PillSwitcher";
 import {
   formatMonthShort,
   formatRupiah,
@@ -284,30 +285,27 @@ export default function ChartsClient({
         style={{ top: "calc(env(safe-area-inset-top) + 3.25rem)" }}
       >
         <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-          {PRESETS.map((option) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => {
+          <PillSwitcher
+            options={[
+              ...PRESETS.map((option) => ({
+                key: String(option.months),
+                label: option.label,
+              })),
+              { key: "custom", label: "Custom" },
+            ]}
+            value={custom ? "custom" : String(preset)}
+            onChange={(key) => {
+              if (key === "custom") {
+                setCustom(true);
+              } else {
                 setCustom(false);
-                setPreset(option.months);
-              }}
-              aria-pressed={!custom && preset === option.months}
-              className={`chip h-8 shrink-0 px-3 text-[13px] ${
-                !custom && preset === option.months ? "chip-on" : ""
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={() => setCustom(true)}
-            aria-pressed={custom}
-            className={`chip h-8 shrink-0 px-3 text-[13px] ${custom ? "chip-on" : ""}`}
-          >
-            Custom
-          </button>
+                setPreset(Number(key));
+              }
+            }}
+            ariaLabel="Date range"
+            sizeClassName="h-8 px-3 text-[13px]"
+            gapClassName="gap-1.5"
+          />
 
           {!custom && (
             <select
@@ -490,24 +488,18 @@ export default function ChartsClient({
       <section className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
         <h2 className="label mb-3">Category breakdown</h2>
 
-        <div className="flex gap-1.5 overflow-x-auto no-scrollbar">
-          {KINDS.map((kind) => (
-            <button
-              key={kind.value}
-              type="button"
-              onClick={() => {
-                setBreakdownKind(kind.value);
-                setDrilldown(null);
-              }}
-              aria-pressed={breakdownKind === kind.value}
-              className={`chip h-8 shrink-0 px-3 text-[13px] ${
-                breakdownKind === kind.value ? "chip-on" : ""
-              }`}
-            >
-              {kind.label}
-            </button>
-          ))}
-        </div>
+        <PillSwitcher<CategoryKind>
+          options={KINDS.map((kind) => ({ key: kind.value, label: kind.label }))}
+          value={breakdownKind}
+          onChange={(kind) => {
+            setBreakdownKind(kind);
+            setDrilldown(null);
+          }}
+          ariaLabel="Breakdown kind"
+          scrollable
+          sizeClassName="h-8 px-3 text-[13px]"
+          gapClassName="gap-1.5"
+        />
 
         {breakdown.length === 0 ? (
           <p className="mt-3 text-[13px] text-ink-500">

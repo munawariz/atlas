@@ -1,14 +1,8 @@
 "use client";
 
-import {
-  useActionState,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { X } from "@/components/icons";
 import {
@@ -86,20 +80,10 @@ export default function AddSheet({
   const lastNonce = useRef<number | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  // The active-tab pill is one element that GLIDES between tabs: each button registers
-  // itself here, and on every tab change the pill is re-measured to the active button's
-  // offset/width. `animate` is false only for the first paint after the sheet opens, so
-  // the pill starts in place instead of sliding in from the edge.
-  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
-  const tabRowRef = useRef<HTMLDivElement>(null);
-  const [pill, setPill] = useState<{
-    left: number;
-    width: number;
-    animate: boolean;
-  } | null>(null);
-
-  // Swipe-through-tabs: a horizontal swipe on the category area steps to the
+  // Swipe-through-tabs: a horizontal swipe anywhere on the sheet steps to the
   // neighbouring tab. Start point is captured here; the decision happens on release.
+  // The tab row is excluded — it pans horizontally on its own.
+  const tabAreaRef = useRef<HTMLDivElement>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   // A fresh flow every time the sheet opens — staged reveal only works from a blank slate.
@@ -148,9 +132,16 @@ export default function AddSheet({
     setToast(state.savedLabel ?? "Saved");
     router.refresh();
     onClose();
+  }, [state, router, onClose]);
+
+  // The dismiss timer lives in its own effect, keyed only by the toast. Sharing the
+  // success effect would let its cleanup (onClose gets a new identity when the parent
+  // re-renders) clear the timer before it ever fires, stranding the toast on screen.
+  useEffect(() => {
+    if (!toast) return;
     const timer = setTimeout(() => setToast(null), 1600);
     return () => clearTimeout(timer);
-  }, [state, router, onClose]);
+  }, [toast]);
 
   // --- Step 1's tabs: Recent · Favorite · one per group · All ----------------
   const tabs = useMemo<PickerTab[]>(() => {
@@ -206,37 +197,17 @@ export default function AddSheet({
 
   const activeTab = tabs.find((t) => t.key === tabKey) ?? tabs[0];
 
-  useLayoutEffect(() => {
-    if (!open) {
-      setPill(null);
+  function onSheetTouchStart(e: React.TouchEvent) {
+    // The tab row owns its own horizontal pan — a swipe there must not also switch tabs.
+    if (tabAreaRef.current?.contains(e.target as Node)) {
+      touchStart.current = null;
       return;
     }
-    const el = tabRefs.current.get(tabKey);
-    if (!el) return;
-    setPill((prev) => {
-      // Keep the active tab in view — centred where the row allows — so a swipe can
-      // never land you on a tab whose pill sits off-screen.
-      const row = tabRowRef.current;
-      if (row) {
-        row.scrollTo({
-          left: el.offsetLeft - (row.clientWidth - el.offsetWidth) / 2,
-          behavior: prev !== null ? "smooth" : "auto",
-        });
-      }
-      return {
-        left: el.offsetLeft,
-        width: el.offsetWidth,
-        animate: prev !== null,
-      };
-    });
-  }, [open, tabKey, tabs]);
-
-  function onPickerTouchStart(e: React.TouchEvent) {
     const t = e.touches[0];
     touchStart.current = { x: t.clientX, y: t.clientY };
   }
 
-  function onPickerTouchEnd(e: React.TouchEvent) {
+  function onSheetTouchEnd(e: React.TouchEvent) {
     const start = touchStart.current;
     touchStart.current = null;
     if (!start) return;
@@ -293,6 +264,8 @@ export default function AddSheet({
 
           <form
             action={formAction}
+            onTouchStart={onSheetTouchStart}
+            onTouchEnd={onSheetTouchEnd}
             className="absolute inset-x-0 bottom-0 mx-auto flex min-h-[50dvh] max-h-[80dvh] max-w-md flex-col rounded-t-[var(--radius-card-lg)] bg-white safe-bottom"
             style={{
               boxShadow: "var(--shadow-float)",
@@ -324,70 +297,24 @@ export default function AddSheet({
             </div>
 
             {/* --- The picker tabs, right below the date ------------------- */}
-            <div
-              ref={tabRowRef}
-              className="shrink-0 overflow-x-auto px-5 pb-2 no-scrollbar"
-              onWheel={(e) => {
-                // Desktop mice only wheel vertically; steer it sideways so the row pans
-                // without a visible scrollbar. Touch swiping is untouched.
-                if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-                  e.currentTarget.scrollLeft += e.deltaY;
-                }
-              }}
-            >
-              <div
-                className="relative flex w-max items-center gap-1"
-                role="tablist"
-                aria-label="Category lists"
-              >
-                {/* The one pill, sliding underneath the labels. */}
-                {pill && (
-                  <span
-                    aria-hidden
-                    className="absolute top-0 left-0 h-[38px] rounded-full bg-forest-800"
-                    style={{
-                      width: pill.width,
-                      transform: `translateX(${pill.left}px)`,
-                      transition: pill.animate
-                        ? "transform 0.28s var(--ease-standard), width 0.28s var(--ease-standard)"
-                        : "none",
-                    }}
-                  />
-                )}
-                {tabs.map((tab) => {
-                  const active = tab.key === activeTab.key;
-                  return (
-                    <button
-                      key={tab.key}
-                      ref={(el) => {
-                        if (el) tabRefs.current.set(tab.key, el);
-                        else tabRefs.current.delete(tab.key);
-                      }}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => setTabKey(tab.key)}
-                      className={`relative z-10 inline-flex h-[38px] items-center whitespace-nowrap px-4 text-[14px] transition-colors duration-200 ${
-                        active
-                          ? "font-semibold text-white"
-                          : "font-medium text-ink-500 hover:text-forest-800"
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  );
-                })}
-              </div>
+            <div ref={tabAreaRef} className="shrink-0">
+              <PillSwitcher
+                options={tabs.map((tab) => ({ key: tab.key, label: tab.label }))}
+                value={activeTab.key}
+                onChange={setTabKey}
+                ariaLabel="Category lists"
+                bordered={false}
+                scrollable
+                scrollClassName="px-5 pb-2"
+                sizeClassName="h-[38px] px-4 text-[14px]"
+                gapClassName="gap-1"
+              />
             </div>
 
             <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {/* --- Step 1: pick the category from the active tab. Swiping the picker
-                     sideways steps through the tabs. -------------------------------- */}
-              <section
-                className="mb-4"
-                onTouchStart={onPickerTouchStart}
-                onTouchEnd={onPickerTouchEnd}
-              >
+              {/* --- Step 1: pick the category from the active tab. A sideways swipe
+                     anywhere on the sheet steps through the tabs. ------------------- */}
+              <section className="mb-4">
                 {activeTab.categories.length === 0 ? (
                   <p
                     key={activeTab.key}

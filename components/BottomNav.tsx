@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ComponentType } from "react";
 import AddSheet from "./AddSheet";
@@ -17,6 +17,7 @@ import {
   Plus,
   ArrowUpDown,
   Grid,
+  Loader,
   type IconProps,
 } from "./icons";
 
@@ -43,17 +44,20 @@ const SLOTS: Slot[] = [
 ];
 
 export default function BottomNav({
-  wallets,
-  categories,
-  groups,
-  members,
-  recentCategoryIds,
+  wallets = [],
+  categories = [],
+  groups = [],
+  members = [],
+  recentCategoryIds = [],
+  loading = false,
 }: {
-  wallets: Wallet[];
-  categories: Category[];
-  groups: CategoryGroup[];
-  members: CategoryGroupMember[];
-  recentCategoryIds: number[];
+  wallets?: Wallet[];
+  categories?: Category[];
+  groups?: CategoryGroup[];
+  members?: CategoryGroupMember[];
+  recentCategoryIds?: number[];
+  /** True in the layout's Suspense fallback: same visuals, but the sheets stay closed. */
+  loading?: boolean;
 }) {
   const pathname = usePathname() || "";
   const [addOpen, setAddOpen] = useState(false);
@@ -81,7 +85,7 @@ export default function BottomNav({
               <button
                 key={slot.href}
                 type="button"
-                onClick={() => setAddOpen(true)}
+                onClick={() => !loading && setAddOpen(true)}
                 aria-label="Add a transaction"
                 aria-haspopup="dialog"
                 aria-expanded={addOpen}
@@ -105,7 +109,7 @@ export default function BottomNav({
               <button
                 key={slot.href}
                 type="button"
-                onClick={() => setMoveOpen(true)}
+                onClick={() => !loading && setMoveOpen(true)}
                 aria-label="Move money"
                 aria-haspopup="dialog"
                 aria-expanded={moveOpen}
@@ -127,43 +131,75 @@ export default function BottomNav({
               aria-current={active ? "page" : undefined}
               className="flex flex-col items-center gap-1.5 px-2.5 py-0.5 no-underline"
             >
-              <slot.Icon
-                size={22}
-                className={active ? "text-forest-800" : "text-ink-300"}
-              />
-              <span
-                className={`text-[11px] font-semibold ${
-                  active ? "text-forest-800" : "text-ink-500"
-                }`}
-              >
-                {slot.label}
-              </span>
-              <span
-                className={`h-[3px] w-[18px] rounded-[3px] ${
-                  active ? "bg-lime-500" : "bg-transparent"
-                }`}
-              />
+              <TabBody Icon={slot.Icon} label={slot.label} active={active} />
             </Link>
           );
         })}
         </div>
       </nav>
 
-      <AddSheet
-        wallets={wallets}
-        categories={categories}
-        groups={groups}
-        members={members}
-        recentCategoryIds={recentCategoryIds}
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-      />
+      {!loading && (
+        <>
+          <AddSheet
+            wallets={wallets}
+            categories={categories}
+            groups={groups}
+            members={members}
+            recentCategoryIds={recentCategoryIds}
+            open={addOpen}
+            onClose={() => setAddOpen(false)}
+          />
 
-      <MoveSheet
-        wallets={wallets}
-        categories={categories}
-        open={moveOpen}
-        onClose={() => setMoveOpen(false)}
+          <MoveSheet
+            wallets={wallets}
+            categories={categories}
+            open={moveOpen}
+            onClose={() => setMoveOpen(false)}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+/**
+ * Icon + label + underline for one tab. Lives inside the tab's <Link> so `useLinkStatus`
+ * can light the tapped tab the instant the navigation starts — the underline moves
+ * immediately, and a spinner covers the icon once the trip has taken more than 150ms.
+ */
+function TabBody({
+  Icon,
+  label,
+  active,
+}: {
+  Icon: ComponentType<IconProps>;
+  label: string;
+  active: boolean;
+}) {
+  const { pending } = useLinkStatus();
+  const lit = active || pending;
+
+  return (
+    <>
+      <span className="relative flex items-center justify-center">
+        <Icon size={22} className={lit ? "text-forest-800" : "text-ink-300"} />
+        {pending && (
+          <span className="pending-reveal absolute inset-0 flex items-center justify-center bg-white">
+            <Loader size={20} className="nav-spin text-forest-800" />
+          </span>
+        )}
+      </span>
+      <span
+        className={`text-[11px] font-semibold ${
+          lit ? "text-forest-800" : "text-ink-500"
+        }`}
+      >
+        {label}
+      </span>
+      <span
+        className={`h-[3px] w-[18px] rounded-[3px] ${
+          lit ? "bg-lime-500" : "bg-transparent"
+        }`}
       />
     </>
   );

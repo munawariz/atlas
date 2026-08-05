@@ -225,6 +225,9 @@ export const Star = svg(
 
 export const Circle = svg(<circle cx="12" cy="12" r="10" />);
 
+/** Open arc for spinners — pair with `nav-spin` or `pending-spinner` (globals.css). */
+export const Loader = svg(<path d="M21 12a9 9 0 1 1-6.219-8.56" />);
+
 export const Bell = svg(
   <>
     <path d="M10.268 21a2 2 0 0 0 3.464 0" />

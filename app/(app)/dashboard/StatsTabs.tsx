@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import PillSwitcher from "@/components/PillSwitcher";
 
 /**
  * Three panels, instant switch.
@@ -28,39 +29,26 @@ export default function StatsTabs({
 
   return (
     <div className="space-y-4">
-      <div
-        role="tablist"
-        aria-label="Dashboard sections"
-        className="flex gap-1 rounded-full bg-cream-200 p-1"
-      >
-        {tabs.map((tab, i) => (
-          <button
-            key={tab.label}
-            role="tab"
-            type="button"
-            id={`stats-tab-${i}`}
-            aria-selected={i === active}
-            aria-controls={`stats-panel-${i}`}
-            onClick={() => setActive(i)}
-            className={`h-9 flex-1 rounded-full text-[13px] font-semibold transition-colors ${
-              i === active
-                ? "bg-white text-forest-800 shadow-[var(--shadow-xs)]"
-                : "text-ink-500"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="rounded-full bg-cream-200 p-1">
+        <PillSwitcher<number>
+          options={tabs.map((tab, i) => ({
+            key: i,
+            label: tab.label,
+            pillClassName: "bg-white shadow-[var(--shadow-xs)]",
+            activeTextClassName: "text-forest-800",
+          }))}
+          value={active}
+          onChange={setActive}
+          ariaLabel="Dashboard sections"
+          bordered={false}
+          grow
+          sizeClassName="h-9 px-2 text-[13px]"
+          gapClassName="gap-1"
+        />
       </div>
 
       {tabs.map((tab, i) => (
-        <div
-          key={tab.label}
-          role="tabpanel"
-          id={`stats-panel-${i}`}
-          aria-labelledby={`stats-tab-${i}`}
-          hidden={i !== active}
-        >
+        <div key={tab.label} role="tabpanel" aria-label={tab.label} hidden={i !== active}>
           {tab.panel}
         </div>
       ))}

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { formatRupiah } from "@/lib/format";
 import type { SaveScope } from "@/lib/types";
@@ -120,19 +121,16 @@ export default function StockTargetRow({
               </label>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {SCOPES.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setScope(option.value)}
-                  aria-pressed={scope === option.value}
-                  className={`chip ${scope === option.value ? "chip-on" : ""}`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            <PillSwitcher<SaveScope>
+              options={SCOPES.map((option) => ({
+                key: option.value,
+                label: option.label,
+              }))}
+              value={scope}
+              onChange={setScope}
+              ariaLabel="Apply to"
+              wrap
+            />
 
             <SubmitButton className="btn btn-primary btn-sm w-full">
               Save target

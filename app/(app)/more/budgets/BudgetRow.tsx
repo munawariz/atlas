@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { BUDGET_PERIODS, type BudgetPeriod, type SaveScope } from "@/lib/types";
 import { formatRupiah } from "@/lib/format";
@@ -95,19 +96,16 @@ export default function BudgetRow({
 
             <div>
               <span className="label mb-1 block">Apply to</span>
-              <div className="flex flex-wrap gap-2">
-                {SCOPES.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setScope(option.value)}
-                    aria-pressed={scope === option.value}
-                    className={`chip ${scope === option.value ? "chip-on" : ""}`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
+              <PillSwitcher<SaveScope>
+                options={SCOPES.map((option) => ({
+                  key: option.value,
+                  label: option.label,
+                }))}
+                value={scope}
+                onChange={setScope}
+                ariaLabel="Apply to"
+                wrap
+              />
               <p className="mt-1.5 text-[13px] text-ink-500">
                 {SCOPES.find((s) => s.value === scope)?.hint}
               </p>

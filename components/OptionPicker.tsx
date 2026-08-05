@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import PillSwitcher from "@/components/PillSwitcher";
 import { Check, ChevronDown, Search, X } from "@/components/icons";
 
 /**
@@ -80,19 +81,13 @@ export default function OptionPicker({
     return (
       <section>
         <div className="label mb-2">{label}</div>
-        <div className="flex flex-wrap gap-2">
-          {options.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => onSelect(option.id)}
-              aria-pressed={selected === option.id}
-              className={`chip ${selected === option.id ? "chip-on" : ""}`}
-            >
-              {option.name}
-            </button>
-          ))}
-        </div>
+        <PillSwitcher<number>
+          options={options.map((option) => ({ key: option.id, label: option.name }))}
+          value={selected}
+          onChange={onSelect}
+          ariaLabel={label}
+          wrap
+        />
       </section>
     );
   }

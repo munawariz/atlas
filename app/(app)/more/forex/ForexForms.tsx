@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
+import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
 import { todayISO } from "@/lib/format";
 import type { Wallet } from "@/lib/types";
@@ -26,21 +27,16 @@ export function ForexConvert({
       <input type="hidden" name="account_id" value={accountId} />
       <input type="hidden" name="direction" value={direction} />
 
-      <div className="flex gap-2">
-        {(["buy", "sell"] as const).map((value) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setDirection(value)}
-            aria-pressed={direction === value}
-            className={`chip flex-1 justify-center ${
-              direction === value ? "chip-on" : ""
-            }`}
-          >
-            {value === "buy" ? `Buy ${currency}` : `Sell ${currency}`}
-          </button>
-        ))}
-      </div>
+      <PillSwitcher<"buy" | "sell">
+        options={[
+          { key: "buy", label: `Buy ${currency}` },
+          { key: "sell", label: `Sell ${currency}` },
+        ]}
+        value={direction}
+        onChange={setDirection}
+        ariaLabel="Direction"
+        grow
+      />
 
       <div className="grid grid-cols-2 gap-2">
         <MoneyInput
