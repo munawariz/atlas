@@ -7,8 +7,12 @@ import { parseTransactionForm, optInt } from "@/lib/txnForm";
 import { monthKeyOf } from "@/lib/data";
 import type { TxnType } from "@/lib/types";
 
-/** Revalidate every page a ledger row feeds. */
+/**
+ * Revalidate every page a ledger row feeds. The layout-wide entry covers whatever page a
+ * sheet was opened over, so sheets don't need a follow-up router.refresh().
+ */
 function revalidateLedger() {
+  revalidatePath("/", "layout");
   revalidatePath("/dashboard");
   revalidatePath("/history");
   revalidatePath("/savings");

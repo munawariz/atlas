@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "migrate": "node scripts/migrate.mjs supabase/migrations/0001_init.sql",
+    "migrate:perf": "node scripts/migrate.mjs supabase/migrations/0002_perf_rpc.sql",
     "seed": "node scripts/migrate.mjs supabase/seed.sql",
     "icons": "node scripts/gen-icons.mjs"
   },

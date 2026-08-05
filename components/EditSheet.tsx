@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import SubmitButton from "@/components/SubmitButton";
 import TxnFields from "@/components/TxnFields";
 import { Trash, X } from "@/components/icons";
@@ -34,7 +33,6 @@ export default function EditSheet({
   categories: Category[];
   onClose: () => void;
 }) {
-  const router = useRouter();
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const open = transaction !== null;
@@ -60,8 +58,8 @@ export default function EditSheet({
     setToast(label);
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1600);
-    // No navigation happens, so the page underneath must be told its numbers moved.
-    router.refresh();
+    // The action's layout-wide revalidate already re-rendered the page underneath in the
+    // same POST response — no router.refresh() needed.
     onClose();
   }
 

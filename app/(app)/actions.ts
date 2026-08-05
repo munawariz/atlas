@@ -44,7 +44,10 @@ export async function addTransaction(
   const { error: insertError } = await sb.from("transactions").insert(rows);
   if (insertError) return { error: insertError.message };
 
-  // Every page whose numbers this row moves.
+  // Every page whose numbers this row moves — plus the layout, so the sheet that invoked this
+  // action gets a fresh render of WHATEVER page it was opened over in the same POST response.
+  // That layout-wide revalidate is what lets the sheets skip a follow-up router.refresh().
+  revalidatePath("/", "layout");
   revalidatePath("/dashboard");
   revalidatePath("/history");
   revalidatePath("/savings");

@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -40,7 +39,6 @@ export default function MoveSheet({
   open: boolean;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const [state, formAction] = useActionState(addTransaction, INITIAL);
 
   const [type, setType] = useState<TxnType | null>(null);
@@ -97,14 +95,14 @@ export default function MoveSheet({
     return () => cancelAnimationFrame(raf);
   }, [open, type, categoryId, sourceWalletId, destWalletId]);
 
-  // Success: toast, close, refresh the page underneath.
+  // Success: toast and close — the action's layout revalidate already re-rendered the page
+  // underneath in the same POST response.
   useEffect(() => {
     if (!state.ok || !state.nonce || state.nonce === lastNonce.current) return;
     lastNonce.current = state.nonce;
     setToast(state.savedLabel ?? "Saved");
-    router.refresh();
     onClose();
-  }, [state, router, onClose]);
+  }, [state, onClose]);
 
   // The dismiss timer lives in its own effect, keyed only by the toast. Sharing the
   // success effect would let its cleanup (onClose gets a new identity when the parent

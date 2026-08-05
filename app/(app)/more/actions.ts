@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { SESSION_COOKIE } from "@/lib/auth";
+import { ALL_TAGS, TAGS } from "@/lib/cacheTags";
 import { saveSettings } from "@/lib/settings";
 import type { BudgetPeriod, CategoryKind } from "@/lib/types";
 
@@ -19,6 +20,12 @@ const KINDS: CategoryKind[] = ["income", "expense", "saving", "investment"];
 const PERIODS: BudgetPeriod[] = ["daily", "weekly", "monthly", "yearly"];
 
 function revalidateManage() {
+  // Flush the cross-request data cache for every slow-moving table. Coarse on purpose —
+  // single-user app, and one spare query per table on the next render beats tracking which
+  // action touched which table. updateTag (Next 16) expires immediately, so the render
+  // returned by this very action already sees the new rows.
+  for (const tag of ALL_TAGS) updateTag(tag);
+
   revalidatePath("/more/wallets");
   revalidatePath("/more/categories");
   revalidatePath("/more/providers");
@@ -391,6 +398,11 @@ export async function resolveProviderCategory(
       .eq("id", providerId);
   }
 
+  // This path mutated categories and the provider link, and it can run from actions that
+  // never call revalidateManage (the paylater pay actions) — flush the tags itself.
+  updateTag(TAGS.categories);
+  updateTag(TAGS.paylaterProviders);
+
   return categoryId;
 }
 
@@ -506,6 +518,7 @@ export async function saveAppSettings(
     return { error: error instanceof Error ? error.message : "Could not save." };
   }
 
+  updateTag(TAGS.appSettings);
   revalidatePath("/more/settings");
   revalidatePath("/dashboard");
   revalidatePath("/stocks");

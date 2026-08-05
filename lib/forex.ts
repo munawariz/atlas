@@ -1,6 +1,7 @@
 import "server-only";
 
-import { supabaseServer, isMissingTable } from "./supabaseServer";
+import { cache } from "react";
+import { supabaseServer, isMissingTable, isMissingFunction } from "./supabaseServer";
 import type { ForexAccount, ForexTransaction } from "./types";
 
 /**
@@ -32,14 +33,15 @@ export async function getForexAccounts(): Promise<ForexAccount[]> {
   }));
 }
 
-export async function getForexTransactions(
-  accountId?: number
-): Promise<ForexTransaction[]> {
+// One fetch of the whole table per request, shared via cache(). The dashboard, the forex
+// page and the snapshot all loop "one query per account" — filtering the shared set in JS
+// turns K accounts x 1 query into a single query per request. Per-account order is preserved
+// because the global sort (occurred_on asc, id asc) is stable under filtering.
+const getAllForexTransactions = cache(async (): Promise<ForexTransaction[]> => {
   const sb = supabaseServer();
-  let query = sb.from("forex_transactions").select("*");
-  if (accountId) query = query.eq("account_id", accountId);
-
-  const { data, error } = await query
+  const { data, error } = await sb
+    .from("forex_transactions")
+    .select("*")
     .order("occurred_on", { ascending: true })
     .order("id", { ascending: true });
   if (error) {
@@ -59,25 +61,35 @@ export async function getForexTransactions(
     pl_txn_id: row.pl_txn_id == null ? null : Number(row.pl_txn_id),
     realized_pl: row.realized_pl == null ? null : Number(row.realized_pl),
   }));
+});
+
+export async function getForexTransactions(
+  accountId?: number
+): Promise<ForexTransaction[]> {
+  const all = await getAllForexTransactions();
+  return accountId ? all.filter((t) => t.account_id === accountId) : all;
 }
 
 /**
  * Every ledger txn id booked by the forex module. History routes these rows to the
  * conversion editor instead of the plain edit sheet.
+ *
+ * Prefers the fn_forex_linked_txn_ids RPC (id set only, 0002_perf_rpc.sql); falls back to
+ * deriving the set from the shared full-table fetch on an un-migrated database.
  */
 export async function getForexLinkedTxnIds(): Promise<number[]> {
   const sb = supabaseServer();
-  const { data, error } = await sb
-    .from("forex_transactions")
-    .select("txn_id, pl_txn_id");
-  if (error) {
-    if (isMissingTable(error)) return [];
-    throw error;
+  const { data, error } = await sb.rpc("fn_forex_linked_txn_ids");
+  if (!error) {
+    return ((data ?? []) as { id: number }[]).map((r) => Number(r.id));
   }
+  if (!isMissingFunction(error) && !isMissingTable(error)) throw error;
+
+  const all = await getAllForexTransactions();
   const ids = new Set<number>();
-  for (const row of (data ?? []) as { txn_id: number | null; pl_txn_id: number | null }[]) {
-    if (row.txn_id != null) ids.add(Number(row.txn_id));
-    if (row.pl_txn_id != null) ids.add(Number(row.pl_txn_id));
+  for (const row of all) {
+    if (row.txn_id != null) ids.add(row.txn_id);
+    if (row.pl_txn_id != null) ids.add(row.pl_txn_id);
   }
   return [...ids];
 }

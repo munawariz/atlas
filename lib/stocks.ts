@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { supabaseServer, isMissingTable } from "./supabaseServer";
 
 /**
@@ -103,11 +104,17 @@ export interface StockPortfolio {
 // Queries
 // =============================================================================
 
-export async function getStockTrades(asOf?: string): Promise<StockTrade[]> {
+// Both trade readers fetch the WHOLE table once per request and apply `asOf` in JS.
+// A single render used to hit stock_trades up to three times (page + getStockPortfolio +
+// getAverageBuyPerLot, each with a different asOf); the tables are personal-scale, so one
+// fetch shared via cache() beats three filtered queries. `occurred_on` is YYYY-MM-DD, so the
+// string compare is the same `lte` PostgREST applied.
+
+const getAllStockTrades = cache(async (): Promise<StockTrade[]> => {
   const sb = supabaseServer();
-  let query = sb.from("stock_trades").select("*");
-  if (asOf) query = query.lte("occurred_on", asOf);
-  const { data, error } = await query
+  const { data, error } = await sb
+    .from("stock_trades")
+    .select("*")
     .order("occurred_on", { ascending: true })
     .order("id", { ascending: true });
   if (error) {
@@ -115,13 +122,18 @@ export async function getStockTrades(asOf?: string): Promise<StockTrade[]> {
     throw error;
   }
   return (data ?? []) as StockTrade[];
+});
+
+export async function getStockTrades(asOf?: string): Promise<StockTrade[]> {
+  const all = await getAllStockTrades();
+  return asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
 }
 
-export async function getStockDividends(asOf?: string): Promise<StockDividend[]> {
+const getAllStockDividends = cache(async (): Promise<StockDividend[]> => {
   const sb = supabaseServer();
-  let query = sb.from("stock_dividends").select("*");
-  if (asOf) query = query.lte("occurred_on", asOf);
-  const { data, error } = await query
+  const { data, error } = await sb
+    .from("stock_dividends")
+    .select("*")
     .order("occurred_on", { ascending: false })
     .order("id", { ascending: false });
   if (error) {
@@ -129,6 +141,11 @@ export async function getStockDividends(asOf?: string): Promise<StockDividend[]>
     throw error;
   }
   return (data ?? []) as StockDividend[];
+});
+
+export async function getStockDividends(asOf?: string): Promise<StockDividend[]> {
+  const all = await getAllStockDividends();
+  return asOf ? all.filter((d) => d.occurred_on <= asOf) : all;
 }
 
 export async function getStockTargets(): Promise<StockTarget[]> {

@@ -1,7 +1,9 @@
 import "server-only";
 
 import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { supabaseServer, isMissingTable } from "./supabaseServer";
+import { TAGS } from "./cacheTags";
 import { getCategories, getWallets } from "./data";
 import type { Category, CategoryKind, Wallet } from "./types";
 
@@ -139,21 +141,34 @@ export const DETECT_HINTS: Record<string, string[]> = {
 // Read
 // =============================================================================
 
-export const getSettings = cache(
+// Cached across requests (settings change only through the settings actions, which flush the
+// tag) and deduped per request. The inner fetcher throws on a missing table — thrown results
+// are never cached, so a fresh DB isn't stuck with a cached {} once migrated. Note that
+// getOpeningMonth's render-time self-heal upsert cannot flush this tag (revalidateTag is
+// forbidden during render); that's safe because its fallback derivation is deterministic.
+const fetchSettings = unstable_cache(
   async (): Promise<Record<string, string>> => {
     const sb = supabaseServer();
     const { data, error } = await sb.from("app_settings").select("key, value");
-    if (error) {
-      if (isMissingTable(error)) return {};
-      throw error;
-    }
+    if (error) throw error;
     const settings: Record<string, string> = {};
     for (const row of (data ?? []) as { key: string; value: string | null }[]) {
       if (row.value != null) settings[row.key] = row.value;
     }
     return settings;
-  }
+  },
+  ["all-app-settings"],
+  { tags: [TAGS.appSettings] }
 );
+
+export const getSettings = cache(async (): Promise<Record<string, string>> => {
+  try {
+    return await fetchSettings();
+  } catch (error) {
+    if (isMissingTable(error as { code?: string })) return {};
+    throw error;
+  }
+});
 
 export async function getSetting(key: string): Promise<string | null> {
   const settings = await getSettings();

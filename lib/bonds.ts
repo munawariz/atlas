@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { supabaseServer, isMissingTable } from "./supabaseServer";
 
 /**
@@ -32,12 +33,14 @@ export interface BondPortfolio {
   totalCoupons: number;
 }
 
-export async function getBondTrades(asOf?: string): Promise<BondTrade[]> {
+// Fetches the whole table once per request; `asOf` filters in JS (dates are YYYY-MM-DD, so
+// string compare matches the `lte` PostgREST used to apply). Dedupes the page's
+// getBondPortfolio() + getBondTrades() pair into one query.
+const getAllBondTrades = cache(async (): Promise<BondTrade[]> => {
   const sb = supabaseServer();
-  let query = sb.from("bond_trades").select("*");
-  if (asOf) query = query.lte("occurred_on", asOf);
-
-  const { data, error } = await query
+  const { data, error } = await sb
+    .from("bond_trades")
+    .select("*")
     .order("occurred_on", { ascending: false })
     .order("id", { ascending: false });
   if (error) {
@@ -56,6 +59,11 @@ export async function getBondTrades(asOf?: string): Promise<BondTrade[]> {
     wallet_id: row.wallet_id == null ? null : Number(row.wallet_id),
     txn_id: row.txn_id == null ? null : Number(row.txn_id),
   }));
+});
+
+export async function getBondTrades(asOf?: string): Promise<BondTrade[]> {
+  const all = await getAllBondTrades();
+  return asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
 }
 
 export async function getBondPortfolio(asOf?: string): Promise<BondPortfolio> {

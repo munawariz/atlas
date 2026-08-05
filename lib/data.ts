@@ -1,7 +1,10 @@
 import "server-only";
 
 import { cache } from "react";
-import { supabaseServer, isMissingTable } from "./supabaseServer";
+import { unstable_cache } from "next/cache";
+import { supabaseServer, isMissingTable, isMissingFunction } from "./supabaseServer";
+import { TAGS } from "./cacheTags";
+import { getSettings } from "./settings";
 import { todayISO } from "./format";
 import type {
   Budget,
@@ -122,14 +125,12 @@ async function paginate<T>(
 export const getOpeningMonth = cache(async (): Promise<string> => {
   const sb = supabaseServer();
 
-  const { data: setting, error: settingError } = await sb
-    .from("app_settings")
-    .select("value")
-    .eq("key", "opening_month")
-    .maybeSingle();
-  if (settingError && !isMissingTable(settingError)) throw settingError;
+  // Read through getSettings() — it already fetches every app_settings row and is deduped
+  // per request, so this costs nothing on pages that read any other setting.
+  const settings = await getSettings();
+  const raw = settings["opening_month"];
 
-  const stored = setting?.value ? monthKeyOf(String(setting.value)) : null;
+  const stored = raw ? monthKeyOf(String(raw)) : null;
   if (stored && /^\d{4}-\d{2}-01$/.test(stored)) return stored;
 
   let resolved: string | null = null;
@@ -169,25 +170,47 @@ export const getOpeningMonth = cache(async (): Promise<string> => {
 // Wallets, balances, categories
 // =============================================================================
 
-export const getWallets = cache(
-  async (includeArchived = false): Promise<Wallet[]> => {
+// The list readers below fetch ALL rows and apply the `includeArchived` filter in JS.
+// React cache() keys on arguments, so a cached `fn(includeArchived)` fetched the same table
+// twice whenever the layout (no arg) and a page (`true`) rendered together — the arg-less
+// inner function is what makes them share.
+//
+// Two cache layers on the arg-less fetcher:
+//  - unstable_cache: cross-REQUEST. These tables change only through the manage actions,
+//    which flush the matching tag (revalidateManage in more/actions.ts) — so a warm
+//    navigation reads them without touching Postgres at all.
+//  - React cache(): per-request dedup on top, and the place where missing-table tolerance
+//    lives. The inner fetcher THROWS on a missing table instead of returning [] — thrown
+//    results are never cached, so a freshly-migrated table is picked up on the next request
+//    rather than serving a stale empty list until some action fires.
+
+const fetchAllWallets = unstable_cache(
+  async (): Promise<Wallet[]> => {
     const sb = supabaseServer();
-    let query = sb.from("wallets").select("*");
-    if (!includeArchived) query = query.eq("archived", false);
-    const { data, error } = await query
+    const { data, error } = await sb
+      .from("wallets")
+      .select("*")
       .order("sort_order", { ascending: true })
       .order("id", { ascending: true });
     if (error) throw error;
     return (data ?? []) as Wallet[];
-  }
+  },
+  ["all-wallets"],
+  { tags: [TAGS.wallets] }
 );
+const getAllWallets = cache(fetchAllWallets);
 
-export const getCategories = cache(
-  async (includeArchived = false): Promise<Category[]> => {
+export async function getWallets(includeArchived = false): Promise<Wallet[]> {
+  const all = await getAllWallets();
+  return includeArchived ? all : all.filter((w) => !w.archived);
+}
+
+const fetchAllCategories = unstable_cache(
+  async (): Promise<Category[]> => {
     const sb = supabaseServer();
-    let query = sb.from("categories").select("*");
-    if (!includeArchived) query = query.eq("archived", false);
-    const { data, error } = await query
+    const { data, error } = await sb
+      .from("categories")
+      .select("*")
       .order("sort_order", { ascending: true })
       .order("id", { ascending: true });
     if (error) throw error;
@@ -206,8 +229,16 @@ export const getCategories = cache(
         is_installment: Boolean(row.is_installment ?? false),
       })
     );
-  }
+  },
+  ["all-categories"],
+  { tags: [TAGS.categories] }
 );
+const getAllCategories = cache(fetchAllCategories);
+
+export async function getCategories(includeArchived = false): Promise<Category[]> {
+  const all = await getAllCategories();
+  return includeArchived ? all : all.filter((c) => !c.archived);
+}
 
 /**
  * The distinct categories of the latest ledger entries, newest first — the Add sheet's
@@ -216,6 +247,19 @@ export const getCategories = cache(
  */
 export const getRecentCategoryIds = cache(async (limit = 5): Promise<number[]> => {
   const sb = supabaseServer();
+
+  // Exact latest-entered-wins aggregate via the fn_recent_category_ids RPC; the legacy
+  // fallback approximates it from the newest 60 rows.
+  const { data: recent, error: rpcError } = await sb.rpc("fn_recent_category_ids", {
+    p_limit: limit,
+  });
+  if (!rpcError) {
+    return ((recent ?? []) as { category_id: number }[]).map((r) =>
+      Number(r.category_id)
+    );
+  }
+  if (!isMissingFunction(rpcError)) throw rpcError;
+
   const { data, error } = await sb
     .from("transactions")
     .select("category_id")
@@ -235,32 +279,55 @@ export const getRecentCategoryIds = cache(async (limit = 5): Promise<number[]> =
 
 // Both group readers tolerate a missing table so the app keeps working against a database
 // that has not had the groups migration run yet — the Add sheet just shows no groups.
-export const getCategoryGroups = cache(
-  async (includeArchived = false): Promise<CategoryGroup[]> => {
+const fetchAllCategoryGroups = unstable_cache(
+  async (): Promise<CategoryGroup[]> => {
     const sb = supabaseServer();
-    let query = sb.from("category_groups").select("*");
-    if (!includeArchived) query = query.eq("archived", false);
-    const { data, error } = await query
+    const { data, error } = await sb
+      .from("category_groups")
+      .select("*")
       .order("sort_order", { ascending: true })
       .order("id", { ascending: true });
-    if (error) {
-      if (isMissingTable(error)) return [];
-      throw error;
-    }
+    if (error) throw error;
     return (data ?? []) as CategoryGroup[];
-  }
+  },
+  ["all-category-groups"],
+  { tags: [TAGS.categoryGroups] }
 );
-
-export const getGroupMembers = cache(async (): Promise<CategoryGroupMember[]> => {
-  const sb = supabaseServer();
-  const { data, error } = await sb
-    .from("category_group_members")
-    .select("group_id, category_id");
-  if (error) {
-    if (isMissingTable(error)) return [];
+const getAllCategoryGroups = cache(async (): Promise<CategoryGroup[]> => {
+  try {
+    return await fetchAllCategoryGroups();
+  } catch (error) {
+    if (isMissingTable(error as { code?: string })) return [];
     throw error;
   }
-  return (data ?? []) as CategoryGroupMember[];
+});
+
+export async function getCategoryGroups(
+  includeArchived = false
+): Promise<CategoryGroup[]> {
+  const all = await getAllCategoryGroups();
+  return includeArchived ? all : all.filter((g) => !g.archived);
+}
+
+const fetchGroupMembers = unstable_cache(
+  async (): Promise<CategoryGroupMember[]> => {
+    const sb = supabaseServer();
+    const { data, error } = await sb
+      .from("category_group_members")
+      .select("group_id, category_id");
+    if (error) throw error;
+    return (data ?? []) as CategoryGroupMember[];
+  },
+  ["all-group-members"],
+  { tags: [TAGS.groupMembers] }
+);
+export const getGroupMembers = cache(async (): Promise<CategoryGroupMember[]> => {
+  try {
+    return await fetchGroupMembers();
+  } catch (error) {
+    if (isMissingTable(error as { code?: string })) return [];
+    throw error;
+  }
 });
 
 export function walletMap(wallets: Wallet[]): Map<number, Wallet> {
@@ -433,22 +500,38 @@ export async function getDataYears(): Promise<number[]> {
   const sb = supabaseServer();
   const years = new Set<number>([new Date().getFullYear()]);
 
-  const { data: first } = await sb
-    .from("transactions")
-    .select("occurred_on")
-    .order("occurred_on", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-  const { data: last } = await sb
-    .from("transactions")
-    .select("occurred_on")
-    .order("occurred_on", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // One min/max round trip via the fn_txn_date_range RPC; two sequential single-row
+  // queries as the legacy fallback.
+  let minDay: string | null = null;
+  let maxDay: string | null = null;
 
-  if (first?.occurred_on && last?.occurred_on) {
-    const lo = parseInt(String(first.occurred_on).slice(0, 4), 10);
-    const hi = parseInt(String(last.occurred_on).slice(0, 4), 10);
+  const { data: range, error } = await sb.rpc("fn_txn_date_range");
+  if (!error) {
+    const row = ((range ?? []) as { min_day: string | null; max_day: string | null }[])[0];
+    minDay = row?.min_day ?? null;
+    maxDay = row?.max_day ?? null;
+  } else {
+    if (!isMissingFunction(error)) throw error;
+
+    const { data: first } = await sb
+      .from("transactions")
+      .select("occurred_on")
+      .order("occurred_on", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const { data: last } = await sb
+      .from("transactions")
+      .select("occurred_on")
+      .order("occurred_on", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    minDay = first?.occurred_on ? String(first.occurred_on) : null;
+    maxDay = last?.occurred_on ? String(last.occurred_on) : null;
+  }
+
+  if (minDay && maxDay) {
+    const lo = parseInt(minDay.slice(0, 4), 10);
+    const hi = parseInt(maxDay.slice(0, 4), 10);
     for (let y = lo; y <= hi; y += 1) years.add(y);
   }
 
@@ -559,21 +642,35 @@ export function monthlyEquivalent(
 // Installments and loans
 // =============================================================================
 
-export const getPaylaterProviders = cache(
-  async (includeArchived = false): Promise<PaylaterProvider[]> => {
+const fetchAllPaylaterProviders = unstable_cache(
+  async (): Promise<PaylaterProvider[]> => {
     const sb = supabaseServer();
-    let query = sb.from("paylater_providers").select("*");
-    if (!includeArchived) query = query.eq("archived", false);
-    const { data, error } = await query
+    const { data, error } = await sb
+      .from("paylater_providers")
+      .select("*")
       .order("sort_order", { ascending: true })
       .order("id", { ascending: true });
-    if (error) {
-      if (isMissingTable(error)) return [];
-      throw error;
-    }
+    if (error) throw error;
     return (data ?? []) as PaylaterProvider[];
-  }
+  },
+  ["all-paylater-providers"],
+  { tags: [TAGS.paylaterProviders] }
 );
+const getAllPaylaterProviders = cache(async (): Promise<PaylaterProvider[]> => {
+  try {
+    return await fetchAllPaylaterProviders();
+  } catch (error) {
+    if (isMissingTable(error as { code?: string })) return [];
+    throw error;
+  }
+});
+
+export async function getPaylaterProviders(
+  includeArchived = false
+): Promise<PaylaterProvider[]> {
+  const all = await getAllPaylaterProviders();
+  return includeArchived ? all : all.filter((p) => !p.archived);
+}
 
 export const getPaylaterItems = cache(async (): Promise<PaylaterItem[]> => {
   const sb = supabaseServer();
@@ -666,25 +763,46 @@ export async function getSavingsBuckets(asOf?: string): Promise<SavingsBucket[]>
   }
   if (buckets.size === 0) return [];
 
-  const rows = await paginate<
-    Pick<Transaction, "type" | "amount" | "category_id">
-  >(() => {
-    let query = sb
-      .from("transactions")
-      .select("id, type, amount, category_id")
-      .in("type", ["saving", "investment", "withdrawal"]);
-    if (asOf) query = query.lte("occurred_on", asOf);
-    return query as unknown as QueryBuilder<
-      Pick<Transaction, "type" | "amount" | "category_id">
-    >;
+  // Per-category SUMs from the fn_savings_buckets RPC (0002_perf_rpc.sql); fall back to the
+  // legacy scan of every saving/investment/withdrawal row on an un-migrated database.
+  const { data: totals, error } = await sb.rpc("fn_savings_buckets", {
+    p_as_of: asOf ?? null,
   });
 
-  for (const row of rows) {
-    if (row.category_id == null) continue;
-    const bucket = buckets.get(row.category_id);
-    if (!bucket) continue;
-    if (row.type === "withdrawal") bucket.withdrawn += row.amount;
-    else bucket.contributed += row.amount;
+  if (!error) {
+    for (const row of (totals ?? []) as {
+      category_id: number;
+      contributed: number;
+      withdrawn: number;
+    }[]) {
+      const bucket = buckets.get(Number(row.category_id));
+      if (!bucket) continue;
+      bucket.contributed = Number(row.contributed);
+      bucket.withdrawn = Number(row.withdrawn);
+    }
+  } else {
+    if (!isMissingFunction(error)) throw error;
+
+    const rows = await paginate<
+      Pick<Transaction, "type" | "amount" | "category_id">
+    >(() => {
+      let query = sb
+        .from("transactions")
+        .select("id, type, amount, category_id")
+        .in("type", ["saving", "investment", "withdrawal"]);
+      if (asOf) query = query.lte("occurred_on", asOf);
+      return query as unknown as QueryBuilder<
+        Pick<Transaction, "type" | "amount" | "category_id">
+      >;
+    });
+
+    for (const row of rows) {
+      if (row.category_id == null) continue;
+      const bucket = buckets.get(row.category_id);
+      if (!bucket) continue;
+      if (row.type === "withdrawal") bucket.withdrawn += row.amount;
+      else bucket.contributed += row.amount;
+    }
   }
 
   for (const bucket of buckets.values()) {
@@ -739,14 +857,39 @@ function normalizeDescription(value: string | null): string {
   return String(value ?? "").trim().replace(/\s+/g, " ");
 }
 
+/** The aggregate halves of ChartData, before net worth is composed on top. */
+interface ChartAggregates {
+  flows: ChartData["flows"];
+  dailyFlows: ChartData["dailyFlows"];
+  catTotals: ChartData["catTotals"];
+  catEntries: ChartData["catEntries"];
+  /** month -> net-worth delta for that month (balance rule summed across wallets). */
+  monthDelta: Record<string, number>;
+}
+
 /**
- * Everything /charts needs, from a single pass over the ledger.
+ * Everything /charts needs.
  *
  * A `withdrawal` NETS AGAINST ITS BUCKET'S KIND (`flow[kind] -= amount`) rather than counting
  * as its own flow — taking money back out of a savings bucket reduces that month's saving, it
  * is not income.
+ *
+ * The aggregates come from the `fn_chart_data` RPC (one round trip, 0002_perf_rpc.sql) when
+ * it exists, else from the legacy paginated scan of the whole ledger. Net worth is composed
+ * in JS either way, so the opening-balance rule lives in exactly one place.
  */
 export async function getChartData(): Promise<ChartData> {
+  const sb = supabaseServer();
+
+  const { data, error } = await sb.rpc("fn_chart_data");
+  if (error && !isMissingFunction(error)) throw error;
+
+  const agg = !error && data ? (data as unknown as ChartAggregates) : await chartAggregatesLegacy();
+  return composeChartData(agg);
+}
+
+/** Legacy single-pass JS scan — the fallback for an un-migrated database. */
+async function chartAggregatesLegacy(): Promise<ChartAggregates> {
   const sb = supabaseServer();
   const categories = await getCategories(true);
   const kindOf = new Map(categories.map((c) => [c.id, c.kind]));
@@ -821,7 +964,13 @@ export async function getChartData(): Promise<ChartData> {
     bucket.max = Math.max(bucket.max, row.amount);
   }
 
-  // --- Net worth: opening baseline + cumulative monthly deltas -------------
+  return { flows, dailyFlows, catTotals, catEntries, monthDelta };
+}
+
+/** Net worth on top of the aggregates: opening baseline + cumulative monthly deltas. */
+async function composeChartData(agg: ChartAggregates): Promise<ChartData> {
+  const { flows, dailyFlows, catTotals, catEntries, monthDelta } = agg;
+
   const openingMonth = await getOpeningMonth();
   const opening = await getOpeningBalances();
   const baseline = opening.reduce((sum, row) => sum + row.balance, 0);

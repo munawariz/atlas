@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { getPaylaterItems, getPaylaterPayments } from "@/lib/data";
+import type { PaylaterItem } from "@/lib/types";
 import { resolveProviderCategory } from "../actions";
 
 const digits = (v: FormDataEntryValue | null) =>
@@ -188,7 +189,9 @@ export async function unpayPaylaterMonth(formData: FormData): Promise<void> {
 /**
  * Pay every unpaid item in a provider group for a month, in one go.
  *
- * Months already marked paid are SKIPPED, so re-running this never double-books.
+ * Months already marked paid are SKIPPED, so re-running this never double-books. Booked as
+ * TWO bulk inserts (all expenses, then all payment rows) rather than delegating per item —
+ * paying ten items used to cost ten full pay pipelines.
  */
 export async function payPaylaterMonths(formData: FormData): Promise<void> {
   const month = monthDate(formData.get("month"));
@@ -211,18 +214,54 @@ export async function payPaylaterMonths(formData: FormData): Promise<void> {
     payments.filter((p) => p.month === month).map((p) => p.item_id)
   );
 
-  for (const id of ids) {
-    if (alreadyPaid.has(id)) continue;
-    const item = items.find((i) => i.id === id);
-    if (!item) continue;
+  const toPay = ids
+    .filter((id) => !alreadyPaid.has(id))
+    .map((id) => items.find((i) => i.id === id))
+    .filter((i): i is PaylaterItem => i != null);
+  if (toPay.length === 0) return;
 
-    const single = new FormData();
-    single.set("item_id", String(id));
-    single.set("month", month);
-    single.set("occurred_on", occurredOn);
-    if (walletId) single.set("wallet_id", String(walletId));
-    await payPaylaterMonth(single);
+  // Resolve each distinct provider's category ONCE — resolveProviderCategory can itself cost
+  // several queries (and may create the category on first use).
+  const categoryByProvider = new Map<number, number | null>();
+  for (const item of toPay) {
+    if (item.provider_id == null || categoryByProvider.has(item.provider_id)) continue;
+    categoryByProvider.set(
+      item.provider_id,
+      await resolveProviderCategory(item.provider_id)
+    );
   }
+
+  const sb = supabaseServer();
+
+  // Same row shape as payPaylaterMonth: the description is the installment item's own name
+  // (ATLAS.md §3.5). PostgREST returns inserted rows in input order, so the ids zip back to
+  // `toPay` by index for the payment links.
+  const { data: created, error } = await sb
+    .from("transactions")
+    .insert(
+      toPay.map((item) => ({
+        occurred_on: occurredOn,
+        type: "expense",
+        amount: item.monthly_amount,
+        description: item.item,
+        category_id:
+          item.provider_id != null
+            ? (categoryByProvider.get(item.provider_id) ?? null)
+            : null,
+        source_wallet_id: walletId,
+        dest_wallet_id: null,
+      }))
+    )
+    .select("id");
+  if (error) return;
+
+  await sb.from("paylater_payments").insert(
+    toPay.map((item, i) => ({
+      item_id: item.id,
+      month,
+      expense_txn_id: created?.[i] ? Number(created[i].id) : null,
+    }))
+  );
 
   revalidateInstallments();
 }
