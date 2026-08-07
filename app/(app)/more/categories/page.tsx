@@ -1,11 +1,9 @@
 import Link from "next/link";
 import { getCategories, getCategoryGroups, getGroupMembers } from "@/lib/data";
-import { ChevronLeft, X } from "@/components/icons";
+import { ChevronLeft } from "@/components/icons";
 import type { Category, CategoryKind } from "@/lib/types";
 import ManageRow from "../ManageRow";
 import {
-  addCategory,
-  addGroup,
   addGroupMember,
   deleteCategory,
   deleteGroup,
@@ -19,7 +17,8 @@ import {
   toggleGroupArchived,
   toggleGroupMember,
 } from "../actions";
-import { GroupAddSelect } from "./GroupControls";
+import { AddCategoryForm, AddGroupForm } from "./AddForms";
+import { GroupAddSelect, GroupMemberChip } from "./GroupControls";
 import {
   CategoryFavoriteToggle,
   CategoryInstallmentToggle,
@@ -31,17 +30,17 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Categories · Atlas" };
 
 const KIND_SECTIONS: { kind: CategoryKind; label: string; hint: string }[] = [
-  { kind: "expense", label: "Expense", hint: "Money spent." },
+  { kind: "expense", label: "Expense", hint: "Money going out." },
   { kind: "income", label: "Income", hint: "Money received." },
   {
     kind: "saving",
     label: "Saving",
-    hint: "Buckets you set money aside into. Held outside net worth.",
+    hint: "Money you set aside. Moving it into a bucket takes it out of your net worth.",
   },
   {
     kind: "investment",
     label: "Investment",
-    hint: "Buckets your stocks, bonds and forex hold value in.",
+    hint: "Where your stocks, bonds and forex hold value. Also outside net worth.",
   },
 ];
 
@@ -93,47 +92,48 @@ export default async function CategoriesPage({
             Categories
           </h1>
         </div>
+        {/*
+          `aria-pressed` is only defined for role="button" and this is an <a> that navigates —
+          `aria-current` is the correct state carrier for a link that is already the view you
+          are on (atlas-ux-plan-manage-pages.md, Categories UX #4).
+        */}
         <Link
           href={showArchived ? "/more/categories" : "/more/categories?archived=1"}
-          aria-pressed={showArchived}
-          className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold no-underline transition-colors ${
+          aria-current={showArchived ? "page" : undefined}
+          className={`inline-flex h-11 shrink-0 items-center rounded-full px-3 text-[12px] font-semibold no-underline transition-colors ${
             showArchived
               ? "bg-forest-800 text-white"
               : "bg-cream-200 text-ink-500"
           }`}
         >
-          Archived
+          {showArchived ? "Hide archived" : "Show archived"}
         </Link>
       </header>
 
-      {/* --- Groups: what the Add sheet leads with ------------------------- */}
+      <p className="-mt-3 text-[13px] text-ink-500">
+        The labels every transaction gets — and the groups shown first when you
+        add one.
+      </p>
+
+      {/* --- Groups: what adding a transaction leads with ------------------ */}
       <section>
         <h2 className="label">Groups</h2>
         <p className="mt-0.5 mb-2 text-[13px] text-ink-500">
-          The Add sheet lists these first. A group can mix kinds — expense,
-          income, saving and investment categories side by side.
+          Shown first when you add a transaction. A group can mix kinds: expense,
+          income, saving and investment side by side.
         </p>
 
-        <form
-          action={addGroup}
-          className="mb-2 flex gap-2 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
-        >
-          <input
-            name="name"
-            placeholder="New group name"
-            aria-label="Group name"
-            required
-            className="field flex-1"
-          />
-          <button type="submit" className="btn btn-primary shrink-0">
-            Add group
-          </button>
-        </form>
+        <AddGroupForm />
 
         <div className="space-y-2">
-          {groups.map((group, index) => (
+          {groups.map((group, index) => {
+            const memberCount = activeCategories.filter((c) =>
+              memberSet.has(`${group.id}:${c.id}`)
+            ).length;
+            return (
             <ManageRow
               key={group.id}
+              anchorId={`group-${group.id}`}
               name={group.name}
               archived={group.archived}
               onRename={renameGroup.bind(null, group.id)}
@@ -143,6 +143,13 @@ export default async function CategoriesPage({
                 !group.archived
               )}
               onDelete={deleteGroup.bind(null, group.id)}
+              deleteMessage={
+                <>
+                  Delete <strong>{group.name}</strong>? The group goes; the{" "}
+                  {memberCount} {memberCount === 1 ? "category" : "categories"} in
+                  it {memberCount === 1 ? "is" : "are"} untouched.
+                </>
+              }
               onMoveUp={index > 0 ? moveGroup.bind(null, group.id, -1) : undefined}
               onMoveDown={
                 index < groups.length - 1
@@ -157,27 +164,18 @@ export default async function CategoriesPage({
                 {activeCategories
                   .filter((c) => memberSet.has(`${group.id}:${c.id}`))
                   .map((category) => (
-                    <form
+                    <GroupMemberChip
                       key={category.id}
-                      action={toggleGroupMember.bind(
+                      name={category.name}
+                      groupName={group.name}
+                      dotClassName={KIND_DOT[category.kind]}
+                      onRemove={toggleGroupMember.bind(
                         null,
                         group.id,
                         category.id,
                         false
                       )}
-                    >
-                      <button
-                        type="submit"
-                        aria-label={`Remove ${category.name} from ${group.name}`}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-full bg-lime-200 px-2.5 text-[12px] font-semibold text-forest-800 transition-colors hover:bg-lime-300"
-                      >
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${KIND_DOT[category.kind]}`}
-                        />
-                        {category.name}
-                        <X size={12} />
-                      </button>
-                    </form>
+                    />
                   ))}
 
                 <GroupAddSelect
@@ -189,18 +187,19 @@ export default async function CategoriesPage({
 
                 {activeCategories.length === 0 && (
                   <p className="text-[13px] text-ink-500">
-                    No categories yet — add some below, then pick them into this
+                    No categories yet. Add some below, then add them to this
                     group.
                   </p>
                 )}
               </div>
             </ManageRow>
-          ))}
+            );
+          })}
 
           {groups.length === 0 && (
             <p className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
-              No groups yet. Without groups, the Add sheet lists categories by
-              kind instead.
+              No groups yet. Adding a transaction will list categories by kind
+              instead.
             </p>
           )}
         </div>
@@ -216,26 +215,31 @@ export default async function CategoriesPage({
             <p className="mt-0.5 mb-2 text-[13px] text-ink-500">{section.hint}</p>
 
             {/*
+              The per-category toggles used to carry their only explanation in a `title`, which
+              does not render on touch — this app's primary target. Section-level helper text is
+              where those two sentences belong (atlas-ux-plan-manage-pages.md, Categories UX #7).
+            */}
+            <p className="mb-2 text-[13px] text-ink-300">
+              Favorites get their own tab when you add a transaction.
+              {section.kind === "expense" && (
+                <>
+                  {" "}
+                  Installment categories are excluded from Budget vs actual —
+                  they&rsquo;re fixed, and tracked on the Installments page.
+                </>
+              )}
+            </p>
+
+            {/*
               Inline at the top of the section that already knows its kind, instead of one
               global form with a kind picker a scroll away from where the new row lands
-              (atlas-ux-review.md #5).
+              (atlas-ux-review.md #5) — collapsed to a ghost row so four of these cost one
+              line each at rest (atlas-ux-plan-manage-pages.md C2).
             */}
-            <form
-              action={addCategory}
-              className="mb-2 flex gap-2 rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
-            >
-              <input type="hidden" name="kind" value={section.kind} />
-              <input
-                name="name"
-                placeholder={`New ${section.label.toLowerCase()} category`}
-                aria-label={`New ${section.label.toLowerCase()} category name`}
-                required
-                className="field flex-1"
-              />
-              <button type="submit" className="btn btn-primary shrink-0">
-                Add
-              </button>
-            </form>
+            <AddCategoryForm
+              kind={section.kind}
+              kindLabel={section.label.toLowerCase()}
+            />
 
             <div className="space-y-2">
               {archivedCount > 0 && !showArchived && (
@@ -243,12 +247,13 @@ export default async function CategoriesPage({
                   href="/more/categories?archived=1"
                   className="block text-[13px] font-semibold text-forest-800 no-underline"
                 >
-                  {archivedCount} archived — show
+                  Show {archivedCount} archived
                 </Link>
               )}
               {list.map((category) => (
                 <ManageRow
                   key={category.id}
+                  anchorId={`category-${category.id}`}
                   name={category.name}
                   archived={category.archived}
                   onRename={renameCategory.bind(null, category.id)}
@@ -258,6 +263,12 @@ export default async function CategoriesPage({
                     !category.archived
                   )}
                   onDelete={deleteCategory.bind(null, category.id)}
+                  deleteMessage={
+                    <>
+                      Delete <strong>{category.name}</strong> permanently? Past
+                      transactions keep their history but lose this label.
+                    </>
+                  }
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <CategoryPeriodSelect
@@ -287,11 +298,26 @@ export default async function CategoriesPage({
               ))}
 
               {list.length === 0 && (
-                <p className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
-                  {archivedCount > 0
-                    ? `All ${section.label.toLowerCase()} categories are archived.`
-                    : `No ${section.label.toLowerCase()} categories yet.`}
-                </p>
+                <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
+                  {archivedCount > 0 ? (
+                    <>
+                      <p>
+                        Every {section.label.toLowerCase()} category is archived.
+                      </p>
+                      <Link
+                        href="/more/categories?archived=1"
+                        className="mt-1 inline-block font-semibold text-forest-800 no-underline"
+                      >
+                        Show archived
+                      </Link>
+                    </>
+                  ) : (
+                    <p>
+                      No {section.label.toLowerCase()} categories yet. Add one
+                      above.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </section>

@@ -39,11 +39,18 @@ function addMonths(monthKey: string, n: number): string {
 }
 
 /** Create a loan and lay out its collection schedule. Capped at 60 months. */
-export async function addLoan(formData: FormData): Promise<void> {
+export async function addLoan(
+  _prev: LoanState,
+  formData: FormData
+): Promise<LoanState> {
   const person = text(formData.get("person"));
   const start = monthDate(formData.get("start_month"));
   const months = Math.min(60, Math.max(1, optInt(formData.get("months")) ?? 1));
-  if (!person || !start) return;
+  const installment = digits(formData.get("installment"));
+
+  if (!person) return { error: "Enter who owes you." };
+  if (installment <= 0) return { error: "Enter the monthly amount." };
+  if (!start) return { error: "Pick the month collection starts." };
 
   const sb = supabaseServer();
   const { data: created } = await sb
@@ -51,12 +58,12 @@ export async function addLoan(formData: FormData): Promise<void> {
     .insert({
       person,
       lender: text(formData.get("lender")) || null,
-      installment: digits(formData.get("installment")),
+      installment,
       note: text(formData.get("note")) || null,
     })
     .select("id")
     .maybeSingle();
-  if (!created) return;
+  if (!created) return { error: "Could not save that loan." };
 
   const schedule = Array.from({ length: months }, (_, i) => ({
     loan_id: Number(created.id),
@@ -66,6 +73,7 @@ export async function addLoan(formData: FormData): Promise<void> {
   await sb.from("loan_payments").insert(schedule);
 
   revalidateLoans();
+  return { ok: true, nonce: Date.now() };
 }
 
 export async function deleteLoan(id: number): Promise<void> {

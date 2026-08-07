@@ -26,25 +26,51 @@ function revalidateInstallments() {
   revalidatePath("/history");
 }
 
-export async function addPaylaterItem(formData: FormData): Promise<void> {
+export interface InstallmentState {
+  ok?: boolean;
+  error?: string;
+  nonce?: number;
+}
+
+/**
+ * Validate the schedule window shared by add and edit.
+ *
+ * This used to clamp a backwards range to a single month instead of rejecting it — quieter, but
+ * it meant the saved schedule was not the one that was typed and nothing said so. Rejecting is
+ * the honest version (atlas-ux-plan-manage-pages.md C3).
+ */
+function checkRange(first: string | null, last: string | null): string | null {
+  if (!first || !last) return "Pick the first and last months.";
+  if (last < first) return "Last month can't be before the first.";
+  return null;
+}
+
+export async function addPaylaterItem(
+  _prev: InstallmentState,
+  formData: FormData
+): Promise<InstallmentState> {
   const item = text(formData.get("item"));
   const monthly = digits(formData.get("monthly_amount"));
   const first = monthDate(formData.get("first_month_date"));
   const last = monthDate(formData.get("last_month_date"));
-  if (!item || !first || !last) return;
 
-  await supabaseServer().from("paylater_items").insert({
+  if (!item) return { error: "Name what you bought." };
+  if (monthly <= 0) return { error: "Enter the monthly amount." };
+  const rangeError = checkRange(first, last);
+  if (rangeError) return { error: rangeError };
+
+  const { error } = await supabaseServer().from("paylater_items").insert({
     item,
     monthly_amount: monthly,
     first_month_date: first,
-    // A backwards range would make the item permanently inactive rather than erroring, so
-    // clamp it to a single month instead.
-    last_month_date: last < first ? first : last,
+    last_month_date: last,
     provider_id: optInt(formData.get("provider_id")),
     note: text(formData.get("note")) || null,
   });
+  if (error) return { error: "Could not save that installment." };
 
   revalidateInstallments();
+  return { ok: true, nonce: Date.now() };
 }
 
 /**
@@ -55,26 +81,34 @@ export async function addPaylaterItem(formData: FormData): Promise<void> {
  */
 export async function updatePaylaterItem(
   id: number,
+  _prev: InstallmentState,
   formData: FormData
-): Promise<void> {
+): Promise<InstallmentState> {
   const item = text(formData.get("item"));
+  const monthly = digits(formData.get("monthly_amount"));
   const first = monthDate(formData.get("first_month_date"));
   const last = monthDate(formData.get("last_month_date"));
-  if (!item || !first || !last) return;
 
-  await supabaseServer()
+  if (!item) return { error: "Name what you bought." };
+  if (monthly <= 0) return { error: "Enter the monthly amount." };
+  const rangeError = checkRange(first, last);
+  if (rangeError) return { error: rangeError };
+
+  const { error } = await supabaseServer()
     .from("paylater_items")
     .update({
       item,
-      monthly_amount: digits(formData.get("monthly_amount")),
+      monthly_amount: monthly,
       first_month_date: first,
-      last_month_date: last < first ? first : last,
+      last_month_date: last,
       provider_id: optInt(formData.get("provider_id")),
       note: text(formData.get("note")) || null,
     })
     .eq("id", id);
+  if (error) return { error: "Could not save those changes." };
 
   revalidateInstallments();
+  return { ok: true, nonce: Date.now() };
 }
 
 export async function deletePaylaterItem(id: number): Promise<void> {

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
 import SubmitButton from "@/components/SubmitButton";
+import { Check } from "@/components/icons";
 import { formatMonthShort, formatRupiah, todayISO } from "@/lib/format";
 import type { Loan, LoanPayment, Wallet } from "@/lib/types";
 import {
@@ -32,6 +33,18 @@ export default function PaymentGrid({
   const [openMonth, setOpenMonth] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  // The panel opens below the whole strip, so on a 24-month loan it lands four wrapped rows
+  // further down — frequently off-screen, with nothing to say it opened at all
+  // (atlas-ux-plan-manage-pages.md C4e).
+  useEffect(() => {
+    if (!openMonth) return;
+    const node = panelRef.current;
+    if (!node) return;
+    node.scrollIntoView({ block: "nearest" });
+    node.querySelector<HTMLElement>("select, input, button, [tabindex]")?.focus();
+  }, [openMonth]);
 
   const sorted = [...payments].sort((a, b) =>
     a.period_month < b.period_month ? -1 : 1
@@ -78,12 +91,18 @@ export default function PaymentGrid({
                 )
               }
               aria-pressed={openMonth === payment.period_month}
-              className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+              aria-label={`${formatMonthShort(payment.period_month)}, ${
+                collected ? "collected" : "not collected"
+              }`}
+              className={`inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
                 collected
                   ? "bg-lime-200 text-forest-800"
                   : "bg-cream-200 text-ink-500"
               } ${openMonth === payment.period_month ? "ring-2 ring-forest-800" : ""}`}
             >
+              {/* Colour was the only carrier of collected-vs-not, and these chips are the
+                  primary interaction on the page (atlas-ux-plan-manage-pages.md C4a, C4b). */}
+              {collected && <Check size={12} />}
               {formatMonthShort(payment.period_month)}
             </button>
           );
@@ -95,7 +114,7 @@ export default function PaymentGrid({
             <input type="hidden" name="period_month" value={nextMonth} />
             <button
               type="submit"
-              className="rounded-full border border-dashed border-[var(--border-default)] px-2.5 py-1 text-[11px] font-semibold text-forest-800"
+              className="inline-flex min-h-11 items-center rounded-full border border-dashed border-[var(--border-default)] px-2.5 text-[11px] font-semibold text-forest-800"
             >
               + {formatMonthShort(nextMonth)}
             </button>
@@ -119,7 +138,10 @@ export default function PaymentGrid({
 
           if (payment.paid) {
             return (
-              <div className="mt-3 rounded-[var(--radius-input)] bg-cream-100 p-3">
+              <div
+                ref={panelRef}
+                className="mt-3 rounded-[var(--radius-input)] bg-cream-100 p-3"
+              >
                 <p className="text-[13px] text-ink-700">
                   {formatMonthShort(openMonth)} collected —{" "}
                   <strong className="tabular-nums">
@@ -141,7 +163,10 @@ export default function PaymentGrid({
           }
 
           return (
-            <div className="mt-3 space-y-2 rounded-[var(--radius-input)] bg-cream-100 p-3">
+            <div
+              ref={panelRef}
+              className="mt-3 space-y-2 rounded-[var(--radius-input)] bg-cream-100 p-3"
+            >
               <form
                 action={async (formData: FormData) => {
                   const result = await collectLoanMonth(formData);
@@ -169,11 +194,16 @@ export default function PaymentGrid({
                   ))}
                 </select>
 
-                <MoneyInput
-                  name="amount"
-                  placeholder={`${formatRupiah(loan.installment)} (full)`}
-                  ariaLabel="Amount collected"
-                />
+                <MoneyInput name="amount" ariaLabel="Amount collected" />
+                {/* This used to be the placeholder — the one string explaining that a blank
+                    field collects the full amount, gone the moment you typed (Lending UX #8). */}
+                <p className="text-[13px] text-ink-500">
+                  Leave blank to collect the full{" "}
+                  <span className="tabular-nums">
+                    {formatRupiah(loan.installment)}
+                  </span>
+                  .
+                </p>
 
                 <input
                   type="date"

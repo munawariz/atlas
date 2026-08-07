@@ -21,13 +21,14 @@ export function CategoryPeriodSelect({
   return (
     <form action={onChange}>
       <label className="flex items-center gap-2">
-        <span className="label">Budget</span>
+        {/* "Budget" read as the budget FIGURE; this control only sets how often it resets. */}
+        <span className="label">Cadence</span>
         <select
           name="period"
           defaultValue={period}
           onChange={(e) => e.currentTarget.form?.requestSubmit()}
           aria-label="Budget cadence"
-          className="field h-9 w-auto py-0 text-[13px]"
+          className="field h-11 w-auto py-0 text-[13px]"
         >
           {BUDGET_PERIODS.map((p) => (
             <option key={p.value} value={p.value}>
@@ -53,8 +54,7 @@ export function CategoryFavoriteToggle({
         type="submit"
         aria-pressed={isFavorite}
         aria-label={isFavorite ? "Remove from favorites" : "Mark as favorite"}
-        title="Favorites get their own tab in the Add sheet."
-        className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition-colors ${
+        className={`inline-flex h-11 items-center gap-1.5 rounded-full px-3 text-[12px] font-semibold transition-colors ${
           isFavorite ? "bg-lime-200 text-forest-800" : "bg-cream-200 text-ink-500"
         }`}
       >
@@ -74,17 +74,26 @@ export function CategoryInstallmentToggle({
 }) {
   return (
     <form action={onToggle}>
+      {/*
+        The label stays "Installment" in both states — a pill that renames itself to its own
+        negation makes the reader compute it. Fill plus aria-pressed carries the state, the same
+        way Favorite already does (atlas-ux-plan-manage-pages.md, Categories copy).
+      */}
       <button
         type="submit"
         aria-pressed={isInstallment}
-        className={`inline-flex h-9 items-center rounded-full px-3 text-[12px] font-semibold transition-colors ${
+        aria-label={
+          isInstallment
+            ? "Not an installment category"
+            : "Mark as an installment category"
+        }
+        className={`inline-flex h-11 items-center rounded-full px-3 text-[12px] font-semibold transition-colors ${
           isInstallment
             ? "bg-lime-200 text-forest-800"
             : "bg-cream-200 text-ink-500"
         }`}
-        title="Installment categories are excluded from Budget vs actual — they are fixed and tracked on the Installments tab."
       >
-        {isInstallment ? "Installment" : "Not installment"}
+        Installment
       </button>
     </form>
   );

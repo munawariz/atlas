@@ -484,6 +484,30 @@ details[open] > summary .chevron {
   transition: width 0.15s var(--ease-standard), opacity 0.3s ease 0.1s;
 }
 
+/*
+ * Success highlight. An add form jumps the URL to `#<anchor>` once its action returns an id;
+ * `:target` then rings the row that just appeared, wherever down the section it landed
+ * (atlas-ux-plan-manage-pages.md C3 — the missing half of atlas-ux-review.md #5).
+ *
+ * CSS rather than client state because the new row is rendered by the server component, a
+ * whole subtree away from the form that created it — a hash is the only handle both share.
+ * Under reduced-motion the blanket rule below kills the animation; `:target` still holds the
+ * ring at its final value, so the affordance survives without the movement.
+ */
+@keyframes target-flash {
+  0%,
+  60% {
+    box-shadow: 0 0 0 3px var(--color-lime-500);
+  }
+  100% {
+    box-shadow: var(--shadow-xs);
+  }
+}
+.target-flash:target {
+  animation: target-flash 2s var(--ease-standard) both;
+  scroll-margin-top: 96px;
+}
+
 .stagger > * {
   animation: rise 0.34s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }

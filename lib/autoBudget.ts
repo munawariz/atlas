@@ -61,12 +61,24 @@ export async function loanAutoBudget(
   };
 }
 
-/** True while `monthKey` falls inside an item's first..last window, inclusive. */
+/**
+ * True while `monthKey` falls inside an item's first..last window, inclusive.
+ *
+ * The bounds are ordered before comparing, so a row whose `last` precedes its `first` still
+ * reports a real window instead of an empty one. `addPaylaterItem` now rejects that shape
+ * outright, but rows written before it did are otherwise invisible in every month — and an
+ * invisible row cannot be reached to be deleted (atlas-ux-plan-manage-pages.md C3, open
+ * question 4). Reading them tolerantly is the repair; no migration required.
+ */
 export function itemActiveIn(
   item: { first_month_date: string; last_month_date: string },
   monthKey: string
 ): boolean {
-  return item.first_month_date <= monthKey && monthKey <= item.last_month_date;
+  const [from, to] =
+    item.first_month_date <= item.last_month_date
+      ? [item.first_month_date, item.last_month_date]
+      : [item.last_month_date, item.first_month_date];
+  return from <= monthKey && monthKey <= to;
 }
 
 /**

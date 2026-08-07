@@ -1,11 +1,33 @@
 # Atlas — UX & Copy Plan: Categories, Installments, Lending, Budgets
 
-> **Status: planned, not implemented.** Nothing in this document has been coded. It is the
-> companion to `atlas-ux-review.md` (all implemented 2026-08-07), covering the four `/more`
-> management pages that round of work left largely untouched. Two naming decisions were taken
-> up front and are treated as settled throughout: **"Installments"** replaces the four competing
-> names for that feature, and **"Lending"** replaces "Loans" as the label for money owed *to*
-> you. Everything else is a proposal with a cost tag.
+> **Status: Implemented — 2026-08-07.** All 19 items in "Suggested order of work" have been
+> executed, including the Round 4 bet (budget actuals). It is the companion to
+> `atlas-ux-review.md` (also implemented 2026-08-07), covering the four `/more` management pages
+> that round of work left largely untouched. Two naming decisions were taken up front and are
+> treated as settled throughout: **"Installments"** replaces the four competing names for that
+> feature, and **"Lending"** replaces "Loans" as the label for money owed *to* you.
+>
+> **Calls made on the open questions**, since they had to be resolved to ship:
+>
+> 1. *Installment chips* — made **interactive** (the preferred option in C4c). Tapping any month
+>    opens the same pay/undo panel the current month gets, so a mis-marked month is correctable
+>    from the card. `PaylaterItemCard`'s "this month only" gating was the only thing in the way.
+> 2. *The `rank()` sort* — **surfaced, not replaced.** A single line, `Sorted by what's closest
+>    to finishing`, above the groups. Replacing it with a user-picked sort needs evidence the
+>    rule is wrong, which nothing yet supplies.
+> 3. *Budget actuals* — **last month's figure**, not a 3-month average. One extra query
+>    (`getMonthTransactions(prevMonthKey(m))`), and the label names the month rather than saying
+>    "last month", since the month switcher moves the frame.
+> 4. *Unreachable installment rows* — could not be queried from here, so the fix does not depend
+>    on the answer. `addPaylaterItem` and `updatePaylaterItem` now **reject** a backwards range
+>    instead of clamping it, and `itemActiveIn`/`scheduleMonths` order their bounds before
+>    comparing — so any row already in that state becomes visible, and therefore deletable,
+>    without a migration.
+>
+> One deviation from the plan as written: `ManageRow`'s overflow control (Categories UX #5) holds
+> **Move up / Move down / Delete**, leaving rename and archive inline — the everyday pair stays
+> one tap away, and every remaining target clears 44px. The document is kept as-is below as the
+> working record of what was found and why.
 
 **Scope:** `/more/categories`, `/more/paylater`, `/more/loans`, `/more/budgets` — and the
 components they own: `ManageRow`, `CategoryControls`, `GroupControls`, `PaylaterItemCard`,

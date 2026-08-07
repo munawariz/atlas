@@ -44,10 +44,10 @@ const INVESTMENT: Item[] = [
 
 const MANAGE: Item[] = [
   { href: "/more/budgets", label: "Budgets", hint: "Limits and targets per category", Icon: SlidersHorizontal },
-  { href: "/more/paylater", label: "My Installment", hint: "Instalments and what is due", Icon: CreditCard },
-  { href: "/more/loans", label: "Loans", hint: "Money other people owe you", Icon: Coins },
+  { href: "/more/paylater", label: "Installments", hint: "What you owe each month", Icon: CreditCard },
+  { href: "/more/loans", label: "Lending", hint: "Money other people owe you", Icon: Coins },
   { href: "/more/wallets", label: "Wallets", hint: "Where your cash lives", Icon: WalletIcon },
-  { href: "/more/categories", label: "Categories", hint: "Names, cadence, installment flags", Icon: FileText },
+  { href: "/more/categories", label: "Categories", hint: "What your transactions get labelled with", Icon: FileText },
   { href: "/more/providers", label: "Installment providers", hint: "Card, paylater, store credit", Icon: CreditCard },
   { href: "/more/settings", label: "Settings", hint: "Categories automated actions book to", Icon: Star },
 ];

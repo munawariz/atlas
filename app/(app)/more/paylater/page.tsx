@@ -1,7 +1,6 @@
 import Link from "next/link";
 import MonthSwitcher from "@/components/MonthSwitcher";
 import SubmitButton from "@/components/SubmitButton";
-import MoneyInput from "@/components/MoneyInput";
 import { ChevronLeft } from "@/components/icons";
 import {
   currentMonthKey,
@@ -13,12 +12,13 @@ import {
 import { itemActiveIn } from "@/lib/autoBudget";
 import { formatMonth, formatRupiah, todayISO } from "@/lib/format";
 import type { PaylaterItem } from "@/lib/types";
+import AddInstallmentSheet from "./AddInstallmentSheet";
 import PaylaterItemCard from "./PaylaterItemCard";
-import { addPaylaterItem, payPaylaterMonths } from "./actions";
+import { payPaylaterMonths } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "My Installment · Atlas" };
+export const metadata = { title: "Installments · Atlas" };
 
 /** Total months in an item's schedule. */
 function totalMonths(item: PaylaterItem): number {
@@ -99,6 +99,13 @@ export default async function PaylaterPage({
   }
   const populated = groups.filter((g) => g.items.length > 0);
 
+  // A schedule that ended before the month being viewed vanishes with no trace — the
+  // MonthSwitcher is the only clue it ever existed. Count them so the disappearance is at
+  // least stated (atlas-ux-plan-manage-pages.md, Installments UX #9).
+  const finishedEarlier = items.filter(
+    (item) => item.last_month_date < monthKey
+  ).length;
+
   const defaultWalletId = wallets[0]?.id ?? null;
 
   return (
@@ -112,113 +119,102 @@ export default async function PaylaterPage({
           <ChevronLeft size={20} />
         </Link>
         <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
-          My Installment
+          Installments
         </h1>
       </header>
 
       <MonthSwitcher monthKey={monthKey} />
 
-      <section className="grid grid-cols-3 gap-2">
-        {[
-          { label: "Due", value: `${owedItems.length}`, money: false },
-          { label: "Owed", value: formatRupiah(owed), money: true },
-          { label: "Paid", value: formatRupiah(paid), money: true },
-        ].map((card) => (
-          <div
-            key={card.label}
-            className="rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
-          >
-            <div className="label">{card.label}</div>
-            <div
-              className={`mt-0.5 font-display text-[15px] font-bold text-ink-900 ${
-                card.money ? "tabular-nums" : ""
-              }`}
-            >
-              {card.value}
-            </div>
-          </div>
-        ))}
+      {/*
+        One forest hero carrying the one number that matters, mirroring Lending — these two pages
+        are exact opposites (what you owe monthly, what you are owed monthly) and used to be the
+        two that looked least alike. The old three equal white cards rendered a COUNT ("Due 3") in
+        the same slot, weight and shape as two rupiah figures (atlas-ux-plan-manage-pages.md C5).
+      */}
+      <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">
+        <div className="label" style={{ color: "var(--color-forest-300)" }}>
+          Left to pay in {formatMonth(monthKey)}
+        </div>
+        <div className="mt-1 font-display text-[32px] font-extrabold tracking-[-0.03em] text-white tabular-nums">
+          {formatRupiah(owed)}
+        </div>
+        <p className="mt-1 text-[13px]" style={{ color: "var(--color-forest-200)" }}>
+          {active.length === 0 ? (
+            "Nothing scheduled this month."
+          ) : (
+            <>
+              {owedItems.length} of {active.length}{" "}
+              {active.length === 1 ? "item" : "items"} still due
+              {paid > 0 && (
+                <span className="tabular-nums">
+                  {" "}
+                  · {formatRupiah(paid)} already paid
+                </span>
+              )}
+            </>
+          )}
+        </p>
       </section>
 
-      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
-        <summary className="px-4 py-3.5 text-[15px] font-semibold text-ink-900">
-          Add an installment
-        </summary>
-        <form
-          action={addPaylaterItem}
-          className="space-y-2 border-t border-[var(--border-subtle)] p-4"
-        >
-          <input
-            name="item"
-            placeholder="What you bought"
-            aria-label="Item name"
-            required
-            className="field"
-          />
-          <MoneyInput
-            name="monthly_amount"
-            placeholder="Monthly amount"
-            ariaLabel="Monthly amount"
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="label mb-1 block">First month</span>
-              <input
-                type="month"
-                name="first_month_date"
-                defaultValue={monthKey.slice(0, 7)}
-                className="field"
-              />
-            </label>
-            <label className="block">
-              <span className="label mb-1 block">Last month</span>
-              <input
-                type="month"
-                name="last_month_date"
-                defaultValue={monthKey.slice(0, 7)}
-                className="field"
-              />
-            </label>
-          </div>
-          <select name="provider_id" aria-label="Provider" className="field" defaultValue="">
-            <option value="">No provider</option>
-            {providers.map((p) => (
-              <option key={p.id} value={String(p.id)}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <input
-            name="note"
-            placeholder="Note (optional)"
-            aria-label="Note"
-            className="field"
-          />
-          <SubmitButton className="btn btn-primary w-full">
-            Add installment
-          </SubmitButton>
-        </form>
-      </details>
+      <AddInstallmentSheet
+        providers={providers}
+        defaultMonth={monthKey.slice(0, 7)}
+      />
 
       {populated.length === 0 ? (
-        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
-          Nothing running in {formatMonth(monthKey)}.
-        </p>
+        <div className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          <p>No installments running in {formatMonth(monthKey)}.</p>
+          <p className="mt-1 text-[13px]">
+            Add one and it&rsquo;ll show up here.
+          </p>
+          {finishedEarlier > 0 && (
+            <p className="mt-1 text-[13px]">
+              {finishedEarlier}{" "}
+              {finishedEarlier === 1 ? "schedule" : "schedules"} finished before{" "}
+              {formatMonth(monthKey)}.
+            </p>
+          )}
+        </div>
       ) : (
-        populated.map((group) => {
+        <>
+          {/*
+            `rank()` encodes a real opinion — closest to finishing floats up — and until now the
+            user had no way to know the order meant anything (atlas-ux-plan-manage-pages.md,
+            Installments UX #7).
+          */}
+          <p className="text-[13px] text-ink-300">
+            Sorted by what&rsquo;s closest to finishing.
+            {finishedEarlier > 0 && (
+              <>
+                {" "}
+                {finishedEarlier}{" "}
+                {finishedEarlier === 1 ? "schedule" : "schedules"} finished before{" "}
+                {formatMonth(monthKey)}.
+              </>
+            )}
+          </p>
+
+          {populated.map((group) => {
           const unpaid = group.items.filter(
             (item) => !paidByItem.get(item.id)?.has(monthKey)
           );
+          const paidCount = group.items.length - unpaid.length;
 
           return (
             <section key={group.id}>
               <div className="mb-2 flex items-baseline justify-between gap-2">
                 <h2 className="label">{group.name}</h2>
+                {/*
+                  The header totals only what is UNPAID, but the list below shows every item in
+                  the group — a header reading "Rp 0 left" over four cards needed the second half
+                  of the sentence (atlas-ux-plan-manage-pages.md, Installments UX #8).
+                */}
                 <span className="text-[12px] font-semibold text-ink-500 tabular-nums">
                   {formatRupiah(
                     unpaid.reduce((sum, i) => sum + i.monthly_amount, 0)
                   )}{" "}
-                  owed
+                  left
+                  {paidCount > 0 && ` · ${paidCount} paid`}
                 </span>
               </div>
 
@@ -255,7 +251,7 @@ export default async function PaylaterPage({
                       className="field"
                     />
                     <SubmitButton className="btn btn-primary btn-sm w-full">
-                      Book {unpaid.length} expenses
+                      Record {unpaid.length} payments
                     </SubmitButton>
                   </form>
                 </details>
@@ -276,7 +272,8 @@ export default async function PaylaterPage({
               </div>
             </section>
           );
-        })
+          })}
+        </>
       )}
     </div>
   );

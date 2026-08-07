@@ -4,6 +4,7 @@ import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
+import { ChevronDown } from "@/components/icons";
 import { BUDGET_PERIODS, type BudgetPeriod, type SaveScope } from "@/lib/types";
 import { formatRupiah } from "@/lib/format";
 import { clearBudgetOverride, saveBudget } from "./actions";
@@ -12,7 +13,8 @@ import { setCategoryPeriod } from "../actions";
 const SCOPES: { value: SaveScope; label: string; hint: string }[] = [
   {
     value: "forward",
-    label: "This month →",
+    // A trailing arrow inside a pill reads as navigation, which this is not.
+    label: "From this month on",
     hint: "Applies to this month and every month after it.",
   },
   {
@@ -22,10 +24,24 @@ const SCOPES: { value: SaveScope; label: string; hint: string }[] = [
   },
   {
     value: "all",
-    label: "All months",
+    label: "Every month",
     hint: "Replaces every rule and override for this category.",
   },
 ];
+
+/**
+ * The amount field's label, per cadence.
+ *
+ * This was `\`Per ${period.replace("ly", "")}\`` — which renders **"Per dai"** for a daily
+ * budget. `weekly` → `week` and `monthly` → `month` happened to work, which is why it survived
+ * (atlas-ux-plan-manage-pages.md, Budgets bug found in passing).
+ */
+const AMOUNT_LABEL: Record<BudgetPeriod, string> = {
+  daily: "Per day",
+  weekly: "Per week",
+  monthly: "Per month",
+  yearly: "Whole-year limit",
+};
 
 export default function BudgetRow({
   categoryId,
@@ -35,6 +51,8 @@ export default function BudgetRow({
   monthKey,
   source,
   monthlyEquivalent,
+  lastMonthActual,
+  lastMonthLabel,
 }: {
   categoryId: number;
   name: string;
@@ -44,6 +62,10 @@ export default function BudgetRow({
   /** Whether the shown number came from a per-month override or the recurring rule. */
   source: "month" | "rule" | "none";
   monthlyEquivalent: number;
+  /** What this category actually did last month — the context the decision needs. */
+  lastMonthActual: number;
+  /** e.g. "July" — named rather than "last month", since the month switcher moves the frame. */
+  lastMonthLabel: string;
 }) {
   const [scope, setScope] = useState<SaveScope>("forward");
   const [open, setOpen] = useState(false);
@@ -57,7 +79,7 @@ export default function BudgetRow({
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-baseline justify-between gap-3 text-left"
+        className="flex w-full items-center justify-between gap-3 text-left"
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-semibold text-ink-900">
@@ -70,9 +92,33 @@ export default function BudgetRow({
             )}
             {source === "month" && " · this month only"}
           </span>
+          {/*
+            You were setting a limit for Groceries with no idea what you spent last month. The
+            dashboard had that context; this page — where the decision is actually made — did not
+            (atlas-ux-plan-manage-pages.md, Budgets UX #3).
+          */}
+          {lastMonthActual > 0 && (
+            <span className="block text-[12px] text-ink-300 tabular-nums">
+              {lastMonthLabel}: {formatRupiah(lastMonthActual)}
+            </span>
+          )}
         </span>
-        <span className="shrink-0 font-display text-[17px] font-bold text-ink-900 tabular-nums">
-          {amount > 0 ? formatRupiah(amount) : "—"}
+        {/* An em dash is not a state. "Not set" also drops `tabular-nums`, which is both what
+            aligns the money column and what the privacy mask keys off. */}
+        {amount > 0 ? (
+          <span className="shrink-0 font-display text-[17px] font-bold text-ink-900 tabular-nums">
+            {formatRupiah(amount)}
+          </span>
+        ) : (
+          <span className="shrink-0 text-[13px] font-semibold text-ink-300">
+            Not set
+          </span>
+        )}
+        {/* The whole header was a button with nothing at all saying it opens (Budgets UX #6). */}
+        <span
+          className={`chevron shrink-0 text-ink-300 ${open ? "rotate-180" : ""}`}
+        >
+          <ChevronDown size={18} />
         </span>
       </button>
 
@@ -85,7 +131,7 @@ export default function BudgetRow({
 
             <div>
               <label htmlFor={`amount-${categoryId}`} className="label mb-1 block">
-                {period === "yearly" ? "Whole-year limit" : `Per ${period.replace("ly", "")}`}
+                {AMOUNT_LABEL[period]}
               </label>
               <MoneyInput
                 id={`amount-${categoryId}`}
@@ -140,7 +186,7 @@ export default function BudgetRow({
               <input type="hidden" name="category_id" value={categoryId} />
               <input type="hidden" name="month" value={monthKey} />
               <button type="submit" className="btn btn-sm btn-ghost w-full">
-                Revert to the recurring rule
+                Remove this month&rsquo;s override
               </button>
             </form>
           )}

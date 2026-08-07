@@ -19,6 +19,21 @@ const optInt = (v: FormDataEntryValue | null) => {
 const KINDS: CategoryKind[] = ["income", "expense", "saving", "investment"];
 const PERIODS: BudgetPeriod[] = ["daily", "weekly", "monthly", "yearly"];
 
+/**
+ * What every add/mutate action on the manage pages returns.
+ *
+ * These used to `return` silently on bad input, so an empty name looked exactly like a save
+ * (atlas-ux-plan-manage-pages.md C3). The shape mirrors `collectLoanMonth`'s `LoanState`, which
+ * was the one action in this corner of the app already doing it right; `id` is what lets an
+ * add form jump to the row it just created.
+ */
+export interface ManageState {
+  ok?: boolean;
+  error?: string;
+  nonce?: number;
+  id?: number;
+}
+
 function revalidateManage() {
   // Flush the cross-request data cache for every slow-moving table. Coarse on purpose —
   // single-user app, and one spare query per table on the next render beats tracking which
@@ -122,10 +137,14 @@ export async function deleteWallet(id: number): Promise<void> {
 // Categories
 // =============================================================================
 
-export async function addCategory(formData: FormData): Promise<void> {
+export async function addCategory(
+  _prev: ManageState,
+  formData: FormData
+): Promise<ManageState> {
   const name = text(formData.get("name"));
   const rawKind = text(formData.get("kind")) as CategoryKind;
-  if (!name || !KINDS.includes(rawKind)) return;
+  if (!name) return { error: "Give the category a name." };
+  if (!KINDS.includes(rawKind)) return { error: "Pick which kind it is." };
 
   const sb = supabaseServer();
   const { data: last } = await sb
@@ -136,12 +155,23 @@ export async function addCategory(formData: FormData): Promise<void> {
     .limit(1)
     .maybeSingle();
 
-  await sb.from("categories").insert({
-    name,
-    kind: rawKind,
-    sort_order: Number(last?.sort_order ?? -1) + 1,
-  });
+  const { data: created, error } = await sb
+    .from("categories")
+    .insert({
+      name,
+      kind: rawKind,
+      sort_order: Number(last?.sort_order ?? -1) + 1,
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "Could not save that category." };
+
   revalidateManage();
+  return {
+    ok: true,
+    nonce: Date.now(),
+    id: created ? Number(created.id) : undefined,
+  };
 }
 
 export async function renameCategory(
@@ -202,17 +232,21 @@ export async function setCategoryInstallment(
  * `on delete set null`, budgets cascade, and paylater items unlink. Verifying `archived`
  * first is what makes it a deliberate act rather than an accident.
  */
-export async function deleteCategory(id: number): Promise<void> {
+export async function deleteCategory(id: number): Promise<ManageState> {
   const sb = supabaseServer();
   const { data: category } = await sb
     .from("categories")
     .select("archived")
     .eq("id", id)
     .maybeSingle();
-  if (!category?.archived) return;
+  if (!category) return { error: "That category is already gone." };
+  if (!category.archived) {
+    return { error: "Archive it first — that's what makes deleting deliberate." };
+  }
 
   await sb.from("categories").delete().eq("id", id);
   revalidateManage();
+  return { ok: true, nonce: Date.now() };
 }
 
 /** Persist a drag-reorder: the client sends the full id order for one kind. */
@@ -230,9 +264,12 @@ export async function reorderCategories(ids: number[]): Promise<void> {
 // Category groups — mixed-kind collections that drive the Add sheet
 // =============================================================================
 
-export async function addGroup(formData: FormData): Promise<void> {
+export async function addGroup(
+  _prev: ManageState,
+  formData: FormData
+): Promise<ManageState> {
   const name = text(formData.get("name"));
-  if (!name) return;
+  if (!name) return { error: "Give the group a name." };
 
   const sb = supabaseServer();
   const { data: last } = await sb
@@ -242,11 +279,22 @@ export async function addGroup(formData: FormData): Promise<void> {
     .limit(1)
     .maybeSingle();
 
-  await sb.from("category_groups").insert({
-    name,
-    sort_order: Number(last?.sort_order ?? -1) + 1,
-  });
+  const { data: created, error } = await sb
+    .from("category_groups")
+    .insert({
+      name,
+      sort_order: Number(last?.sort_order ?? -1) + 1,
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) return { error: "Could not save that group." };
+
   revalidateManage();
+  return {
+    ok: true,
+    nonce: Date.now(),
+    id: created ? Number(created.id) : undefined,
+  };
 }
 
 export async function renameGroup(id: number, formData: FormData): Promise<void> {
@@ -289,17 +337,21 @@ export async function moveGroup(id: number, delta: number): Promise<void> {
 }
 
 /** Hard delete, permitted only once archived. Memberships cascade; categories survive. */
-export async function deleteGroup(id: number): Promise<void> {
+export async function deleteGroup(id: number): Promise<ManageState> {
   const sb = supabaseServer();
   const { data: group } = await sb
     .from("category_groups")
     .select("archived")
     .eq("id", id)
     .maybeSingle();
-  if (!group?.archived) return;
+  if (!group) return { error: "That group is already gone." };
+  if (!group.archived) {
+    return { error: "Archive it first — that's what makes deleting deliberate." };
+  }
 
   await sb.from("category_groups").delete().eq("id", id);
   revalidateManage();
+  return { ok: true, nonce: Date.now() };
 }
 
 /** Add one category to a group — fed by the "Add a category…" select on the manage page. */

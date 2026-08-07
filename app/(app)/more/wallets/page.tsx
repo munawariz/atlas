@@ -66,6 +66,12 @@ export default async function WalletsPage() {
                 !wallet.archived
               )}
               onDelete={deleteWallet.bind(null, wallet.id)}
+              deleteMessage={
+                <>
+                  Delete <strong>{wallet.name}</strong> permanently? Past
+                  transactions keep their history but lose this wallet.
+                </>
+              }
               onMoveUp={
                 activeIndex > 0 ? moveWallet.bind(null, wallet.id, -1) : undefined
               }

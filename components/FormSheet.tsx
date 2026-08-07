@@ -21,7 +21,12 @@ export default function FormSheet({
 }: {
   triggerLabel: string;
   title: string;
-  children: React.ReactNode;
+  /**
+   * A plain node, or a function given a `close` callback. Forms that report their own success
+   * (the typed-return add actions on Installments and Lending) take the callback so a saved
+   * entry dismisses the sheet, while a rejected one stays put with its error visible.
+   */
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
 }) {
   const [open, setOpen] = useState(false);
 
@@ -85,7 +90,9 @@ export default function FormSheet({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-              {children}
+              {typeof children === "function"
+                ? children(() => setOpen(false))
+                : children}
             </div>
           </div>
         </div>

@@ -243,7 +243,10 @@ scripts/
 ```
 
 See `atlas-ux-review.md` for the UX audit this layout reflects — a full read-through of the
-implementation with concrete fixes, all implemented as of 2026-08-07.
+implementation with concrete fixes, all implemented as of 2026-08-07. Its companion,
+`atlas-ux-plan-manage-pages.md`, does the same for the four `/more` management pages
+(Categories, Installments, Lending, Budgets) and is likewise fully implemented; Part 3 of that
+document is the copy style guide the UI now follows.
 
 ---
 

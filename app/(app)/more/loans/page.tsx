@@ -1,7 +1,6 @@
 import Link from "next/link";
-import MoneyInput from "@/components/MoneyInput";
-import SubmitButton from "@/components/SubmitButton";
-import { ChevronLeft, Trash } from "@/components/icons";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
+import { ChevronLeft } from "@/components/icons";
 import {
   currentMonthKey,
   getLoanPayments,
@@ -9,16 +8,24 @@ import {
   getWallets,
 } from "@/lib/data";
 import { formatRupiah } from "@/lib/format";
+import AddLoanSheet from "./AddLoanSheet";
 import PaymentGrid from "./PaymentGrid";
-import { addLoan, deleteLoan } from "./actions";
+import { deleteLoan } from "./actions";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Loans · Atlas" };
+export const metadata = { title: "Lending · Atlas" };
 
+/*
+ * "Open / Settled" rather than "Unfinished / Finished": the card badge on a completed loan
+ * already said `settled`, so three words covered two concepts — and both old labels made the
+ * reader compute a negation (atlas-ux-plan-manage-pages.md, Lending UX #5).
+ *
+ * The `?t=` values stay as they were, so an existing bookmark still resolves.
+ */
 const TABS = [
-  { key: "unfinished", label: "Unfinished" },
-  { key: "finished", label: "Finished" },
+  { key: "unfinished", label: "Open" },
+  { key: "finished", label: "Settled" },
   { key: "all", label: "All" },
 ] as const;
 
@@ -33,6 +40,8 @@ export default async function LoansPage({
     | "finished"
     | "all";
 
+  // Deliberately no MonthSwitcher, unlike Installments: a loan shows its whole schedule at
+  // once, and a month scope would hide most of it (atlas-ux-plan-manage-pages.md, Lending UX #7).
   const [loans, payments, wallets] = await Promise.all([
     getLoans(),
     getLoanPayments(),
@@ -71,6 +80,8 @@ export default async function LoansPage({
       schedule,
       expected,
       collected,
+      // How many ledger rows a delete would take with it — the confirm panel names the number.
+      collectedCount: schedule.filter((p) => p.paid).length,
       outstanding: expected - collected,
       pct: expected > 0 ? (collected / expected) * 100 : 0,
       finished,
@@ -81,9 +92,8 @@ export default async function LoansPage({
     tab === "all" ? true : tab === "finished" ? row.finished : !row.finished
   );
 
-  const totalOutstanding = rows
-    .filter((r) => !r.finished)
-    .reduce((sum, r) => sum + r.outstanding, 0);
+  const openRows = rows.filter((r) => !r.finished);
+  const totalOutstanding = openRows.reduce((sum, r) => sum + r.outstanding, 0);
 
   const defaultWalletId = wallets[0]?.id ?? null;
 
@@ -98,7 +108,7 @@ export default async function LoansPage({
           <ChevronLeft size={20} />
         </Link>
         <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
-          Loans
+          Lending
         </h1>
       </header>
 
@@ -109,8 +119,18 @@ export default async function LoansPage({
         <div className="mt-1 font-display text-[32px] font-extrabold tracking-[-0.03em] text-white tabular-nums">
           {formatRupiah(totalOutstanding)}
         </div>
+        {/* The hero sums only OPEN loans, while the All tab shows settled ones too — naming the
+            scope is what stops the two numbers reading as a contradiction (Lending UX #6). */}
         <p className="mt-1 text-[13px]" style={{ color: "var(--color-forest-200)" }}>
-          Money other people owe you, collected month by month.
+          Money other people owe you, collected month by month
+          {openRows.length > 0 && (
+            <>
+              {" "}
+              · across {openRows.length} open{" "}
+              {openRows.length === 1 ? "loan" : "loans"}
+            </>
+          )}
+          .
         </p>
       </section>
 
@@ -127,71 +147,23 @@ export default async function LoansPage({
         ))}
       </nav>
 
-      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
-        <summary className="px-4 py-3.5 text-[15px] font-semibold text-ink-900">
-          Add a loan
-        </summary>
-        <form
-          action={addLoan}
-          className="space-y-2 border-t border-[var(--border-subtle)] p-4"
-        >
-          <input
-            name="person"
-            placeholder="Who owes you"
-            aria-label="Person"
-            required
-            className="field"
-          />
-          <input
-            name="lender"
-            placeholder="Via / lender (optional)"
-            aria-label="Lender"
-            className="field"
-          />
-          <MoneyInput
-            name="installment"
-            placeholder="Monthly amount"
-            ariaLabel="Monthly installment"
-          />
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block">
-              <span className="label mb-1 block">Start month</span>
-              <input
-                type="month"
-                name="start_month"
-                defaultValue={currentMonthKey().slice(0, 7)}
-                className="field"
-              />
-            </label>
-            <label className="block">
-              <span className="label mb-1 block"># months</span>
-              <input
-                type="number"
-                name="months"
-                min={1}
-                max={60}
-                defaultValue={1}
-                aria-label="Number of months"
-                className="field"
-              />
-            </label>
-          </div>
-          <input
-            name="note"
-            placeholder="Note (optional)"
-            aria-label="Note"
-            className="field"
-          />
-          <SubmitButton className="btn btn-primary w-full">Add loan</SubmitButton>
-        </form>
-      </details>
+      <AddLoanSheet defaultMonth={currentMonthKey().slice(0, 7)} />
 
       {visible.length === 0 ? (
-        <p className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
-          {loans.length === 0
-            ? "Nobody owes you anything yet."
-            : `No ${tab} loans.`}
-        </p>
+        <div className="rounded-[var(--radius-card)] bg-white px-5 py-8 text-center text-[14px] text-ink-500 shadow-[var(--shadow-xs)]">
+          {loans.length === 0 ? (
+            <>
+              <p>Nobody owes you anything yet.</p>
+              <p className="mt-1 text-[13px]">
+                Add a loan to start tracking one.
+              </p>
+            </>
+          ) : tab === "finished" ? (
+            <p>Nothing settled yet.</p>
+          ) : (
+            <p>Nothing open — everything&rsquo;s been collected.</p>
+          )}
+        </div>
       ) : (
         <div className="space-y-3">
           {visible.map((row) => (
@@ -220,7 +192,8 @@ export default async function LoansPage({
                   <div className="font-display text-[17px] font-bold text-ink-900 tabular-nums">
                     {formatRupiah(row.outstanding)}
                   </div>
-                  <div className="text-[11px] text-ink-500">outstanding</div>
+                  {/* "still owed" matches the hero; "outstanding" appeared nowhere else. */}
+                  <div className="text-[11px] text-ink-500">still owed</div>
                 </div>
               </div>
 
@@ -242,12 +215,38 @@ export default async function LoansPage({
                 defaultWalletId={defaultWalletId}
               />
 
-              <form action={deleteLoan.bind(null, row.loan.id)} className="mt-3">
-                <SubmitButton className="btn btn-sm btn-ghost text-negative-600">
-                  <Trash size={16} />
-                  Delete loan
-                </SubmitButton>
-              </form>
+              {/*
+                Deleting a loan also deletes every income row it ever booked — a fully collected
+                24-month loan is 24 ledger rows gone. It was a bare submit button sitting directly
+                under a schedule strip you were just tapping (atlas-ux-plan-manage-pages.md C6).
+              */}
+              <div className="mt-3">
+                <ConfirmDeleteButton
+                  action={deleteLoan.bind(null, row.loan.id)}
+                  triggerLabel="Delete loan"
+                  variant="block"
+                  className="btn btn-sm btn-ghost text-negative-600"
+                  message={
+                    <>
+                      Delete this loan?{" "}
+                      {row.collectedCount > 0 ? (
+                        <>
+                          The <strong>{row.collectedCount}</strong>{" "}
+                          {row.collectedCount === 1
+                            ? "collection"
+                            : "collections"}{" "}
+                          recorded against it{" "}
+                          {row.collectedCount === 1 ? "is" : "are"} deleted from
+                          your history too.
+                        </>
+                      ) : (
+                        "Nothing has been collected against it yet."
+                      )}{" "}
+                      This can&rsquo;t be undone.
+                    </>
+                  }
+                />
+              </div>
             </article>
           ))}
         </div>
