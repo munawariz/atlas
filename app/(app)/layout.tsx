@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 import BottomNav from "@/components/BottomNav";
+import PrivacyToggle from "@/components/PrivacyToggle";
 import RouteProgress from "@/components/RouteProgress";
 import {
   getCategories,
@@ -62,12 +63,21 @@ export default function AppLayout({
             </span>
           </Link>
 
-          <Link
-            href="/more"
-            className="inline-flex h-9 items-center rounded-full border border-[var(--border-default)] px-4 text-[13px] font-semibold text-forest-800 no-underline transition-colors hover:bg-forest-50"
-          >
-            Account
-          </Link>
+          {/*
+            Global control, not a per-page one: the masking it drives (globals.css
+            .privacy-scope) is CSS-driven off a class on <html> and already applies to every
+            page that opts in. Hoisting the one control here (atlas-ux-review.md #10) means
+            all thirteen masked pages get it, not just the five that used to render it inline.
+          */}
+          <div className="flex items-center gap-1">
+            <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+            <Link
+              href="/more"
+              className="inline-flex h-9 items-center rounded-full border border-[var(--border-default)] px-4 text-[13px] font-semibold text-forest-800 no-underline transition-colors hover:bg-forest-50"
+            >
+              Account
+            </Link>
+          </div>
         </div>
       </header>
 

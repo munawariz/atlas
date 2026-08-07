@@ -27,6 +27,13 @@ interface HistoryClientProps {
   monthKey: string;
   /** Rows booked by the forex module — they open the conversion editor, not the sheet. */
   forexTxnIds: number[];
+  /**
+   * Seeded from the URL's `?type=`/`?category=` (atlas-ux-review.md #6) — e.g. the dashboard's
+   * per-category drill-down link. When present these win over whatever sessionStorage had
+   * saved, so a deep link always lands on the filter it promised instead of a stale one.
+   */
+  initialType?: string;
+  initialCategoryId?: string;
 }
 
 interface Filters {
@@ -43,8 +50,14 @@ export default function HistoryClient({
   wallets,
   monthKey,
   forexTxnIds,
+  initialType = "",
+  initialCategoryId = "",
 }: HistoryClientProps) {
-  const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<Filters>({
+    ...EMPTY_FILTERS,
+    type: initialType,
+    categoryId: initialCategoryId,
+  });
   const [hydrated, setHydrated] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -62,7 +75,13 @@ export default function HistoryClient({
   );
 
   // --- Restore, THEN persist (ATLAS.md §14.8) --------------------------------
+  // A URL-provided filter is a deliberate deep link — it wins over a stale sessionStorage
+  // filter from a previous visit rather than being silently overwritten by it.
   useEffect(() => {
+    if (initialType || initialCategoryId) {
+      setHydrated(true);
+      return;
+    }
     try {
       const raw = sessionStorage.getItem(FILTERS_KEY);
       if (raw) setFilters({ ...EMPTY_FILTERS, ...JSON.parse(raw) });
@@ -70,6 +89,7 @@ export default function HistoryClient({
       // Ignore corrupt state and start clean.
     }
     setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

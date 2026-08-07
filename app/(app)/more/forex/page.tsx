@@ -1,7 +1,8 @@
 import Link from "next/link";
-import PrivacyToggle from "@/components/PrivacyToggle";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
+import FormSheet from "@/components/FormSheet";
 import SubmitButton from "@/components/SubmitButton";
-import { ChevronLeft, Trash } from "@/components/icons";
+import { ChevronLeft, ChevronRight } from "@/components/icons";
 import { getWallets, monthKeyOf } from "@/lib/data";
 import {
   forexAvgCost,
@@ -58,20 +59,17 @@ export default async function ForexPage() {
 
   return (
     <div className="space-y-5 privacy-scope">
-      <header className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <Link
-            href="/more"
-            aria-label="Back to more"
-            className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
-          >
-            <ChevronLeft size={20} />
-          </Link>
-          <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
-            Forex
-          </h1>
-        </div>
-        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+      <header className="flex items-center gap-1">
+        <Link
+          href="/more"
+          aria-label="Back to more"
+          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+        >
+          <ChevronLeft size={20} />
+        </Link>
+        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Forex
+        </h1>
       </header>
 
       <p className="text-[14px] text-ink-500">
@@ -87,110 +85,141 @@ export default async function ForexPage() {
           No currencies yet.
         </p>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-2">
+          {/*
+            Each card used to render its full 6-row stat grid plus a permanently-open Convert
+            form by default, for every currency held — the same "heaviest content by default"
+            problem Stocks' holdings already solved with a collapsed summary. Collapsed to a
+            one-line summary here too, matching that pattern (atlas-ux-review.md, Deep dive).
+          */}
           {cards.map((card) => (
-            <article
+            <details
               key={card.account.id}
-              className="space-y-3 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+              className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="text-[15px] font-bold text-ink-900">
+              <summary className="flex items-center gap-3 px-4 py-3">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[15px] font-bold text-ink-900">
                     {card.account.name}
-                  </div>
-                  <div className="font-display text-[26px] font-extrabold tracking-[-0.03em] text-ink-900 tabular-nums">
-                    {card.account.units.toLocaleString()}{" "}
-                    <span className="text-[16px] text-ink-500">
-                      {card.account.currency}
-                    </span>
-                  </div>
-                  <span className="badge mt-1 bg-cream-200 text-ink-700">
-                    not in networth
                   </span>
+                  <span className="block text-[13px] text-ink-500 tabular-nums">
+                    {card.account.units.toLocaleString()} {card.account.currency}
+                  </span>
+                </span>
+
+                <span className="shrink-0 text-right">
+                  <span className="block text-[15px] font-bold text-ink-900 tabular-nums">
+                    {formatRupiah(card.value)}
+                  </span>
+                  <span
+                    className={`block text-[12px] font-semibold tabular-nums ${
+                      card.gain >= 0 ? "text-positive-600" : "text-negative-600"
+                    }`}
+                  >
+                    {card.gain >= 0 ? "▲" : "▼"} {formatRupiah(Math.abs(card.gain))} (
+                    {card.pct.toFixed(1)}%)
+                  </span>
+                </span>
+
+                <span className="chevron shrink-0 text-ink-300">
+                  <ChevronRight size={18} />
+                </span>
+              </summary>
+
+              <div className="space-y-3 border-t border-[var(--border-subtle)] p-4">
+                <span className="badge bg-cream-200 text-ink-700">
+                  not in networth
+                </span>
+
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[13px]">
+                  {[
+                    ["Invested", formatRupiah(card.invested)],
+                    ["Value now", formatRupiah(card.value)],
+                    [
+                      "Gain / loss",
+                      `${card.gain >= 0 ? "▲" : "▼"} ${formatRupiah(
+                        Math.abs(card.gain)
+                      )} (${card.pct.toFixed(1)}%)`,
+                    ],
+                    ["Realized P/L", formatRupiah(card.realized)],
+                    [
+                      "Live rate",
+                      `${formatRupiah(Math.round(card.rate))} / ${card.account.currency}`,
+                    ],
+                    [
+                      "Average rate",
+                      `${formatRupiah(Math.round(card.avgCost))} / ${card.account.currency}`,
+                    ],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex justify-between gap-2">
+                      <dt className="text-ink-500">{label}</dt>
+                      <dd
+                        className={`font-semibold tabular-nums ${
+                          label === "Gain / loss"
+                            ? card.gain >= 0
+                              ? "text-positive-600"
+                              : "text-negative-600"
+                            : "text-ink-900"
+                        }`}
+                      >
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+
+                {/* Deep dive: a sheet, not a permanently-open form per currency. */}
+                <div className="border-t border-[var(--border-subtle)] pt-3">
+                  <FormSheet
+                    triggerLabel={`Convert ${card.account.currency}`}
+                    title={`Convert ${card.account.currency}`}
+                  >
+                    <ForexConvert
+                      accountId={card.account.id}
+                      currency={card.account.currency}
+                      wallets={wallets}
+                    />
+                  </FormSheet>
                 </div>
 
-                <form action={deleteForexAccount.bind(null, card.account.id)}>
-                  <SubmitButton
-                    label={`Delete ${card.account.currency}`}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
-                  >
-                    <Trash size={16} />
-                  </SubmitButton>
-                </form>
-              </div>
+                <details className="border-t border-[var(--border-subtle)] pt-3">
+                  <summary className="text-[13px] font-semibold text-forest-800">
+                    Correct the balance
+                  </summary>
+                  <form action={setForexBalance} className="mt-2 flex gap-2">
+                    <input
+                      type="hidden"
+                      name="account_id"
+                      value={card.account.id}
+                    />
+                    <input
+                      name="units"
+                      inputMode="decimal"
+                      defaultValue={card.account.units}
+                      aria-label="Corrected balance"
+                      className="field flex-1"
+                    />
+                    <SubmitButton className="btn btn-sm btn-outline shrink-0">
+                      Set
+                    </SubmitButton>
+                  </form>
+                  <p className="mt-1.5 text-[13px] text-ink-500">
+                    Sets the balance directly. No transaction is booked, so use it
+                    only to fix a drift.
+                  </p>
+                </details>
 
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--border-subtle)] pt-3 text-[13px]">
-                {[
-                  ["Invested", formatRupiah(card.invested)],
-                  ["Value now", formatRupiah(card.value)],
-                  [
-                    "Gain / loss",
-                    `${card.gain >= 0 ? "▲" : "▼"} ${formatRupiah(
-                      Math.abs(card.gain)
-                    )} (${card.pct.toFixed(1)}%)`,
-                  ],
-                  ["Realized P/L", formatRupiah(card.realized)],
-                  [
-                    "Live rate",
-                    `${formatRupiah(Math.round(card.rate))} / ${card.account.currency}`,
-                  ],
-                  [
-                    "Average rate",
-                    `${formatRupiah(Math.round(card.avgCost))} / ${card.account.currency}`,
-                  ],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex justify-between gap-2">
-                    <dt className="text-ink-500">{label}</dt>
-                    <dd
-                      className={`font-semibold tabular-nums ${
-                        label === "Gain / loss"
-                          ? card.gain >= 0
-                            ? "text-positive-600"
-                            : "text-negative-600"
-                          : "text-ink-900"
-                      }`}
-                    >
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-
-              <div className="border-t border-[var(--border-subtle)] pt-3">
-                <ForexConvert
-                  accountId={card.account.id}
-                  currency={card.account.currency}
-                  wallets={wallets}
-                />
-              </div>
-
-              <details className="border-t border-[var(--border-subtle)] pt-3">
-                <summary className="text-[13px] font-semibold text-forest-800">
-                  Correct the balance
-                </summary>
-                <form action={setForexBalance} className="mt-2 flex gap-2">
-                  <input
-                    type="hidden"
-                    name="account_id"
-                    value={card.account.id}
+                <div className="border-t border-[var(--border-subtle)] pt-3">
+                  <ConfirmDeleteButton
+                    action={deleteForexAccount.bind(null, card.account.id)}
+                    message={`Delete ${card.account.currency} entirely? This removes every conversion recorded against it and all of its ledger rows — unlike a single conversion, there is no per-row way to rebuild this.`}
+                    variant="block"
+                    triggerLabel={`Delete ${card.account.currency}`}
+                    className="btn btn-ghost w-full text-[13px] text-negative-600"
                   />
-                  <input
-                    name="units"
-                    inputMode="decimal"
-                    defaultValue={card.account.units}
-                    aria-label="Corrected balance"
-                    className="field flex-1"
-                  />
-                  <SubmitButton className="btn btn-sm btn-outline shrink-0">
-                    Set
-                  </SubmitButton>
-                </form>
-                <p className="mt-1.5 text-[13px] text-ink-500">
-                  Sets the balance directly. No transaction is booked, so use it
-                  only to fix a drift.
-                </p>
-              </details>
-            </article>
+                </div>
+              </div>
+            </details>
           ))}
         </div>
       )}
@@ -236,14 +265,11 @@ export default async function ForexPage() {
                     <span className="shrink-0 text-[14px] font-semibold text-ink-900 tabular-nums">
                       {formatRupiah(txn.idr)}
                     </span>
-                    <form action={deleteForexTransaction.bind(null, txn.id)}>
-                      <SubmitButton
-                        label="Delete conversion"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
-                      >
-                        <Trash size={16} />
-                      </SubmitButton>
-                    </form>
+                    <ConfirmDeleteButton
+                      action={deleteForexTransaction.bind(null, txn.id)}
+                      message="Delete this conversion? It reverses both ledger rows it booked and restores the balance it moved."
+                      triggerLabel="Delete conversion"
+                    />
                   </div>
                 ))}
               </div>

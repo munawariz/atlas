@@ -1,11 +1,9 @@
 import Link from "next/link";
 import DaySwitcher from "@/components/DaySwitcher";
-import PrivacyToggle from "@/components/PrivacyToggle";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
 import { ChevronRight, LineChart } from "@/components/icons";
 import {
   bumpWallet,
-  currentMonthKey,
   deriveWalletBalances,
   endOfMonth,
   getBudgetsForMonth,
@@ -20,7 +18,7 @@ import {
   prevMonthKey,
   sumBalances,
 } from "@/lib/data";
-import { installmentAutoBudgets, itemActiveIn, loanAutoBudget } from "@/lib/autoBudget";
+import { itemActiveIn, loanAutoBudget } from "@/lib/autoBudget";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
 import { getAverageBuyPerLot, getStockTargetsForMonth, getStockTrades, LOT_SIZE } from "@/lib/stocks";
 import { missingSettings } from "@/lib/settings";
@@ -59,7 +57,6 @@ export default async function DashboardPage({
     startBalances,
     budgets,
     loanAuto,
-    installmentAuto,
     paylaterItems,
     paylaterPayments,
     providers,
@@ -75,7 +72,6 @@ export default async function DashboardPage({
     deriveWalletBalances(prevMonthKey(monthKey)),
     getBudgetsForMonth(monthKey),
     loanAutoBudget(monthKey),
-    installmentAutoBudgets(monthKey),
     getPaylaterItems(),
     getPaylaterPayments(),
     getPaylaterProviders(),
@@ -280,16 +276,13 @@ export default async function DashboardPage({
                 <div className="label" style={{ color: "var(--color-forest-300)" }}>
                   Networth · end of day
                 </div>
-                <div className="-mt-1 flex items-center gap-1">
-                  <PrivacyToggle className="text-forest-200 hover:bg-forest-700" />
-                  <Link
-                    href="/charts"
-                    aria-label="Open charts"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-200 no-underline transition-colors hover:bg-forest-700"
-                  >
-                    <LineChart size={18} />
-                  </Link>
-                </div>
+                <Link
+                  href="/charts"
+                  aria-label="Open charts"
+                  className="-mt-1 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-200 no-underline transition-colors hover:bg-forest-700"
+                >
+                  <LineChart size={18} />
+                </Link>
               </div>
 
               <div className="font-display text-[36px] font-extrabold leading-none tracking-[-0.03em] text-white tabular-nums">
@@ -483,7 +476,7 @@ export default async function DashboardPage({
             <section className="space-y-3">
               <h2 className="label mb-4">Budget vs actual</h2>
               {budgetCards.map((card) => (
-                <BudgetCard key={card.kind} card={card} catById={catById} />
+                <BudgetCard key={card.kind} card={card} monthKey={monthKey} />
               ))}
             </section>
 
@@ -605,10 +598,10 @@ interface BudgetCardData {
 
 function BudgetCard({
   card,
-  catById,
+  monthKey,
 }: {
   card: BudgetCardData;
-  catById: Map<number, Category>;
+  monthKey: string;
 }) {
   if (card.rows.length === 0) {
     return (
@@ -671,7 +664,12 @@ function BudgetCard({
 
       <div className="mt-3 space-y-1">
         {shown.map((row) => (
-          <BudgetLine key={row.category.id} row={row} isLimit={isLimit} catById={catById} />
+          <BudgetLine
+            key={row.category.id}
+            row={row}
+            isLimit={isLimit}
+            monthKey={monthKey}
+          />
         ))}
       </div>
 
@@ -686,7 +684,7 @@ function BudgetCard({
                 key={row.category.id}
                 row={row}
                 isLimit={isLimit}
-                catById={catById}
+                monthKey={monthKey}
               />
             ))}
           </div>
@@ -699,47 +697,50 @@ function BudgetCard({
 function BudgetLine({
   row,
   isLimit,
-  catById,
+  monthKey,
 }: {
   row: BudgetCardData["rows"][number];
   isLimit: boolean;
-  catById: Map<number, Category>;
+  monthKey: string;
 }) {
+  // A direct link into History filtered to this category, rather than an in-place
+  // details/TxnList — drops a whole layer of nesting on the screen you open first
+  // (atlas-ux-review.md #3) and lands somewhere that can actually search, sort and edit
+  // the entries instead of a read-only sliver of them.
   return (
-    <details>
-      <summary className="flex items-center gap-2 py-1.5">
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[14px] font-medium text-ink-900">
-            {row.category.name}
-            {row.auto && <span className="badge ml-1.5">auto</span>}
-          </span>
-          <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-cream-200">
-            <span
-              className="block h-full rounded-full"
-              style={{
-                width: `${Math.min(100, row.pct)}%`,
-                background: isLimit
-                  ? usageColor(row.pct)
-                  : "var(--color-forest-800)",
-              }}
-            />
-          </span>
+    <Link
+      href={`/history?m=${monthKey}&category=${row.category.id}`}
+      className="flex items-center gap-2 py-1.5 no-underline"
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[14px] font-medium text-ink-900">
+          {row.category.name}
+          {row.auto && <span className="badge ml-1.5">auto</span>}
         </span>
-        <span className="shrink-0 text-right">
-          <span className="block text-[13px] font-semibold text-ink-900 tabular-nums">
-            {Math.round(row.pct)}%
-          </span>
-          <span className="block text-[11px] text-ink-500 tabular-nums">
-            {isLimit
-              ? remainingLabel(row.actual, row.budget)
-              : formatRupiah(row.budget)}
-          </span>
+        <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-cream-200">
+          <span
+            className="block h-full rounded-full"
+            style={{
+              width: `${Math.min(100, row.pct)}%`,
+              background: isLimit
+                ? usageColor(row.pct)
+                : "var(--color-forest-800)",
+            }}
+          />
         </span>
-      </summary>
-      <div className="ml-1 border-l-2 border-cream-200 pl-3">
-        <TxnList txns={row.txns} catById={catById} empty="No entries yet." />
-      </div>
-    </details>
+      </span>
+      <span className="shrink-0 text-right">
+        <span className="block text-[13px] font-semibold text-ink-900 tabular-nums">
+          {Math.round(row.pct)}%
+        </span>
+        <span className="block text-[11px] text-ink-500 tabular-nums">
+          {isLimit
+            ? remainingLabel(row.actual, row.budget)
+            : formatRupiah(row.budget)}
+        </span>
+      </span>
+      <ChevronRight size={16} className="shrink-0 text-ink-300" />
+    </Link>
   );
 }
 

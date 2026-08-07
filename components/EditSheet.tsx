@@ -1,9 +1,10 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
 import SubmitButton from "@/components/SubmitButton";
 import TxnFields from "@/components/TxnFields";
-import { Trash, X } from "@/components/icons";
+import { X } from "@/components/icons";
 import {
   deleteTransactionSheet,
   updateTransactionSheet,
@@ -186,15 +187,13 @@ function SheetBody({
         <SubmitButton pendingChildren="Saving…">Save changes</SubmitButton>
       </form>
 
-      <form action={deleteAction} className="mt-3">
-        <SubmitButton
-          className="btn btn-ghost w-full text-negative-600"
-          pendingChildren="Deleting…"
-        >
-          <Trash size={18} />
-          Delete
-        </SubmitButton>
-      </form>
+      <div className="mt-3">
+        <ConfirmDeleteButton
+          action={deleteAction}
+          message="Delete this transaction permanently? This can't be undone."
+          variant="block"
+        />
+      </div>
     </div>
   );
 }

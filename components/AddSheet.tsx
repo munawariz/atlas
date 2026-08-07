@@ -40,6 +40,20 @@ const INITIAL: AddState = {};
 
 const KIND_ORDER: CategoryKind[] = ["expense", "income", "saving", "investment"];
 
+/**
+ * Sticky "repeat last" snapshot — the `ft_last` key this component was always meant to own
+ * (atlas-ux-review.md #8). `TxnFields` used to carry a near-identical, entirely dead version
+ * of this (nothing ever passed it `persist`); it has been removed there and ported here, where
+ * the habitual-entry flow actually lives.
+ */
+const LAST_KEY = "ft_last";
+
+interface LastEntry {
+  categoryId: number;
+  walletId: number;
+  amount: string;
+}
+
 interface PickerTab {
   key: string;
   label: string;
@@ -73,6 +87,7 @@ export default function AddSheet({
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [occurredOn, setOccurredOn] = useState(todayISO());
+  const [lastEntry, setLastEntry] = useState<LastEntry | null>(null);
 
   const [toast, setToast] = useState<string | null>(null);
   const lastNonce = useRef<number | undefined>(undefined);
@@ -85,6 +100,8 @@ export default function AddSheet({
   const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   // A fresh flow every time the sheet opens — staged reveal only works from a blank slate.
+  // The one exception is the repeat-last snapshot, read fresh each open so it reflects
+  // whatever was most recently saved.
   useEffect(() => {
     if (!open) return;
     setTabKey("recent");
@@ -94,6 +111,12 @@ export default function AddSheet({
     setAmount("");
     setDescription("");
     setOccurredOn(todayISO());
+    try {
+      const raw = localStorage.getItem(LAST_KEY);
+      setLastEntry(raw ? (JSON.parse(raw) as LastEntry) : null);
+    } catch {
+      setLastEntry(null);
+    }
   }, [open]);
 
   // The sheet owns the screen while open: lock the page scroll, close on Escape.
@@ -128,7 +151,23 @@ export default function AddSheet({
     if (!state.ok || !state.nonce || state.nonce === lastNonce.current) return;
     lastNonce.current = state.nonce;
     setToast(state.savedLabel ?? "Saved");
+
+    // Snapshot what just saved, for next time's "Repeat last" — category, wallet and amount
+    // only; description is deliberately per-entry, never sticky.
+    const walletId = walletIsDest ? destWalletId : sourceWalletId;
+    if (categoryId != null && walletId != null && amount) {
+      try {
+        localStorage.setItem(
+          LAST_KEY,
+          JSON.stringify({ categoryId, walletId, amount })
+        );
+      } catch {
+        // Non-fatal: the flow still works, it just will not offer a repeat next time.
+      }
+    }
+
     onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, onClose]);
 
   // The dismiss timer lives in its own effect, keyed only by the toast. Sharing the
@@ -241,6 +280,32 @@ export default function AddSheet({
     setDestWalletId(null);
   }
 
+  // --- Repeat last: pre-fill category + wallet + amount from the most recent entry, so a
+  // run of near-identical entries (the daily cash lunch) costs one tap instead of three.
+  const repeatable = useMemo(() => {
+    if (!lastEntry) return null;
+    const category = categories.find(
+      (c) => c.id === lastEntry.categoryId && !c.archived
+    );
+    const wallet = wallets.find((w) => w.id === lastEntry.walletId);
+    if (!category || !wallet) return null;
+    return { category, wallet, amount: lastEntry.amount };
+  }, [lastEntry, categories, wallets]);
+
+  function repeatLast() {
+    if (!repeatable) return;
+    const { category, wallet, amount: amt } = repeatable;
+    setCategoryId(category.id);
+    if (category.kind === "income") {
+      setDestWalletId(wallet.id);
+      setSourceWalletId(null);
+    } else {
+      setSourceWalletId(wallet.id);
+      setDestWalletId(null);
+    }
+    setAmount(amt);
+  }
+
   const amountText = amount || "0";
 
   return (
@@ -312,6 +377,20 @@ export default function AddSheet({
               {/* --- Step 1: pick the category from the active tab. A sideways swipe
                      anywhere on the sheet steps through the tabs. ------------------- */}
               <section className="mb-4">
+                {activeTab.key === "recent" && repeatable && (
+                  <button
+                    type="button"
+                    onClick={repeatLast}
+                    className="mb-2 flex w-full items-center justify-between gap-2 rounded-[var(--radius-input)] border border-dashed border-forest-800 bg-sage-100 px-3 py-2.5 text-left"
+                    style={{ animation: "pop 0.22s var(--ease-standard) both" }}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-forest-800">
+                      <span className="font-semibold">Repeat last</span> · Rp{" "}
+                      {repeatable.amount} · {repeatable.category.name} ·{" "}
+                      {repeatable.wallet.name}
+                    </span>
+                  </button>
+                )}
                 {activeTab.categories.length === 0 ? (
                   <p
                     key={activeTab.key}

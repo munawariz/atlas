@@ -1,6 +1,5 @@
-import PrivacyToggle from "@/components/PrivacyToggle";
-import SubmitButton from "@/components/SubmitButton";
-import { Trash } from "@/components/icons";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
+import FormSheet from "@/components/FormSheet";
 import { getBondPortfolio, getBondTrades } from "@/lib/bonds";
 import { getWallets } from "@/lib/data";
 import { getSettings, mappedWalletId } from "@/lib/settings";
@@ -25,11 +24,10 @@ export default async function BondsPage() {
 
   return (
     <div className="space-y-5 privacy-scope">
-      <header className="flex items-start justify-between gap-3">
+      <header>
         <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
           Bonds
         </h1>
-        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
       </header>
 
       <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">
@@ -47,16 +45,15 @@ export default async function BondsPage() {
         </div>
       </section>
 
-      <section>
-        <h2 className="label mb-3">Record a trade</h2>
-        <div className="rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]">
-          <BondTradeForm
-            wallets={wallets}
-            defaultWalletId={defaultWalletId}
-            names={names}
-          />
-        </div>
-      </section>
+      {/* Deep dive: a sheet, not a permanently inline form — Bonds is the leanest of the
+          three investment pages already; this keeps it that way as the reference shape. */}
+      <FormSheet triggerLabel="Record a trade" title="Record a trade">
+        <BondTradeForm
+          wallets={wallets}
+          defaultWalletId={defaultWalletId}
+          names={names}
+        />
+      </FormSheet>
 
       <section>
         <h2 className="label mb-3">Holdings</h2>
@@ -125,14 +122,11 @@ export default async function BondsPage() {
                 >
                   {formatRupiah(trade.idr)}
                 </span>
-                <form action={deleteBondTrade.bind(null, trade.id)}>
-                  <SubmitButton
-                    label={`Delete ${trade.name} ${trade.side}`}
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-full text-negative-600"
-                  >
-                    <Trash size={16} />
-                  </SubmitButton>
-                </form>
+                <ConfirmDeleteButton
+                  action={deleteBondTrade.bind(null, trade.id)}
+                  message={`Delete this ${trade.side} of ${trade.name}? Its ledger row is removed too.`}
+                  triggerLabel={`Delete ${trade.name} ${trade.side}`}
+                />
               </div>
             ))}
           </div>

@@ -1,4 +1,3 @@
-import PrivacyToggle from "@/components/PrivacyToggle";
 import { getSavingsBuckets } from "@/lib/data";
 import { formatRupiah } from "@/lib/format";
 
@@ -25,18 +24,15 @@ export default async function SavingsPage() {
 
   return (
     <div className="space-y-5 privacy-scope">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
-            Savings
-          </h1>
-          <p className="mt-1 text-[14px] text-ink-500">
-            Money you have set aside. It is held outside your wallet net worth —
-            moving money into a bucket takes it out of net worth, and withdrawing
-            puts it back.
-          </p>
-        </div>
-        <PrivacyToggle className="text-forest-800 hover:bg-forest-50" />
+      <header>
+        <h1 className="font-display text-[28px] font-extrabold tracking-[-0.03em] text-ink-900">
+          Savings
+        </h1>
+        <p className="mt-1 text-[14px] text-ink-500">
+          Money you have set aside. It is held outside your wallet net worth —
+          moving money into a bucket takes it out of net worth, and withdrawing
+          puts it back.
+        </p>
       </header>
 
       <section className="rounded-[var(--radius-card)] bg-forest-800 p-5 on-forest">

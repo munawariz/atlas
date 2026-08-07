@@ -1,10 +1,10 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
-import { Trash } from "@/components/icons";
 import type { ForexAccount, ForexTransaction, Wallet } from "@/lib/types";
 import {
   deleteForexTransaction,
@@ -129,15 +129,12 @@ export default function ForexEditForm({
         <SubmitButton pendingChildren="Saving…">Save conversion</SubmitButton>
       </form>
 
-      <form action={deleteForexTransaction.bind(null, forexTxn.id)}>
-        <SubmitButton
-          className="btn btn-ghost w-full text-negative-600"
-          pendingChildren="Deleting…"
-        >
-          <Trash size={18} />
-          Delete conversion
-        </SubmitButton>
-      </form>
+      <ConfirmDeleteButton
+        action={deleteForexTransaction.bind(null, forexTxn.id)}
+        message="Delete this conversion? It reverses both ledger rows it booked and restores the balance it moved."
+        variant="block"
+        triggerLabel="Delete conversion"
+      />
     </div>
   );
 }

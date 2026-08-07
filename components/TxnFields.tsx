@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import MoneyInput from "@/components/MoneyInput";
 import OptionPicker from "@/components/OptionPicker";
 import PillSwitcher from "@/components/PillSwitcher";
@@ -20,8 +20,6 @@ import {
  * Every value is submitted through a hidden input, so the parent only needs
  * `<form action={…}>` — it never has to lift or thread state.
  */
-
-const LAST_KEY = "ft_last";
 
 const NO_WALLETS = "No wallets yet. Add one under More → Wallets.";
 
@@ -103,18 +101,12 @@ interface TxnFieldsProps {
   categories: Category[];
   /** Editing an existing row. Omit for Add. */
   initial?: Transaction;
-  /**
-   * Add only: restore the last-used type and wallets from localStorage on mount, and write
-   * them back on change. Amount, description and category are deliberately never persisted.
-   */
-  persist?: boolean;
 }
 
 export default function TxnFields({
   wallets,
   categories,
   initial,
-  persist = false,
 }: TxnFieldsProps) {
   const [type, setType] = useState<TxnType>(initial?.type ?? "expense");
   const [amount, setAmount] = useState(
@@ -133,45 +125,10 @@ export default function TxnFields({
   const [occurredOn, setOccurredOn] = useState(
     initial?.occurred_on ?? todayISO()
   );
-  const [hydrated, setHydrated] = useState(false);
-
-  // --- Restore, THEN persist -------------------------------------------------
-  // Gated on `hydrated` because StrictMode double-invokes effects: without the flag the
-  // second pass writes the freshly-mounted defaults back over the saved value (ATLAS.md §14.8).
-  useEffect(() => {
-    if (!persist) return;
-    setOccurredOn(todayISO());
-    try {
-      const raw = localStorage.getItem(LAST_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as {
-          type?: TxnType;
-          sourceWalletId?: number | null;
-          destWalletId?: number | null;
-        };
-        if (saved.type && TXN_TYPES.some((t) => t.value === saved.type)) {
-          setType(saved.type);
-        }
-        if (saved.sourceWalletId != null) setSourceWalletId(saved.sourceWalletId);
-        if (saved.destWalletId != null) setDestWalletId(saved.destWalletId);
-      }
-    } catch {
-      // Corrupt or unavailable storage just means we start from the defaults.
-    }
-    setHydrated(true);
-  }, [persist]);
-
-  useEffect(() => {
-    if (!persist || !hydrated) return;
-    try {
-      localStorage.setItem(
-        LAST_KEY,
-        JSON.stringify({ type, sourceWalletId, destWalletId })
-      );
-    } catch {
-      // Non-fatal: the form still works, it just will not pre-fill next time.
-    }
-  }, [persist, hydrated, type, sourceWalletId, destWalletId]);
+  // A type change that crosses into transfer/withdrawal rewrites which fields the row even
+  // uses (no category at all for transfer) — while editing, that gets a confirmation instead
+  // of silently applying, since Add has no way to make this same jump (atlas-ux-review.md #2).
+  const [pendingType, setPendingType] = useState<TxnType | null>(null);
 
   // --- Derived ---------------------------------------------------------------
   const kind = TYPE_TO_CATEGORY_KIND[type];
@@ -191,10 +148,22 @@ export default function TxnFields({
       ? "Note"
       : "Description";
 
-  function changeType(next: TxnType) {
+  function commitTypeChange(next: TxnType) {
     setType(next);
     // The old category almost certainly belongs to the wrong kind now.
     setCategoryId(null);
+  }
+
+  function changeType(next: TxnType) {
+    const crossesIntoMoveType =
+      Boolean(initial) &&
+      next !== type &&
+      (next === "transfer" || next === "withdrawal");
+    if (crossesIntoMoveType) {
+      setPendingType(next);
+      return;
+    }
+    commitTypeChange(next);
   }
 
   const amountText = amount || "0";
@@ -216,28 +185,42 @@ export default function TxnFields({
         scrollClassName="-mx-4 px-4"
       />
 
-      {/* --- Hero amount ---------------------------------------------------- */}
-      <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center shadow-[var(--shadow-sm)]">
-        <div className="label mb-2">Amount</div>
-        <div className="flex h-[52px] items-center justify-center gap-2">
-          <span className="font-display text-[20px] font-bold text-ink-300">
-            Rp
-          </span>
-          <input
-            value={amount}
-            onChange={(e) => {
-              const raw = e.target.value.replace(/\D/g, "");
-              setAmount(raw ? formatNumber(parseInt(raw, 10)) : "");
-            }}
-            inputMode="numeric"
-            autoComplete="off"
-            placeholder="0"
-            aria-label="Amount in rupiah"
-            style={{ fontSize: `${amountFontSize(amountText)}px` }}
-            className="w-full max-w-[280px] border-0 bg-transparent p-0 text-center font-display font-extrabold tracking-[-0.03em] text-ink-900 tabular-nums outline-none placeholder:text-ink-200"
-          />
+      {pendingType && (
+        <div className="rounded-[var(--radius-input)] bg-warning-100 p-3">
+          <p className="text-[13px] text-ink-700">
+            Switching to{" "}
+            <strong>
+              {TXN_TYPES.find((t) => t.value === pendingType)?.label}
+            </strong>{" "}
+            changes which fields this entry uses and clears the category you
+            picked. Continue?
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                commitTypeChange(pendingType);
+                setPendingType(null);
+              }}
+              className="btn btn-sm bg-warning-500 text-forest-900"
+            >
+              Continue
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingType(null)}
+              className="btn btn-sm btn-ghost"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/*
+        Category → wallet → amount, matching Add's staged order (atlas-ux-review.md #2) — the
+        type pills stay first since Edit, unlike Add, exposes type as an explicit choice.
+      */}
 
       {/* --- Category ------------------------------------------------------- */}
       {showCategory && (
@@ -304,6 +287,29 @@ export default function TxnFields({
           </p>
         </section>
       )}
+
+      {/* --- Amount, last, matching Add ------------------------------------- */}
+      <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center shadow-[var(--shadow-sm)]">
+        <div className="label mb-2">Amount</div>
+        <div className="flex h-[52px] items-center justify-center gap-2">
+          <span className="font-display text-[20px] font-bold text-ink-300">
+            Rp
+          </span>
+          <input
+            value={amount}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/\D/g, "");
+              setAmount(raw ? formatNumber(parseInt(raw, 10)) : "");
+            }}
+            inputMode="numeric"
+            autoComplete="off"
+            placeholder="0"
+            aria-label="Amount in rupiah"
+            style={{ fontSize: `${amountFontSize(amountText)}px` }}
+            className="w-full max-w-[280px] border-0 bg-transparent p-0 text-center font-display font-extrabold tracking-[-0.03em] text-ink-900 tabular-nums outline-none placeholder:text-ink-200"
+          />
+        </div>
+      </div>
 
       {/* --- Note + date ---------------------------------------------------- */}
       <section className="space-y-3">

@@ -206,29 +206,32 @@ one-time matcher).
 ```
 app/
   layout.tsx              fonts, metadata, viewport, no-flash privacy script
-  page.tsx                → /add
+  page.tsx                → /dashboard
   login/                  password gate
   snapshot/route.ts       GET ?year= → .xlsx
   (app)/
-    layout.tsx            max-w-md column, sticky header, BottomNav
-    add/                  data entry
-    dashboard/            the stats home — three tabs
-    history/              month list, client-side filters, bulk edit, [id] editor
-    charts/               hand-rolled SVG charts
-    savings/              buckets, read-only
-    balances/             opening balances
-    stocks/  bonds/       portfolios and trade forms
-    backup/               year list → snapshot download
-    more/                 the hub: budgets, cashflow, categories, wallets,
-                          providers, paylater, loans, forex, settings
-components/               TxnFields, BottomNav, MonthSwitcher, DaySwitcher,
-                          PrivacyToggle, MoneyInput, SubmitButton, icons
+    layout.tsx            max-w-md column, sticky header (Account + PrivacyToggle), BottomNav
+    dashboard/            the stats home — three tabs; adding a transaction is AddSheet,
+                          not a route, triggered from BottomNav
+    history/              month list, URL + client-side filters, bulk edit, [id] editor
+    charts/               hand-rolled SVG charts, tap/drag crosshair on the line charts
+    savings/               buckets, read-only
+    balances/              opening balances
+    stocks/  bonds/        portfolios; trade/dividend entry opens in a FormSheet, not
+                          inline — Stocks further splits into Portfolio/Activity tabs
+    backup/                year list → snapshot download
+    more/                  the hub: budgets, cashflow, categories, wallets,
+                          providers, paylater, loans, forex (FormSheet convert), settings
+components/               AddSheet, MoveSheet, EditSheet, FormSheet (generic entry-form
+                          sheet), TxnFields, ConfirmDeleteButton (shared delete-confirm
+                          pattern), BottomNav, MonthSwitcher, DaySwitcher, PrivacyToggle,
+                          MoneyInput, SubmitButton, icons
 lib/
   data.ts                 central read layer + the balance rule
   settings.ts             the ONLY place a category is chosen for automation
   format.ts               LOCALE / CURRENCY and every formatter
   txnForm.ts              shared form validation and normalization
-  stocks.ts  bonds.ts  forex.ts  snapshot.ts  autoBudget.ts
+  stocks.ts  bonds.ts  forex.ts  snapshot.ts  autoBudget.ts  cacheTags.ts
   auth.ts  supabaseServer.ts  types.ts
 proxy.ts                  Next 16's middleware — route protection
 supabase/
@@ -238,6 +241,9 @@ scripts/
   migrate.mjs             plain Node SQL runner
   gen-icons.mjs           PWA icon set
 ```
+
+See `atlas-ux-review.md` for the UX audit this layout reflects — a full read-through of the
+implementation with concrete fixes, all implemented as of 2026-08-07.
 
 ---
 

@@ -53,7 +53,16 @@ const KIND_DOT: Record<CategoryKind, string> = {
   investment: "bg-forest-800",
 };
 
-export default async function CategoriesPage() {
+export default async function CategoriesPage({
+  searchParams,
+}: {
+  // `?archived=1` shows archived categories inline instead of hiding them by default — the
+  // same treatment History already gives filters (atlas-ux-review.md #5).
+  searchParams: Promise<{ archived?: string }>;
+}) {
+  const { archived } = await searchParams;
+  const showArchived = archived === "1";
+
   const [categories, groups, members] = await Promise.all([
     getCategories(true),
     getCategoryGroups(true),
@@ -71,17 +80,30 @@ export default async function CategoriesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center gap-1">
+      <header className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1">
+          <Link
+            href="/more"
+            aria-label="Back to more"
+            className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+          >
+            <ChevronLeft size={20} />
+          </Link>
+          <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+            Categories
+          </h1>
+        </div>
         <Link
-          href="/more"
-          aria-label="Back to more"
-          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+          href={showArchived ? "/more/categories" : "/more/categories?archived=1"}
+          aria-pressed={showArchived}
+          className={`shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold no-underline transition-colors ${
+            showArchived
+              ? "bg-forest-800 text-white"
+              : "bg-cream-200 text-ink-500"
+          }`}
         >
-          <ChevronLeft size={20} />
+          Archived
         </Link>
-        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
-          Categories
-        </h1>
       </header>
 
       {/* --- Groups: what the Add sheet leads with ------------------------- */}
@@ -184,38 +206,46 @@ export default async function CategoriesPage() {
         </div>
       </section>
 
-      <form
-        action={addCategory}
-        className="space-y-2 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
-      >
-        <div className="label">Add a category</div>
-        <input
-          name="name"
-          placeholder="Name"
-          aria-label="Category name"
-          required
-          className="field"
-        />
-        <select name="kind" aria-label="Category kind" className="field" defaultValue="expense">
-          {KIND_SECTIONS.map((section) => (
-            <option key={section.kind} value={section.kind}>
-              {section.label}
-            </option>
-          ))}
-        </select>
-        <button type="submit" className="btn btn-primary w-full">
-          Add category
-        </button>
-      </form>
-
       {KIND_SECTIONS.map((section) => {
-        const list = byKind.get(section.kind) ?? [];
+        const all = byKind.get(section.kind) ?? [];
+        const list = all.filter((c) => showArchived || !c.archived);
+        const archivedCount = all.length - list.length;
         return (
           <section key={section.kind}>
             <h2 className="label">{section.label}</h2>
             <p className="mt-0.5 mb-2 text-[13px] text-ink-500">{section.hint}</p>
 
+            {/*
+              Inline at the top of the section that already knows its kind, instead of one
+              global form with a kind picker a scroll away from where the new row lands
+              (atlas-ux-review.md #5).
+            */}
+            <form
+              action={addCategory}
+              className="mb-2 flex gap-2 rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
+            >
+              <input type="hidden" name="kind" value={section.kind} />
+              <input
+                name="name"
+                placeholder={`New ${section.label.toLowerCase()} category`}
+                aria-label={`New ${section.label.toLowerCase()} category name`}
+                required
+                className="field flex-1"
+              />
+              <button type="submit" className="btn btn-primary shrink-0">
+                Add
+              </button>
+            </form>
+
             <div className="space-y-2">
+              {archivedCount > 0 && !showArchived && (
+                <Link
+                  href="/more/categories?archived=1"
+                  className="block text-[13px] font-semibold text-forest-800 no-underline"
+                >
+                  {archivedCount} archived — show
+                </Link>
+              )}
               {list.map((category) => (
                 <ManageRow
                   key={category.id}
@@ -258,7 +288,9 @@ export default async function CategoriesPage() {
 
               {list.length === 0 && (
                 <p className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
-                  No {section.label.toLowerCase()} categories yet.
+                  {archivedCount > 0
+                    ? `All ${section.label.toLowerCase()} categories are archived.`
+                    : `No ${section.label.toLowerCase()} categories yet.`}
                 </p>
               )}
             </div>

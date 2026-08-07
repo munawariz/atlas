@@ -2,7 +2,7 @@
 
 import TxnFields from "@/components/TxnFields";
 import SubmitButton from "@/components/SubmitButton";
-import { Trash } from "@/components/icons";
+import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
 import { deleteTransaction, updateTransaction } from "../actions";
 import type { Category, Transaction, Wallet } from "@/lib/types";
 
@@ -33,16 +33,14 @@ export default function EditForm({
         <SubmitButton pendingChildren="Saving…">Save changes</SubmitButton>
       </form>
 
-      <form action={remove}>
-        <input type="hidden" name="month" value={monthKey} />
-        <SubmitButton
-          className="btn btn-ghost w-full text-negative-600"
-          pendingChildren="Deleting…"
-        >
-          <Trash size={18} />
-          Delete
-        </SubmitButton>
-      </form>
+      <ConfirmDeleteButton
+        action={(formData) => {
+          formData.set("month", monthKey);
+          return remove(formData);
+        }}
+        message="Delete this transaction permanently? This can't be undone."
+        variant="block"
+      />
     </div>
   );
 }

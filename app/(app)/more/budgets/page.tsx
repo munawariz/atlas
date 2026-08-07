@@ -83,17 +83,29 @@ export default async function BudgetsPage({
 
   return (
     <div className="space-y-4 privacy-scope">
-      <header className="flex items-center gap-1">
+      <header className="flex items-center justify-between gap-1">
+        <div className="flex items-center gap-1">
+          <Link
+            href="/more"
+            aria-label="Back to more"
+            className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+          >
+            <ChevronLeft size={20} />
+          </Link>
+          <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
+            Budgets
+          </h1>
+        </div>
+        {/*
+          Budgets, Expected cashflow and the dashboard's "Budget vs actual" tab are three views
+          of one feature — cross-linking them so they read as such (atlas-ux-review.md #7).
+        */}
         <Link
-          href="/more"
-          aria-label="Back to more"
-          className="-ml-2 inline-flex h-9 w-9 items-center justify-center rounded-full text-forest-800 no-underline"
+          href={`/more/cashflow?m=${monthKey}`}
+          className="shrink-0 text-[13px] font-semibold text-forest-800 no-underline"
         >
-          <ChevronLeft size={20} />
+          Expected cashflow →
         </Link>
-        <h1 className="font-display text-[24px] font-extrabold tracking-[-0.03em] text-ink-900">
-          Budgets
-        </h1>
       </header>
 
       <MonthSwitcher monthKey={monthKey} params={{ k: activeKind }} />

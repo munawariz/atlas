@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PillSwitcher from "@/components/PillSwitcher";
 import {
   formatMonthShort,
@@ -68,6 +68,20 @@ function scaleY(value: number, lo: number, hi: number): number {
   return H - PAD - ((value - lo) / (hi - lo)) * (H - PAD * 2);
 }
 
+/**
+ * Nearest data-point index under a pointer, in an SVG using the `W`/`PAD` viewBox above — the
+ * inverse of `scaleX`. Works off `getBoundingClientRect` so it is correct regardless of how the
+ * responsive `w-full` svg is actually laid out on screen.
+ */
+function indexFromClientX(svg: SVGSVGElement, clientX: number, length: number): number {
+  if (length <= 1) return 0;
+  const rect = svg.getBoundingClientRect();
+  if (rect.width === 0) return 0;
+  const relX = ((clientX - rect.left) / rect.width) * W;
+  const t = (relX - PAD) / (W - PAD * 2);
+  return Math.min(length - 1, Math.max(0, Math.round(t * (length - 1))));
+}
+
 function stepMonth(monthKey: string, delta: number): string {
   const y = parseInt(monthKey.slice(0, 4), 10);
   const m = parseInt(monthKey.slice(5, 7), 10);
@@ -102,6 +116,11 @@ export default function ChartsClient({
   const [customTo, setCustomTo] = useState(anchorDefault);
   const [custom, setCustom] = useState(false);
 
+  // Crosshair: which point is being read on each line chart, if any. Cleared whenever the
+  // underlying window changes so a stale index never points past the new data.
+  const [nwHover, setNwHover] = useState<number | null>(null);
+  const [flowHover, setFlowHover] = useState<number | null>(null);
+
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
   const [breakdownKind, setBreakdownKind] = useState<CategoryKind>("expense");
   const [drilldown, setDrilldown] = useState<number | null>(null);
@@ -131,6 +150,11 @@ export default function ChartsClient({
   );
 
   const dailyMode = !custom && preset === 1;
+
+  useEffect(() => {
+    setNwHover(null);
+    setFlowHover(null);
+  }, [lo, hi, dailyMode]);
 
   if (months.length === 0) {
     return (
@@ -370,36 +394,88 @@ export default function ChartsClient({
           {formatRupiah(nwPoints[nwPoints.length - 1] ?? 0)}
         </div>
 
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="mt-3 w-full"
-          role="img"
-          aria-label="Net worth over time"
-        >
-          <path
-            d={`${nwPoints
-              .map(
-                (v, i) =>
-                  `${i === 0 ? "M" : "L"} ${scaleX(i, nwPoints.length)} ${scaleY(v, nwLo, nwHi)}`
-              )
-              .join(" ")} L ${scaleX(nwPoints.length - 1, nwPoints.length)} ${H} L ${scaleX(0, nwPoints.length)} ${H} Z`}
-            fill="var(--color-forest-800)"
-            opacity="0.1"
-          />
-          <path
-            d={nwPoints
-              .map(
-                (v, i) =>
-                  `${i === 0 ? "M" : "L"} ${scaleX(i, nwPoints.length)} ${scaleY(v, nwLo, nwHi)}`
-              )
-              .join(" ")}
-            fill="none"
-            stroke="var(--color-forest-800)"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        </svg>
+        <div className="relative mt-3">
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full"
+            role="img"
+            aria-label="Net worth over time"
+            style={{ touchAction: "none" }}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              setNwHover(indexFromClientX(e.currentTarget, e.clientX, nwPoints.length));
+            }}
+            onPointerMove={(e) => {
+              // Mouse tracks on hover; touch/pen only while actively pressed and dragging —
+              // otherwise a passive touchmove would fight the page's vertical scroll.
+              if (e.pointerType !== "mouse" && e.buttons !== 1) return;
+              setNwHover(indexFromClientX(e.currentTarget, e.clientX, nwPoints.length));
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType === "mouse") setNwHover(null);
+            }}
+          >
+            <path
+              d={`${nwPoints
+                .map(
+                  (v, i) =>
+                    `${i === 0 ? "M" : "L"} ${scaleX(i, nwPoints.length)} ${scaleY(v, nwLo, nwHi)}`
+                )
+                .join(" ")} L ${scaleX(nwPoints.length - 1, nwPoints.length)} ${H} L ${scaleX(0, nwPoints.length)} ${H} Z`}
+              fill="var(--color-forest-800)"
+              opacity="0.1"
+            />
+            <path
+              d={nwPoints
+                .map(
+                  (v, i) =>
+                    `${i === 0 ? "M" : "L"} ${scaleX(i, nwPoints.length)} ${scaleY(v, nwLo, nwHi)}`
+                )
+                .join(" ")}
+              fill="none"
+              stroke="var(--color-forest-800)"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+
+            {/* --- Crosshair: tap or drag to read an intermediate value (atlas-ux-review.md #4) */}
+            {nwHover != null && (
+              <g aria-hidden="true">
+                <line
+                  x1={scaleX(nwHover, nwPoints.length)}
+                  y1={0}
+                  x2={scaleX(nwHover, nwPoints.length)}
+                  y2={H}
+                  stroke="var(--color-ink-300)"
+                  strokeWidth="1"
+                  strokeDasharray="2 2"
+                />
+                <circle
+                  cx={scaleX(nwHover, nwPoints.length)}
+                  cy={scaleY(nwPoints[nwHover] ?? 0, nwLo, nwHi)}
+                  r={4}
+                  fill="var(--color-forest-800)"
+                  stroke="white"
+                  strokeWidth="1.5"
+                />
+              </g>
+            )}
+          </svg>
+
+          {nwHover != null && (
+            <div
+              className="pointer-events-none absolute top-0 -translate-x-1/2 whitespace-nowrap rounded-full bg-forest-800 px-2.5 py-1 text-[11px] font-semibold text-white"
+              style={{
+                left: `${Math.min(88, Math.max(12, (scaleX(nwHover, nwPoints.length) / W) * 100))}%`,
+                boxShadow: "var(--shadow-xs)",
+              }}
+            >
+              {formatMonthShort(nwMonths[nwHover] ?? lo)} ·{" "}
+              {formatRupiah(nwPoints[nwHover] ?? 0)}
+            </div>
+          )}
+        </div>
 
         <div className="mt-1 flex justify-between text-[11px] text-ink-300">
           <span>{formatMonthShort(nwMonths[0] ?? lo)}</span>
@@ -413,32 +489,93 @@ export default function ChartsClient({
           Cash flow{dailyMode && " · daily"}
         </h2>
 
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="mt-3 w-full"
-          role="img"
-          aria-label="Cash flow over time"
-        >
-          {visibleSeries.map((series) => {
-            const values = flowValues(series.key);
-            return (
-              <path
-                key={series.key}
-                d={values
-                  .map(
-                    (v, i) =>
-                      `${i === 0 ? "M" : "L"} ${scaleX(i, values.length)} ${scaleY(v, flowLo, flowHi)}`
-                  )
-                  .join(" ")}
-                fill="none"
-                stroke={series.color}
-                strokeWidth="2"
-                strokeLinejoin="round"
-                strokeLinecap="round"
-              />
-            );
-          })}
-        </svg>
+        <div className="relative mt-3">
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            className="w-full"
+            role="img"
+            aria-label="Cash flow over time"
+            style={{ touchAction: "none" }}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              setFlowHover(indexFromClientX(e.currentTarget, e.clientX, flowLabels.length));
+            }}
+            onPointerMove={(e) => {
+              if (e.pointerType !== "mouse" && e.buttons !== 1) return;
+              setFlowHover(indexFromClientX(e.currentTarget, e.clientX, flowLabels.length));
+            }}
+            onPointerLeave={(e) => {
+              if (e.pointerType === "mouse") setFlowHover(null);
+            }}
+          >
+            {visibleSeries.map((series) => {
+              const values = flowValues(series.key);
+              return (
+                <path
+                  key={series.key}
+                  d={values
+                    .map(
+                      (v, i) =>
+                        `${i === 0 ? "M" : "L"} ${scaleX(i, values.length)} ${scaleY(v, flowLo, flowHi)}`
+                    )
+                    .join(" ")}
+                  fill="none"
+                  stroke={series.color}
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              );
+            })}
+
+            {/* --- Crosshair: tap or drag to read an intermediate value (atlas-ux-review.md #4) */}
+            {flowHover != null && (
+              <g aria-hidden="true">
+                <line
+                  x1={scaleX(flowHover, flowLabels.length)}
+                  y1={0}
+                  x2={scaleX(flowHover, flowLabels.length)}
+                  y2={H}
+                  stroke="var(--color-ink-300)"
+                  strokeWidth="1"
+                  strokeDasharray="2 2"
+                />
+                {visibleSeries.map((series) => (
+                  <circle
+                    key={series.key}
+                    cx={scaleX(flowHover, flowLabels.length)}
+                    cy={scaleY(flowValues(series.key)[flowHover] ?? 0, flowLo, flowHi)}
+                    r={3.5}
+                    fill={series.color}
+                    stroke="white"
+                    strokeWidth="1.5"
+                  />
+                ))}
+              </g>
+            )}
+          </svg>
+
+          {flowHover != null && (
+            <div
+              className="pointer-events-none absolute top-0 -translate-x-1/2 whitespace-nowrap rounded-full bg-forest-800 px-2.5 py-1 text-[11px] font-semibold text-white"
+              style={{
+                left: `${Math.min(88, Math.max(12, (scaleX(flowHover, flowLabels.length) / W) * 100))}%`,
+                boxShadow: "var(--shadow-xs)",
+              }}
+            >
+              {dailyMode
+                ? `Day ${parseInt((flowLabels[flowHover] ?? "").slice(-2), 10)}`
+                : formatMonthShort(flowLabels[flowHover] ?? hi)}{" "}
+              —{" "}
+              {visibleSeries
+                .map(
+                  (series) =>
+                    `${series.label} ${formatRupiahShort(flowValues(series.key)[flowHover] ?? 0)}`
+                )
+                .join(" · ")}
+            </div>
+          )}
+        </div>
 
         <div className="mt-2 flex flex-wrap gap-2">
           {FLOW_SERIES.map((series) => {
