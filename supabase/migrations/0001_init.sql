@@ -281,6 +281,24 @@ create table if not exists bond_trades (
 );
 create index if not exists idx_bond_trades_name on bond_trades (name);
 
+-- Crypto. Quantity is in COINS and is fractional, so `units` is numeric — unlike stocks,
+-- which trade in whole lots. Cost basis is average cost per coin, and a sell books its
+-- realized P/L exactly the way a stock sale does.
+create table if not exists crypto_trades (
+  id bigint generated always as identity primary key,
+  symbol text not null,            -- coin symbol, e.g. BTC / ETH
+  side text not null check (side in ('buy', 'sell')),
+  units numeric not null check (units > 0),
+  idr bigint not null,             -- money spent (buy) / received (sell)
+  occurred_on date not null,
+  opening boolean not null default false,  -- pre-existing holding, books no money movement
+  wallet_id bigint references wallets(id) on delete set null,
+  txn_id bigint references transactions(id) on delete set null,
+  pl_txn_id bigint references transactions(id) on delete set null,
+  realized_pl bigint
+);
+create index if not exists idx_crypto_trades_symbol on crypto_trades (symbol);
+
 -- ---------------------------------------------------------------------------
 -- Materialized monthly deltas + trigger (ATLAS.md §4.1) — performance-critical.
 -- balance at end of month M = opening + sum(delta) where month <= M

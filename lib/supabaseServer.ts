@@ -45,9 +45,14 @@ export function supabaseServer(): SupabaseClient {
 /**
  * True when a PostgREST error means "table does not exist" — tolerated on newer tables so the
  * app still boots against a partially migrated database (ATLAS.md §14.4).
+ *
+ * Two codes, because PostgREST answers for an unmigrated table before Postgres ever sees the
+ * query: PGRST205 is its own schema-cache miss (what you actually get today), 42P01 is
+ * Postgres's undefined_table. Matching only the latter meant a page for a table the database
+ * has never had would throw instead of rendering empty.
  */
 export function isMissingTable(error: { code?: string } | null | undefined): boolean {
-  return error?.code === "42P01";
+  return error?.code === "42P01" || error?.code === "PGRST205";
 }
 
 /**

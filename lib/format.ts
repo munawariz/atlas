@@ -42,6 +42,10 @@ const decimalFormatter = new Intl.NumberFormat(LOCALE, {
   maximumFractionDigits: 0,
 });
 
+const unitFormatter = new Intl.NumberFormat(LOCALE, {
+  maximumFractionDigits: 8,
+});
+
 // `narrowSymbol` renders IDR as "Rp" rather than the verbose "IDR". Some runtimes lack
 // narrow-symbol data for IDR — detect that once and fall back to prefixing "Rp " ourselves.
 // We must never ship "IDR 7,761,691".
@@ -72,6 +76,16 @@ export function formatRupiah(n: number): string {
 /** "7,761,691" */
 export function formatNumber(n: number): string {
   return decimalFormatter.format(Number.isFinite(n) ? n : 0);
+}
+
+/**
+ * A fractional quantity: "0.0412" | "1.5" | "12,000".
+ *
+ * Money is always whole rupiah, but a crypto holding is not — 8 decimals is the finest unit
+ * anything quotes, and trailing zeros are dropped so "1.50000000" never reaches the page.
+ */
+export function formatUnits(n: number): string {
+  return unitFormatter.format(Number.isFinite(n) ? n : 0);
 }
 
 /**

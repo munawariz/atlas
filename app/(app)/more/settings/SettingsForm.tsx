@@ -62,7 +62,7 @@ export default function SettingsForm({
     <form action={formAction} className="space-y-6">
       <div className="rounded-[var(--radius-card)] bg-sage-100 p-4">
         <p className="text-[14px] text-ink-700">
-          Automated transactions — stock trades, dividends, bond coupons, loan
+          Automated transactions — stock and crypto trades, dividends, bond coupons, loan
           collections, forex conversions — need to know which of{" "}
           <em>your</em> categories to book under. Nothing is created for you, so
           an unmapped row means that feature politely refuses until you set it.
