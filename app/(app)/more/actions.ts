@@ -226,6 +226,51 @@ export async function setCategoryInstallment(
 }
 
 /**
+ * Move a category up or down within its own kind.
+ *
+ * Each kind is its own list on the page, so a move never crosses the
+ * Expense/Income/Saving/Investment boundary — the kind is read from the row, so the caller
+ * only ever says which way.
+ *
+ * Archived rows are hidden unless `?archived=1`, and an archived category is only movable
+ * while they are shown. So when the mover is active, the hop skips archived neighbours: the
+ * row lands where the user watched it land instead of silently trading places with something
+ * invisible.
+ *
+ * Renumbers the kind 0..n rather than swapping two values, so `sort_order` stays gap-free
+ * however many times it is reordered.
+ */
+export async function moveCategory(id: number, delta: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data } = await sb
+    .from("categories")
+    .select("id, kind, archived")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  const all = (data ?? []) as { id: number; kind: CategoryKind; archived: boolean }[];
+  const self = all.find((c) => c.id === id);
+  if (!self) return;
+
+  const list = all.filter((c) => c.kind === self.kind);
+  const from = list.findIndex((c) => c.id === id);
+  const step = delta < 0 ? -1 : 1;
+  let to = from + step;
+  if (!self.archived) while (list[to]?.archived) to += step;
+  if (from < 0 || to < 0 || to >= list.length) return;
+
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+
+  await Promise.all(
+    list.map((c, index) =>
+      sb.from("categories").update({ sort_order: index }).eq("id", c.id)
+    )
+  );
+  revalidateManage();
+}
+
+/**
  * Hard delete, permitted only once the category is already archived.
  *
  * Safe by FK design (ATLAS.md §14.13): transactions go uncategorized via

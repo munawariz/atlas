@@ -7,6 +7,7 @@ import {
   addGroupMember,
   deleteCategory,
   deleteGroup,
+  moveCategory,
   moveGroup,
   renameCategory,
   renameGroup,
@@ -250,7 +251,7 @@ export default async function CategoriesPage({
                   Show {archivedCount} archived
                 </Link>
               )}
-              {list.map((category) => (
+              {list.map((category, index) => (
                 <ManageRow
                   key={category.id}
                   anchorId={`category-${category.id}`}
@@ -268,6 +269,14 @@ export default async function CategoriesPage({
                       Delete <strong>{category.name}</strong> permanently? Past
                       transactions keep their history but lose this label.
                     </>
+                  }
+                  onMoveUp={
+                    index > 0 ? moveCategory.bind(null, category.id, -1) : undefined
+                  }
+                  onMoveDown={
+                    index < list.length - 1
+                      ? moveCategory.bind(null, category.id, 1)
+                      : undefined
                   }
                 >
                   <div className="flex flex-wrap items-center gap-2">
