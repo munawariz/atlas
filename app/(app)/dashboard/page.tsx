@@ -527,8 +527,8 @@ function SetupBanner({ count }: { count: number }) {
       </div>
       <p className="mt-1 text-[13px] text-ink-700">
         {count} automated transaction {count === 1 ? "category" : "categories"} still
-        need mapping. Until then, stock trades, dividends, coupons, loan
-        collections and forex conversions will refuse rather than guess.
+        need mapping. Until then, stock and crypto trades, dividends, coupons,
+        loan collections and forex conversions will refuse rather than guess.
       </p>
       <span className="mt-2 inline-block text-[13px] font-semibold text-forest-800">
         Open Settings →

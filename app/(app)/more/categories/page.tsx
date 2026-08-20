@@ -40,7 +40,7 @@ const KIND_SECTIONS: { kind: CategoryKind; label: string; hint: string }[] = [
   {
     kind: "investment",
     label: "Investment",
-    hint: "Where your stocks, bonds and forex hold value. Also outside net worth.",
+    hint: "Where your stocks, bonds, crypto and forex hold value. Also outside net worth.",
   },
 ];
 

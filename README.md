@@ -2,7 +2,7 @@
 
 A mobile-first personal finance tracker, installable as a PWA. You log every movement of money
 into one ledger; Atlas derives net worth, budgets, savings buckets, installment schedules, loans
-receivable, and a stock / bond / forex portfolio from it.
+receivable, and a stock / bond / crypto / forex portfolio from it.
 
 Single-user, shared-password, self-hostable. You bring your own Supabase project, set a
 password, and customise the categories and wallets in-app — nothing is hardcoded to one
@@ -28,11 +28,12 @@ Money is **Indonesian Rupiah**, stored as **integer rupiah** — never floats, n
 - **Installments** grouped by provider, with per-month paid tracking and a per-group "pay all".
 - **Loans receivable** — money other people owe you, collected month by month, partials included.
 - **Investments** — stocks (lots, average cost, live IDX prices, dividends, realized P/L),
-  bonds (principal and coupons), and forex (tracked in its own currency, never counted in IDR
-  net worth).
+  bonds (principal and coupons), crypto (fractional coins, average cost, live prices quoted in
+  USD and converted to IDR, realized P/L), and forex (tracked in its own currency, never
+  counted in IDR net worth).
 - **Charts** — net worth, multi-series cash flow with a daily zoom, category breakdown with
   drilldown, and category-over-time. Hand-rolled SVG, no chart library.
-- **Excel backup** — any year as a nine-sheet `.xlsx` whose Summary reconciles with the app.
+- **Excel backup** — any year as a ten-sheet `.xlsx` whose Summary reconciles with the app.
 - **Privacy mode** — masks every amount with zero layout shift and no flash on reload.
 - **PWA** — installs to the home screen, with an offline shell.
 
@@ -192,8 +193,9 @@ Opening balances live in `wallet_balances` at a single opening month, held in
 `app_settings.opening_month` — it is **data, not a constant**, so a database that started at a
 different point still reconciles.
 
-**No category name appears in application code.** Automated transactions (stock trades,
-dividends, bond coupons, loan collections, forex conversions) resolve their category through
+**No category name appears in application code.** Automated transactions (stock and crypto
+trades, dividends, bond coupons, loan collections, forex conversions) resolve their category
+through
 `app_settings` by id, via `lib/settings.ts`. If a key is unmapped the action **refuses with a
 readable message and writes nothing** — it never invents a category. Names live in exactly two
 places: `supabase/seed.sql` (proposing starting data) and `DETECT_HINTS` (the interactive
@@ -218,7 +220,7 @@ app/
     savings/               buckets, read-only
     balances/              opening balances
     stocks/  bonds/        portfolios; trade/dividend entry opens in a FormSheet, not
-                          inline — Stocks further splits into Portfolio/Activity tabs
+    crypto/                inline — Stocks further splits into Portfolio/Activity tabs
     backup/                year list → snapshot download
     more/                  the hub: budgets, cashflow, categories, wallets,
                           providers, paylater, loans, forex (FormSheet convert), settings
@@ -231,7 +233,7 @@ lib/
   settings.ts             the ONLY place a category is chosen for automation
   format.ts               LOCALE / CURRENCY and every formatter
   txnForm.ts              shared form validation and normalization
-  stocks.ts  bonds.ts  forex.ts  snapshot.ts  autoBudget.ts  cacheTags.ts
+  stocks.ts  bonds.ts  crypto.ts  forex.ts  snapshot.ts  autoBudget.ts  cacheTags.ts
   auth.ts  supabaseServer.ts  types.ts
 proxy.ts                  Next 16's middleware — route protection
 supabase/

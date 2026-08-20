@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Bitcoin,
   ChevronDown,
   Coins,
   CreditCard,
@@ -39,6 +40,7 @@ const PRIMARY: Item[] = [
 const INVESTMENT: Item[] = [
   { href: "/stocks", label: "Stocks", hint: "Holdings, trades, dividends", Icon: LineChart },
   { href: "/bonds", label: "Bonds", hint: "Principal held and coupons", Icon: FileText },
+  { href: "/crypto", label: "Crypto", hint: "Coins held, live value", Icon: Bitcoin },
   { href: "/more/forex", label: "Forex", hint: "Foreign currency, outside net worth", Icon: Globe },
 ];
 

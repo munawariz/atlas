@@ -223,6 +223,39 @@ export async function GET(request: NextRequest) {
     ["TOTAL", "", snap.bonds.totalInvested, snap.bonds.totalCoupons]
   );
 
+  // --- Crypto --------------------------------------------------------------
+  addSheet(
+    workbook,
+    "Crypto",
+    [
+      { header: "Coin", width: 12 },
+      { header: "Units", width: 16 },
+      { header: "Cost basis", width: 16, money: true },
+      { header: "Price (IDR)", width: 18, money: true },
+      { header: "Market value", width: 16, money: true },
+      { header: "Unrealized P/L", width: 16, money: true },
+      { header: "Realized P/L", width: 16, money: true },
+    ],
+    snap.crypto.holdings.map((holding) => [
+      holding.symbol,
+      holding.units,
+      holding.costBasis,
+      holding.price ?? "",
+      holding.value ?? "",
+      holding.unrealizedPl ?? "",
+      holding.realizedPl,
+    ]),
+    [
+      "TOTAL",
+      "",
+      snap.crypto.totalCost,
+      "",
+      snap.crypto.pricedValue,
+      snap.crypto.unrealizedPl,
+      snap.crypto.lifetimeRealizedPl,
+    ]
+  );
+
   // --- Forex ---------------------------------------------------------------
   addSheet(
     workbook,

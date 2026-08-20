@@ -24,7 +24,8 @@ insert into categories (kind, name, sort_order) values
   ('income', 'Trading Profit', 3),
   ('income', 'Dividend', 4),
   ('income', 'Bond Coupon', 5),
-  ('income', 'Forex Profit', 6)
+  ('income', 'Forex Profit', 6),
+  ('income', 'Crypto Profit', 7)
 on conflict (kind, name) do nothing;
 
 insert into categories (kind, name, sort_order) values
@@ -32,7 +33,8 @@ insert into categories (kind, name, sort_order) values
   ('expense', 'Entertainment', 1),
   ('expense', 'Other', 2),
   ('expense', 'Realized Loss', 3),
-  ('expense', 'Forex Loss', 4)
+  ('expense', 'Forex Loss', 4),
+  ('expense', 'Crypto Loss', 5)
 on conflict (kind, name) do nothing;
 
 insert into categories (kind, name, sort_order) values
@@ -42,7 +44,8 @@ on conflict (kind, name) do nothing;
 insert into categories (kind, name, sort_order) values
   ('investment', 'Stock', 0),
   ('investment', 'Bonds', 1),
-  ('investment', 'Forex', 2)
+  ('investment', 'Forex', 2),
+  ('investment', 'Crypto', 3)
 on conflict (kind, name) do nothing;
 
 -- ---------------------------------------------------------------------------
@@ -76,14 +79,16 @@ from (values
   ('cat_stock_profit','income','Trading Profit'), ('cat_stock_loss','expense','Realized Loss'),
   ('cat_stock_dividend','income','Dividend'),     ('cat_bond','investment','Bonds'),
   ('cat_bond_coupon','income','Bond Coupon'),     ('cat_forex','investment','Forex'),
-  ('cat_forex_profit','income','Forex Profit'),   ('cat_forex_loss','expense','Forex Loss')
+  ('cat_forex_profit','income','Forex Profit'),   ('cat_forex_loss','expense','Forex Loss'),
+  ('cat_crypto','investment','Crypto'),           ('cat_crypto_profit','income','Crypto Profit'),
+  ('cat_crypto_loss','expense','Crypto Loss')
 ) as v(key, kind, name)
 join categories c on c.kind = v.kind::category_kind and c.name = v.name
 on conflict (key) do nothing;
 
--- Default wallets for the stock and bond forms.
+-- Default wallets for the stock, bond and crypto forms.
 insert into app_settings (key, value)
 select v.key, w.id::text
-from (values ('wallet_stock','Broker'), ('wallet_bond','Broker')) as v(key, name)
+from (values ('wallet_stock','Broker'), ('wallet_bond','Broker'), ('wallet_crypto','Broker')) as v(key, name)
 join wallets w on w.name = v.name
 on conflict (key) do nothing;

@@ -1,4 +1,7 @@
-# Build "Atlas" — a mobile-first personal finance PWA
+| `Coupon {NAME}` | `Kupon {NAME}` |
+| `Buy {n} {SYMBOL}` / `Sell {n} {SYMBOL}` (crypto) | `Beli {n} {SYMBOL}` / `Jual {n} {SYMBOL}` |
+| `Loss {SYMBOL}` | `Cut loss {SYMBOL}` || Crypto Profit / Crypto Loss | *unchanged* |
+| Stock / Bonds / Forex / Crypto (buckets) | *unchanged* |# Build "Atlas" — a mobile-first personal finance PWA
 
 You are building a complete, production-ready web application from scratch. Read this entire
 document before writing code. Follow it precisely — the data model and money conventions are
@@ -11,7 +14,7 @@ load-bearing, and small deviations break the whole ledger.
 **Atlas** is a single-user (shared-password) personal finance tracker, designed phone-first and
 installable as a PWA. It replaces a spreadsheet: you log every movement of money, and the app
 derives net worth, budgets, savings buckets, installment schedules, loans receivable, and an
-investment portfolio (stocks / bonds / forex) from that one ledger.
+investment portfolio (stocks / bonds / crypto / forex) from that one ledger.
 
 Currency is **Indonesian Rupiah (IDR)**. Money is stored as **integer rupiah — never floats,
 never cents**.
@@ -221,6 +224,8 @@ can be reversed cleanly:
 | Buy bond | `investment` from wallet → `cat_bond` |
 | Sell bond | `withdrawal` into wallet from `cat_bond` |
 | Bond coupon | `income` into wallet, category `cat_bond_coupon` |
+| Buy crypto | `investment` from wallet → `cat_crypto` |
+| Sell crypto | `withdrawal` of the **cost basis** into wallet from `cat_crypto`, **plus** a P/L row: `income`/`cat_crypto_profit` if profit, `expense`/`cat_crypto_loss` if loss |
 | Buy forex | `investment` from wallet → `cat_forex` |
 | Sell forex | `withdrawal` of cost basis into wallet from `cat_forex`, **plus** `income`/`cat_forex_profit` or `expense`/`cat_forex_loss` |
 
@@ -237,15 +242,18 @@ they are what the user reads in History, so they matter:
 | Stock realized P/L | `Profit {TICKER} {n} lot` · `Loss {TICKER} {n} lot` |
 | Dividend | `Dividend {TICKER}` |
 | Bond buy / sell / coupon | `Buy {NAME}` · `Sell {NAME}` · `Coupon {NAME}` |
+| Crypto buy / sell | `Buy {n} {SYMBOL}` · `Sell {n} {SYMBOL}` |
+| Crypto realized P/L | `Profit {SYMBOL}` · `Loss {SYMBOL}` |
 | Forex buy / sell | `Buy {CUR} (forex)` · `Sell {CUR} (forex)` |
 | Forex realized P/L | `Profit {CUR} (forex)` · `Loss {CUR} (forex)` |
 | Installment payment | the installment item's own name |
 | Loan collection | the person's name |
 
-**Cost-basis method is average cost** for both stocks and forex. For stocks it's per-lot:
+**Cost-basis method is average cost** for stocks, crypto and forex. For stocks it's per-lot:
 `avgPerLot = Σ buy_idr / Σ buy_lots`, `realizedCost = round(lots × avgPerLot)`,
-`realizedPl = proceeds − realizedCost`. For forex it's a chronological walk (buys add units+cost,
-sells remove cost proportionally to units sold).
+`realizedPl = proceeds − realizedCost`. Crypto is the same formula per coin, on fractional units.
+For forex it's a chronological walk (buys add units+cost, sells remove cost proportionally to
+units sold).
 
 Undoing any of these deletes the linked `txn_id` (and `pl_txn_id`) rows.
 
@@ -494,6 +502,22 @@ create table if not exists bond_trades (
   txn_id bigint references transactions(id) on delete set null
 );
 create index if not exists idx_bond_trades_name on bond_trades (name);
+
+-- Crypto: fractional coins, average cost per coin, realized P/L booked like a stock sale.
+create table if not exists crypto_trades (
+  id bigint generated always as identity primary key,
+  symbol text not null,            -- coin symbol, e.g. BTC / ETH
+  side text not null check (side in ('buy', 'sell')),
+  units numeric not null check (units > 0),
+  idr bigint not null,
+  occurred_on date not null,
+  opening boolean not null default false,
+  wallet_id bigint references wallets(id) on delete set null,
+  txn_id bigint references transactions(id) on delete set null,
+  pl_txn_id bigint references transactions(id) on delete set null,
+  realized_pl bigint
+);
+create index if not exists idx_crypto_trades_symbol on crypto_trades (symbol);
 ```
 
 ### 4.1 Materialized monthly deltas + trigger (performance-critical)
@@ -570,10 +594,10 @@ one file allowed to contain category names, because it is proposing starting dat
 anything at runtime. All names English:
 
 - Wallets: `Cash`, `Bank`, `E-Wallet`, `Broker`
-- Income: `Salary`, `Freelance`, `Loan Repayment`, `Trading Profit`, `Dividend`, `Bond Coupon`, `Forex Profit`
-- Expense: `Food`, `Entertainment`, `Other`, `Realized Loss`, `Forex Loss`
+- Income: `Salary`, `Freelance`, `Loan Repayment`, `Trading Profit`, `Dividend`, `Bond Coupon`, `Forex Profit`, `Crypto Profit`
+- Expense: `Food`, `Entertainment`, `Other`, `Realized Loss`, `Forex Loss`, `Crypto Loss`
 - Saving: `Emergency Fund`
-- Investment: `Stock`, `Bonds`, `Forex`
+- Investment: `Stock`, `Bonds`, `Forex`, `Crypto`
 - Installment providers `Credit Card`, `Paylater`, `Store Credit`, each with a matching
   `is_installment` expense category of the same name, linked 1:1.
 
@@ -589,7 +613,9 @@ from (values
   ('cat_stock_profit','income','Trading Profit'), ('cat_stock_loss','expense','Realized Loss'),
   ('cat_stock_dividend','income','Dividend'),     ('cat_bond','investment','Bonds'),
   ('cat_bond_coupon','income','Bond Coupon'),     ('cat_forex','investment','Forex'),
-  ('cat_forex_profit','income','Forex Profit'),   ('cat_forex_loss','expense','Forex Loss')
+  ('cat_forex_profit','income','Forex Profit'),   ('cat_forex_loss','expense','Forex Loss'),
+  ('cat_crypto','investment','Crypto'),           ('cat_crypto_profit','income','Crypto Profit'),
+  ('cat_crypto_loss','expense','Crypto Loss')
 ) as v(key, kind, name)
 join categories c on c.kind = v.kind::category_kind and c.name = v.name
 on conflict (key) do nothing;   -- never clobber an existing mapping
@@ -913,6 +939,9 @@ export const DETECT_HINTS: Record<string, string[]> = {
   cat_forex:          ["Forex", "FX", "Foreign Currency"],
   cat_forex_profit:   ["Forex Profit", "FX Profit"],
   cat_forex_loss:     ["Forex Loss", "FX Loss"],
+  cat_crypto:         ["Crypto", "Cryptocurrency", "Kripto"],
+  cat_crypto_profit:  ["Crypto Profit", "Crypto Gain"],
+  cat_crypto_loss:    ["Crypto Loss"],
 };
 ```
 
@@ -946,6 +975,24 @@ Fix that: write every submitted key, deleting the row when the value is blank.
 `getBondTrades()` (coerce `units` to Number — numeric comes back as string) and
 `getBondPortfolio(asOf?)` → per-bond `units = buyU − sellU`, `invested = Σbuy − Σsell`,
 `coupons = Σcoupon`, plus totals.
+
+### `lib/crypto.ts`
+`CryptoTrade`, `CryptoHolding`, `CryptoPortfolio` types + queries. The stocks module with
+fractional quantity — coins, not whole lots — and no dividends or targets. Key pieces:
+- `getCryptoTrades(asOf?)` (coerce `units` to Number — numeric comes back as string).
+- `getLiveCryptoPriceUsd(symbol)` — the same Yahoo chart endpoint the stocks module uses, with
+  `QUOTE_SUFFIX = "-USD"`. Crypto only quotes against a handful of fiats there: `BTC-IDR` 404s
+  where `BTC-USD` does not, so coins are priced in USD. **Return `null` on any failure.**
+- `getLiveCryptoPrice(symbol)` — that price × `getForexRate("USD")`, in IDR. A missing rate is
+  `null`, never `0` — a coin priced at nothing would silently wipe out the portfolio's value.
+- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol,
+  `units = buyUnits − sellUnits`, `avgPerUnit = buyIdr / buyUnits`, `value = units × price`.
+  One rate lookup for the whole portfolio, prices in parallel. `missing` symbols are excluded
+  from `pricedValue`/`pricedCost`, as with stocks.
+- `cryptoPosition(trades, symbol)` — **pure**; units held and average cost, shared with the
+  sell path in the action.
+- `DUST = 1e-8` — fractional units never land exactly on zero, so "still held" and "can you
+  sell this much" are tolerances rather than `> 0` comparisons.
 
 ### `lib/forex.ts`
 - `FALLBACK_RATE = { JPY: 110 }`.
@@ -1043,6 +1090,7 @@ app/
     stocks/               page.tsx · StockTradeForm · StockDividendForm · actions.ts
     stocks/targets/       page.tsx · StockTargetRow.tsx
     bonds/                page.tsx · BondTradeForm.tsx · actions.ts
+    crypto/               page.tsx · CryptoTradeForm.tsx · actions.ts
     backup/page.tsx
     more/                 page.tsx · ManageRow.tsx · actions.ts   ← the big action hub (~940 lines)
     more/budgets/         page.tsx · BudgetRow.tsx
@@ -1186,6 +1234,15 @@ deletable list) and a recent trades list (deletable).
 Portfolio (principal held, coupons received) and a form for buy / sell / coupon. Coupons carry no
 units. Deleting a trade removes its ledger row.
 
+### `/crypto`
+Live portfolio hero (market value, ▲/▼ P/L + %, cost basis, lifetime realized P/L, and a warning
+listing symbols with no live price). Trade form in a `FormSheet` (buy/sell, symbol, coins, IDR,
+wallet, date, plus the same **opening position** checkbox stocks has). Expandable holding cards
+per coin: units, avg/coin → live price, market value and P/L; expanded: invested / cost basis now
+/ proceeds / realized P/L, and a buy·sell timeline (newest first). Then a recent trades list
+(deletable). A sell books the same two ledger rows a stock sale does — cost basis back out of the
+bucket, P/L as its own income or expense row.
+
 ### `/more/forex`
 One card per currency: balance in foreign units (labeled **"not in networth"**), Invested (average
 cost basis) vs live Value, ▲/▼ gain/loss and %, live rate vs average rate, realized P/L booked to
@@ -1196,8 +1253,8 @@ name, and an optional opening balance **with its IDR cost** (seeded as a wallet-
 
 ### `/more` (index)
 A settings list: Charts · Expected cashflow · Starting balances · Savings, then a collapsible
-**Investment** group (Stocks · Bonds · Forex), then Budgets · My Installment · Loans · Wallets ·
-Categories · Settings, then a Backup snapshot card and a Log out form.
+**Investment** group (Stocks · Bonds · Crypto · Forex), then Budgets · My Installment · Loans ·
+Wallets · Categories · Settings, then a Backup snapshot card and a Log out form.
 
 ### `/more/budgets`
 Month-scoped, tabbed by kind (Expense / Income / Saving). Header card shows **Expected cashflow /mo**
@@ -1258,7 +1315,7 @@ described in §8, not just buried under More.
 `/backup` lists years with data (always including the current year) linking to
 `/snapshot?year=YYYY`. The route handler builds a **multi-sheet `.xlsx`** with `exceljs`:
 `Summary` (year flows, year-end status, tracked net total), `Transactions`, `Wallets`, `Savings`,
-`Stocks`, `Bonds`, `Forex`, `Loans`, `Paylater`. Bold header rows, `#,##0` number format on money
+`Stocks`, `Bonds`, `Crypto`, `Forex`, `Loans`, `Paylater`. Bold header rows, `#,##0` number format on money
 columns, bold TOTAL rows. Respond with the buffer,
 `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
 `Content-Disposition: attachment; filename="finance-snapshot-{year}.xlsx"`, `Cache-Control: no-store`.
@@ -1385,7 +1442,7 @@ so a TLS reverse proxy must sit in front.
 9. `/dashboard` with all three tabs.
 10. Paylater (providers → items → payments), Loans.
 11. `lib/stocks.ts` → `/stocks` → `/stocks/targets`; `lib/bonds.ts` → `/bonds`;
-    `lib/forex.ts` → `/more/forex`.
+    `lib/crypto.ts` → `/crypto`; `lib/forex.ts` → `/more/forex`.
 12. `lib/data.ts#getChartData` → `/charts`.
 13. `lib/snapshot.ts` → `/snapshot` → `/backup`.
 14. PWA (manifest, `sw.js`, `offline.html`, icons), then Dockerfile + compose, then README.
@@ -1413,6 +1470,9 @@ so a TLS reverse proxy must sit in front.
       **plus** a `Trading Profit` income row; selling at a loss creates a `Realized Loss` expense
       row instead.
 - [ ] Deleting a stock trade removes both linked ledger rows.
+- [ ] A crypto buy/sell books the same rows as a stock one, with fractional units; selling every
+      coin held is not blocked by a rounding artefact, and a coin with no live price is listed
+      as unpriced rather than valued at zero.
 - [ ] Forex is visibly excluded from IDR net worth and shown on its own line.
 - [ ] A forex sell books cost basis back plus a realized Forex Profit/Loss row; editing one via
       History fully reverts and re-books.
@@ -1429,8 +1489,8 @@ so a TLS reverse proxy must sit in front.
       only hits allowed are `supabase/seed.sql` and `DETECT_HINTS`. Zero hits in any action, page,
       or migration.
 - [ ] With `app_settings` emptied, every automated feature (stock trade, dividend, bond coupon,
-      loan collection, forex convert) **fails with a readable message and writes nothing** — no
-      partial ledger rows, no new categories. The dashboard shows the setup banner.
+      crypto trade, loan collection, forex convert) **fails with a readable message and writes
+      nothing** — no partial ledger rows, no new categories. The dashboard shows the setup banner.
 - [ ] Auto-detect against a database whose categories use different names maps them correctly and
       creates **no** new categories.
 - [ ] The opening month is read from `app_settings`, never a literal; `/balances` writes to the
@@ -1493,8 +1553,8 @@ Run these against the adopted database and compare with the old instance:
    returns nothing.
 5. **Every mapping resolves**: each `cat_*` row in `app_settings` points at a category that
    exists and has the right `kind`.
-6. **Exercise one auto-transaction of each family** (a stock buy, a bond coupon, a loan
-   collection), confirm it books under the *existing* category, then delete it and confirm the
+6. **Exercise one auto-transaction of each family** (a stock buy, a bond coupon, a crypto buy,
+   a loan collection), confirm it books under the *existing* category, then delete it and confirm the
    ledger row disappears.
 
 ### 18.4 Optional one-time cleanups
@@ -1530,7 +1590,8 @@ Indonesian variants, so it works in both directions and should be left alone.
 | Dividend | Dividen |
 | Bond Coupon | Kupon |
 | Forex Profit / Forex Loss | *unchanged* |
-| Stock / Bonds / Forex (buckets) | *unchanged* |
+| Crypto Profit / Crypto Loss | *unchanged* |
+| Stock / Bonds / Forex / Crypto (buckets) | *unchanged* |
 | Emergency Fund | Dana Darurat |
 | Salary / Freelance | Gaji / Freelance |
 | Food / Entertainment / Other | Makan / Hiburan / Lainnya |
@@ -1545,6 +1606,8 @@ Indonesian variants, so it works in both directions and should be left alone.
 | `Dividend {TICKER}` | `Dividen {TICKER}` |
 | `Buy {NAME}` / `Sell {NAME}` (bonds) | `Beli {NAME}` / `Jual {NAME}` |
 | `Coupon {NAME}` | `Kupon {NAME}` |
+| `Buy {n} {SYMBOL}` / `Sell {n} {SYMBOL}` (crypto) | `Beli {n} {SYMBOL}` / `Jual {n} {SYMBOL}` |
+| `Loss {SYMBOL}` | `Cut loss {SYMBOL}` |
 | `Profit …` | *unchanged* |
 
 **UI labels**

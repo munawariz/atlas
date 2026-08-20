@@ -16,6 +16,7 @@ import {
   type SavingsBucket,
 } from "./data";
 import { getBondPortfolio, type BondPortfolio } from "./bonds";
+import { getCryptoPortfolio, type CryptoPortfolio } from "./crypto";
 import { getStockPortfolio, type StockPortfolio } from "./stocks";
 import { forexAvgCost, getForexAccounts, getForexRate, getForexTransactions } from "./forex";
 import type { Category, Loan, LoanPayment, PaylaterItem, Transaction, Wallet } from "./types";
@@ -44,6 +45,7 @@ export interface Snapshot {
   savingsTotal: number;
   stocks: StockPortfolio;
   bonds: BondPortfolio;
+  crypto: CryptoPortfolio;
   forex: ForexSnapshot[];
   forexTotal: number;
   loans: (Loan & { expected: number; collected: number; outstanding: number })[];
@@ -66,8 +68,8 @@ function monthsBetween(first: string, last: string): number {
  * Everything needed to render one year as a workbook.
  *
  * Holdings are taken AS OF YEAR-END, not as of today — a 2023 snapshot must describe 2023.
- * Live stock prices are therefore skipped unless the year in question is the current one,
- * where "as of year-end" and "now" are the same thing.
+ * Live stock and coin prices are therefore skipped unless the year in question is the current
+ * one, where "as of year-end" and "now" are the same thing.
  */
 export async function gatherSnapshot(year: number): Promise<Snapshot> {
   const cutoff = `${year}-12-31`;
@@ -83,6 +85,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     savings,
     stocks,
     bonds,
+    crypto,
     forexAccounts,
     loans,
     loanPayments,
@@ -97,6 +100,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     getSavingsBuckets(cutoff),
     getStockPortfolio(cutoff, isCurrentYear),
     getBondPortfolio(cutoff),
+    getCryptoPortfolio(cutoff, isCurrentYear),
     getForexAccounts(),
     getLoans(),
     getLoanPayments(),
@@ -203,6 +207,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     savingsTotal,
     stocks,
     bonds,
+    crypto,
     forex,
     forexTotal,
     loans: loanRows,

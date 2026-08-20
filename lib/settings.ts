@@ -88,6 +88,24 @@ export const CATEGORY_SETTINGS: CategorySetting[] = [
     help: "Expense booked when you sell foreign currency below its average cost.",
   },
   {
+    key: "cat_crypto",
+    label: "Crypto holding",
+    kind: "investment",
+    help: "The bucket your coin purchases move money into.",
+  },
+  {
+    key: "cat_crypto_profit",
+    label: "Crypto realized profit",
+    kind: "income",
+    help: "Income booked when you sell a coin above its average cost.",
+  },
+  {
+    key: "cat_crypto_loss",
+    label: "Crypto realized loss",
+    kind: "expense",
+    help: "Expense booked when you sell a coin below its average cost.",
+  },
+  {
     key: "cat_admin_fee",
     label: "Transfer admin fee",
     kind: "expense",
@@ -112,6 +130,11 @@ export const WALLET_SETTINGS: WalletSetting[] = [
     label: "Default bond wallet",
     help: "Pre-selected on the bond trade form.",
   },
+  {
+    key: "wallet_crypto",
+    label: "Default crypto wallet",
+    help: "Pre-selected on the crypto trade form.",
+  },
 ];
 
 /**
@@ -134,6 +157,9 @@ export const DETECT_HINTS: Record<string, string[]> = {
   cat_forex: ["Forex", "FX", "Foreign Currency"],
   cat_forex_profit: ["Forex Profit", "FX Profit"],
   cat_forex_loss: ["Forex Loss", "FX Loss"],
+  cat_crypto: ["Crypto", "Cryptocurrency", "Kripto"],
+  cat_crypto_profit: ["Crypto Profit", "Crypto Gain"],
+  cat_crypto_loss: ["Crypto Loss"],
   cat_admin_fee: ["Admin Fee", "Bank Fee", "Biaya Admin", "Admin"],
 };
 
