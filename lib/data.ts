@@ -708,7 +708,19 @@ export const getLoans = cache(async (): Promise<Loan[]> => {
     if (isMissingTable(error)) return [];
     throw error;
   }
-  return (data ?? []) as Loan[];
+
+  // `deadline` is defaulted the same way the category columns are: select("*") on a database
+  // that has not had it migrated in yet simply omits the key, and undefined is not null.
+  return (data ?? []).map(
+    (row: Record<string, unknown>): Loan => ({
+      id: Number(row.id),
+      person: String(row.person),
+      note: (row.note as string | null) ?? null,
+      installment: Number(row.installment ?? 0),
+      lender: (row.lender as string | null) ?? null,
+      deadline: (row.deadline as string | null) ?? null,
+    })
+  );
 });
 
 export const getLoanPayments = cache(async (): Promise<LoanPayment[]> => {

@@ -151,6 +151,11 @@ export interface Loan {
   note: string | null;
   installment: number;
   lender: string | null;
+  /**
+   * Optional due date for a ONE-payment loan, `YYYY-MM-DD`. A monthly loan is paced by its
+   * schedule and leaves this null; so does a one-payment loan with no date agreed.
+   */
+  deadline: string | null;
 }
 
 export interface LoanPayment {

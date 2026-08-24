@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
-import { getLoans } from "@/lib/data";
+import { currentMonthKey, getLoans } from "@/lib/data";
 import { resolveCategoryId, unmappedError } from "@/lib/settings";
 
 const digits = (v: FormDataEntryValue | null) =>
@@ -15,6 +15,11 @@ const text = (v: FormDataEntryValue | null) => String(v ?? "").trim();
 const monthDate = (v: FormDataEntryValue | null) => {
   const m = /^(\d{4}-\d{2})(?:-\d{2})?$/.exec(String(v ?? "").trim());
   return m ? `${m[1]}-01` : null;
+};
+/** A full calendar date, `YYYY-MM-DD`. Blank stays null — a deadline is optional. */
+const dateISO = (v: FormDataEntryValue | null) => {
+  const s = String(v ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 };
 
 function revalidateLoans() {
@@ -38,18 +43,38 @@ function addMonths(monthKey: string, n: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
 }
 
-/** Create a loan and lay out its collection schedule. Capped at 60 months. */
+/**
+ * Create a loan and lay out its collection schedule. Capped at 60 months.
+ *
+ * Two shapes, told apart by `months`:
+ *
+ *  - **One payment** (months = 1). There is no monthly rhythm to schedule from, so the form
+ *    asks for an optional `deadline` instead of a start month. The single collection slot
+ *    still needs a month to live in — it takes the deadline's, or the current one when no
+ *    date was agreed — but that month is an internal detail the UI never asks for or shows.
+ *  - **Monthly** (months > 1). A start month is required and `deadline` stays null: the
+ *    schedule is what paces the loan.
+ */
 export async function addLoan(
   _prev: LoanState,
   formData: FormData
 ): Promise<LoanState> {
   const person = text(formData.get("person"));
-  const start = monthDate(formData.get("start_month"));
   const months = Math.min(60, Math.max(1, optInt(formData.get("months")) ?? 1));
   const installment = digits(formData.get("installment"));
+  const once = months === 1;
+
+  const deadline = once ? dateISO(formData.get("deadline")) : null;
+  const start = once
+    ? deadline
+      ? monthDate(deadline.slice(0, 7))
+      : currentMonthKey()
+    : monthDate(formData.get("start_month"));
 
   if (!person) return { error: "Enter who owes you." };
-  if (installment <= 0) return { error: "Enter the monthly amount." };
+  if (installment <= 0) {
+    return { error: once ? "Enter the amount." : "Enter the monthly amount." };
+  }
   if (!start) return { error: "Pick the month collection starts." };
 
   const sb = supabaseServer();
@@ -60,6 +85,7 @@ export async function addLoan(
       lender: text(formData.get("lender")) || null,
       installment,
       note: text(formData.get("note")) || null,
+      deadline,
     })
     .select("id")
     .maybeSingle();
@@ -211,5 +237,22 @@ export async function unscheduleLoanMonth(formData: FormData): Promise<void> {
     .eq("period_month", month)
     .eq("paid", false);
 
+  revalidateLoans();
+}
+
+/**
+ * Set or clear a one-payment loan's deadline.
+ *
+ * Blank clears it: "no date agreed" is a real state, not a missing value, so set and clear
+ * are the same write rather than two actions. The collection slot's `period_month` is left
+ * where it is — it is an internal key, and moving a collected payment to another month would
+ * silently rewrite which month the ledger says the money arrived in.
+ */
+export async function setLoanDeadline(
+  id: number,
+  formData: FormData
+): Promise<void> {
+  const deadline = dateISO(formData.get("deadline"));
+  await supabaseServer().from("loans").update({ deadline }).eq("id", id);
   revalidateLoans();
 }

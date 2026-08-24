@@ -7,8 +7,9 @@ import {
   getLoans,
   getWallets,
 } from "@/lib/data";
-import { formatRupiah } from "@/lib/format";
+import { formatDateShort, formatRupiah, todayISO } from "@/lib/format";
 import AddLoanSheet from "./AddLoanSheet";
+import DeadlineEditor from "./DeadlineEditor";
 import PaymentGrid from "./PaymentGrid";
 import { deleteLoan } from "./actions";
 
@@ -55,6 +56,8 @@ export default async function LoansPage({
     byLoan.set(payment.loan_id, list);
   }
 
+  const today = todayISO();
+
   const rows = loans.map((loan) => {
     const schedule = byLoan.get(loan.id) ?? [];
     const expected = schedule.reduce(
@@ -75,6 +78,15 @@ export default async function LoansPage({
         (p) => p.paid && (p.amount ?? loan.installment) >= loan.installment
       );
 
+    /*
+     * One slot in the schedule means a one-payment loan — the shape addLoan lays out when
+     * `months` is 1, and the shape a loan returns to if its other months are unscheduled.
+     * That is the shape `deadline` exists for; a monthly loan is paced by its schedule.
+     */
+    const once = schedule.length === 1;
+    const { deadline } = loan;
+    const overdue = deadline !== null && !finished && deadline < today;
+
     return {
       loan,
       schedule,
@@ -85,6 +97,15 @@ export default async function LoansPage({
       outstanding: expected - collected,
       pct: expected > 0 ? (collected / expected) * 100 : 0,
       finished,
+      once,
+      overdue,
+      // The year is only worth the space when it is not this one.
+      deadlineLabel:
+        deadline === null
+          ? null
+          : deadline.slice(0, 4) === today.slice(0, 4)
+            ? formatDateShort(deadline)
+            : `${formatDateShort(deadline)} ${deadline.slice(0, 4)}`,
     };
   });
 
@@ -178,9 +199,23 @@ export default async function LoansPage({
                     {row.finished && <span className="badge ml-2">settled</span>}
                   </div>
                   <div className="text-[13px] text-ink-500 tabular-nums">
-                    {formatRupiah(row.loan.installment)}/mo
+                    {formatRupiah(row.loan.installment)}
+                    {row.once ? " · one payment" : "/mo"}
                     {row.loan.lender && ` · via ${row.loan.lender}`}
                   </div>
+                  {/*
+                    A deadline belongs to a one-payment loan only — a monthly one is paced by
+                    its schedule. Overdue is the single state worth colouring: it is the
+                    reason to look. Unset reads as an invitation rather than a blank.
+                  */}
+                  {row.once && (
+                    <DeadlineEditor
+                      loanId={row.loan.id}
+                      deadline={row.loan.deadline}
+                      label={row.deadlineLabel}
+                      overdue={row.overdue}
+                    />
+                  )}
                   {row.loan.note && (
                     <div className="mt-0.5 truncate text-[13px] text-ink-300">
                       {row.loan.note}

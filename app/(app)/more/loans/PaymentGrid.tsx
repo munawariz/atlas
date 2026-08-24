@@ -50,6 +50,15 @@ export default function PaymentGrid({
     a.period_month < b.period_month ? -1 : 1
   );
 
+  /*
+   * A one-payment loan still stores its collection in a month slot, because that is what
+   * `loan_payments` is keyed by — but the month was never asked for (the form takes a
+   * deadline instead), so labelling the chip with it would show the user a date they did
+   * not choose. Everything here reads by state instead. Adding a month through "Edit
+   * months" makes the loan monthly, and the month labels come back on their own.
+   */
+  const once = sorted.length === 1;
+
   // The month after the last scheduled one — what "add a month" appends.
   const last = sorted[sorted.length - 1]?.period_month;
   const nextMonth = last
@@ -65,7 +74,7 @@ export default function PaymentGrid({
   return (
     <div className="mt-3 border-t border-[var(--border-subtle)] pt-3">
       <div className="mb-2 flex items-center justify-between">
-        <span className="label">Schedule</span>
+        <span className="label">{once ? "Payment" : "Schedule"}</span>
         <button
           type="button"
           onClick={() => {
@@ -81,6 +90,11 @@ export default function PaymentGrid({
       <div className="flex flex-wrap gap-1">
         {sorted.map((payment) => {
           const collected = payment.paid;
+          const label = once
+            ? collected
+              ? "Collected"
+              : "Not collected"
+            : formatMonthShort(payment.period_month);
           return (
             <button
               key={payment.id}
@@ -91,9 +105,13 @@ export default function PaymentGrid({
                 )
               }
               aria-pressed={openMonth === payment.period_month}
-              aria-label={`${formatMonthShort(payment.period_month)}, ${
-                collected ? "collected" : "not collected"
-              }`}
+              aria-label={
+                once
+                  ? label
+                  : `${formatMonthShort(payment.period_month)}, ${
+                      collected ? "collected" : "not collected"
+                    }`
+              }
               className={`inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
                 collected
                   ? "bg-lime-200 text-forest-800"
@@ -103,7 +121,7 @@ export default function PaymentGrid({
               {/* Colour was the only carrier of collected-vs-not, and these chips are the
                   primary interaction on the page (atlas-ux-plan-manage-pages.md C4a, C4b). */}
               {collected && <Check size={12} />}
-              {formatMonthShort(payment.period_month)}
+              {label}
             </button>
           );
         })}
@@ -143,7 +161,7 @@ export default function PaymentGrid({
                 className="mt-3 rounded-[var(--radius-input)] bg-cream-100 p-3"
               >
                 <p className="text-[13px] text-ink-700">
-                  {formatMonthShort(openMonth)} collected —{" "}
+                  {once ? "Collected" : `${formatMonthShort(openMonth)} collected`} —{" "}
                   <strong className="tabular-nums">
                     {formatRupiah(payment.amount ?? loan.installment)}
                   </strong>
@@ -178,7 +196,9 @@ export default function PaymentGrid({
                 <input type="hidden" name="loan_id" value={loan.id} />
                 <input type="hidden" name="period_month" value={openMonth} />
 
-                <div className="label">Collect {formatMonthShort(openMonth)}</div>
+                <div className="label">
+                  {once ? "Collect payment" : `Collect ${formatMonthShort(openMonth)}`}
+                </div>
 
                 <select
                   name="wallet_id"

@@ -196,7 +196,8 @@ create table if not exists forex_transactions (
 create index if not exists idx_forex_txn_account on forex_transactions (account_id);
 
 -- ---------------------------------------------------------------------------
--- Loans = money OTHER PEOPLE owe the user, collected monthly (receivables).
+-- Loans = money OTHER PEOPLE owe the user (receivables), collected month by month or in
+-- one payment.
 -- ---------------------------------------------------------------------------
 create table if not exists loans (
   id bigint generated always as identity primary key,
@@ -205,6 +206,10 @@ create table if not exists loans (
   installment bigint not null default 0,
   lender text
 );
+
+-- A one-payment loan has no monthly rhythm to schedule from, so it carries an optional
+-- deadline instead of a start month. Null means no date was agreed.
+alter table loans add column if not exists deadline date;
 
 create table if not exists loan_payments (
   id bigint generated always as identity primary key,
