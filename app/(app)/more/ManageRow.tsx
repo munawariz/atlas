@@ -30,6 +30,11 @@ interface ManageRowProps {
   deleteMessage?: React.ReactNode;
   onMoveUp?: () => void | Promise<void>;
   onMoveDown?: () => void | Promise<void>;
+  /**
+   * Grab affordance for a drag-to-reorder list, rendered at the head of the row. Omit for a
+   * list that is not sortable (or a row that is the only one in it).
+   */
+  dragHandle?: React.ReactNode;
   /** DOM id, so an add form can jump to this row once it exists (`.target-flash`). */
   anchorId?: string;
   /** Extra controls rendered under the name — period select, installment toggle, etc. */
@@ -46,6 +51,7 @@ export default function ManageRow({
   deleteMessage,
   onMoveUp,
   onMoveDown,
+  dragHandle,
   anchorId,
   children,
 }: ManageRowProps) {
@@ -100,6 +106,7 @@ export default function ManageRow({
         </form>
       ) : (
         <div className="flex items-center gap-1">
+          {dragHandle}
           <span className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-900">
             {name}
             {archived && (

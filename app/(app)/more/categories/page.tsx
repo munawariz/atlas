@@ -2,29 +2,9 @@ import Link from "next/link";
 import { getCategories, getCategoryGroups, getGroupMembers } from "@/lib/data";
 import { ChevronLeft } from "@/components/icons";
 import type { Category, CategoryKind } from "@/lib/types";
-import ManageRow from "../ManageRow";
-import {
-  addGroupMember,
-  deleteCategory,
-  deleteGroup,
-  moveCategory,
-  moveGroup,
-  renameCategory,
-  renameGroup,
-  setCategoryFavorite,
-  setCategoryInstallment,
-  setCategoryPeriod,
-  toggleCategoryArchived,
-  toggleGroupArchived,
-  toggleGroupMember,
-} from "../actions";
 import { AddCategoryForm, AddGroupForm } from "./AddForms";
-import { GroupAddSelect, GroupMemberChip } from "./GroupControls";
-import {
-  CategoryFavoriteToggle,
-  CategoryInstallmentToggle,
-  CategoryPeriodSelect,
-} from "./CategoryControls";
+import CategoryList from "./CategoryList";
+import GroupList from "./GroupList";
 
 export const dynamic = "force-dynamic";
 
@@ -44,14 +24,6 @@ const KIND_SECTIONS: { kind: CategoryKind; label: string; hint: string }[] = [
     hint: "Where your stocks, bonds, crypto and forex hold value. Also outside net worth.",
   },
 ];
-
-/** Kind accent for the little dot on member chips — mirrors TYPE_ACCENT's palette. */
-const KIND_DOT: Record<CategoryKind, string> = {
-  expense: "bg-negative-500",
-  income: "bg-positive-500",
-  saving: "bg-info-500",
-  investment: "bg-forest-800",
-};
 
 export default async function CategoriesPage({
   searchParams,
@@ -76,7 +48,6 @@ export default async function CategoriesPage({
   // Membership per group, for the chips. Active categories only — an archived category
   // should not be joinable, it is on its way out.
   const activeCategories = categories.filter((c) => !c.archived);
-  const memberSet = new Set(members.map((m) => `${m.group_id}:${m.category_id}`));
 
   return (
     <div className="space-y-6">
@@ -113,7 +84,7 @@ export default async function CategoriesPage({
 
       <p className="-mt-3 text-[13px] text-ink-500">
         The labels every transaction gets — and the groups shown first when you
-        add one.
+        add one. Drag any row by its handle to reorder it.
       </p>
 
       {/* --- Groups: what adding a transaction leads with ------------------ */}
@@ -126,84 +97,18 @@ export default async function CategoriesPage({
 
         <AddGroupForm />
 
-        <div className="space-y-2">
-          {groups.map((group, index) => {
-            const memberCount = activeCategories.filter((c) =>
-              memberSet.has(`${group.id}:${c.id}`)
-            ).length;
-            return (
-            <ManageRow
-              key={group.id}
-              anchorId={`group-${group.id}`}
-              name={group.name}
-              archived={group.archived}
-              onRename={renameGroup.bind(null, group.id)}
-              onToggleArchive={toggleGroupArchived.bind(
-                null,
-                group.id,
-                !group.archived
-              )}
-              onDelete={deleteGroup.bind(null, group.id)}
-              deleteMessage={
-                <>
-                  Delete <strong>{group.name}</strong>? The group goes; the{" "}
-                  {memberCount} {memberCount === 1 ? "category" : "categories"} in
-                  it {memberCount === 1 ? "is" : "are"} untouched.
-                </>
-              }
-              onMoveUp={index > 0 ? moveGroup.bind(null, group.id, -1) : undefined}
-              onMoveDown={
-                index < groups.length - 1
-                  ? moveGroup.bind(null, group.id, 1)
-                  : undefined
-              }
-            >
-              {/* Only the group's MEMBERS render as chips (tap × to remove); everything
-                  else stays tucked inside the add-select so long category lists don't
-                  swamp the row. */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                {activeCategories
-                  .filter((c) => memberSet.has(`${group.id}:${c.id}`))
-                  .map((category) => (
-                    <GroupMemberChip
-                      key={category.id}
-                      name={category.name}
-                      groupName={group.name}
-                      dotClassName={KIND_DOT[category.kind]}
-                      onRemove={toggleGroupMember.bind(
-                        null,
-                        group.id,
-                        category.id,
-                        false
-                      )}
-                    />
-                  ))}
-
-                <GroupAddSelect
-                  options={activeCategories.filter(
-                    (c) => !memberSet.has(`${group.id}:${c.id}`)
-                  )}
-                  onAdd={addGroupMember.bind(null, group.id)}
-                />
-
-                {activeCategories.length === 0 && (
-                  <p className="text-[13px] text-ink-500">
-                    No categories yet. Add some below, then add them to this
-                    group.
-                  </p>
-                )}
-              </div>
-            </ManageRow>
-            );
-          })}
-
-          {groups.length === 0 && (
-            <p className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
-              No groups yet. Adding a transaction will list categories by kind
-              instead.
-            </p>
-          )}
-        </div>
+        {groups.length > 0 ? (
+          <GroupList
+            groups={groups}
+            categories={activeCategories}
+            members={members}
+          />
+        ) : (
+          <p className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
+            No groups yet. Adding a transaction will list categories by kind
+            instead.
+          </p>
+        )}
       </section>
 
       {KIND_SECTIONS.map((section) => {
@@ -242,93 +147,41 @@ export default async function CategoriesPage({
               kindLabel={section.label.toLowerCase()}
             />
 
-            <div className="space-y-2">
-              {archivedCount > 0 && !showArchived && (
-                <Link
-                  href="/more/categories?archived=1"
-                  className="block text-[13px] font-semibold text-forest-800 no-underline"
-                >
-                  Show {archivedCount} archived
-                </Link>
-              )}
-              {list.map((category, index) => (
-                <ManageRow
-                  key={category.id}
-                  anchorId={`category-${category.id}`}
-                  name={category.name}
-                  archived={category.archived}
-                  onRename={renameCategory.bind(null, category.id)}
-                  onToggleArchive={toggleCategoryArchived.bind(
-                    null,
-                    category.id,
-                    !category.archived
-                  )}
-                  onDelete={deleteCategory.bind(null, category.id)}
-                  deleteMessage={
-                    <>
-                      Delete <strong>{category.name}</strong> permanently? Past
-                      transactions keep their history but lose this label.
-                    </>
-                  }
-                  onMoveUp={
-                    index > 0 ? moveCategory.bind(null, category.id, -1) : undefined
-                  }
-                  onMoveDown={
-                    index < list.length - 1
-                      ? moveCategory.bind(null, category.id, 1)
-                      : undefined
-                  }
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <CategoryPeriodSelect
-                      period={category.period}
-                      onChange={setCategoryPeriod.bind(null, category.id)}
-                    />
-                    <CategoryFavoriteToggle
-                      isFavorite={category.is_favorite}
-                      onToggle={setCategoryFavorite.bind(
-                        null,
-                        category.id,
-                        !category.is_favorite
-                      )}
-                    />
-                    {section.kind === "expense" && (
-                      <CategoryInstallmentToggle
-                        isInstallment={category.is_installment}
-                        onToggle={setCategoryInstallment.bind(
-                          null,
-                          category.id,
-                          !category.is_installment
-                        )}
-                      />
-                    )}
-                  </div>
-                </ManageRow>
-              ))}
+            {/* The archived link sits OUTSIDE the sortable list: it measures its own
+                children as rows, and a link is not one. */}
+            {archivedCount > 0 && !showArchived && (
+              <Link
+                href="/more/categories?archived=1"
+                className="mb-2 block text-[13px] font-semibold text-forest-800 no-underline"
+              >
+                Show {archivedCount} archived
+              </Link>
+            )}
 
-              {list.length === 0 && (
-                <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
-                  {archivedCount > 0 ? (
-                    <>
-                      <p>
-                        Every {section.label.toLowerCase()} category is archived.
-                      </p>
-                      <Link
-                        href="/more/categories?archived=1"
-                        className="mt-1 inline-block font-semibold text-forest-800 no-underline"
-                      >
-                        Show archived
-                      </Link>
-                    </>
-                  ) : (
+            {list.length > 0 ? (
+              <CategoryList categories={list} kind={section.kind} />
+            ) : (
+              <div className="rounded-[var(--radius-card)] bg-white px-5 py-6 text-center text-[13px] text-ink-500 shadow-[var(--shadow-xs)]">
+                {archivedCount > 0 ? (
+                  <>
                     <p>
-                      No {section.label.toLowerCase()} categories yet. Add one
-                      above.
+                      Every {section.label.toLowerCase()} category is archived.
                     </p>
-                  )}
-                </div>
-              )}
-            </div>
+                    <Link
+                      href="/more/categories?archived=1"
+                      className="mt-1 inline-block font-semibold text-forest-800 no-underline"
+                    >
+                      Show archived
+                    </Link>
+                  </>
+                ) : (
+                  <p>
+                    No {section.label.toLowerCase()} categories yet. Add one
+                    above.
+                  </p>
+                )}
+              </div>
+            )}
           </section>
         );
       })}

@@ -294,11 +294,41 @@ export async function deleteCategory(id: number): Promise<ManageState> {
   return { ok: true, nonce: Date.now() };
 }
 
-/** Persist a drag-reorder: the client sends the full id order for one kind. */
-export async function reorderCategories(ids: number[]): Promise<void> {
+/**
+ * Persist a drag-reorder of one kind's list.
+ *
+ * `orderedIds` is what the user can SEE, in its new order — archived rows are hidden unless
+ * `?archived=1`, so the payload is usually a subset of the kind. Numbering it 0..n directly
+ * would collide with the hidden rows' existing sort_order, so the visible ids are spliced
+ * back into the kind's full order instead: every slot a payload row occupied is refilled
+ * from the payload in its new sequence, and hidden rows keep the slot they had. The kind is
+ * then renumbered 0..n, so sort_order stays gap-free.
+ */
+export async function reorderCategories(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length < 2) return;
   const sb = supabaseServer();
+  const { data } = await sb
+    .from("categories")
+    .select("id, kind")
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  const all = (data ?? []) as { id: number; kind: CategoryKind }[];
+  const kind = all.find((c) => c.id === orderedIds[0])?.kind;
+  if (!kind) return;
+
+  // Anything the payload names outside this kind is dropped: the page renders one list per
+  // kind, so a mixed payload is a bug rather than an intent to move across kinds.
+  const list = all.filter((c) => c.kind === kind);
+  const inKind = new Set(list.map((c) => c.id));
+  const moving = orderedIds.filter((id) => inKind.has(id));
+  const movingSet = new Set(moving);
+
+  let cursor = 0;
+  const merged = list.map((c) => (movingSet.has(c.id) ? moving[cursor++] : c.id));
+
   await Promise.all(
-    ids.map((id, index) =>
+    merged.map((id, index) =>
       sb.from("categories").update({ sort_order: index }).eq("id", id)
     )
   );
@@ -376,6 +406,21 @@ export async function moveGroup(id: number, delta: number): Promise<void> {
   await Promise.all(
     list.map((g, index) =>
       sb.from("category_groups").update({ sort_order: index }).eq("id", g.id)
+    )
+  );
+  revalidateManage();
+}
+
+/**
+ * Persist a drag-reorder of the groups list. Every group renders, archived included, so the
+ * payload is the whole list and a straight 0..n renumber is complete.
+ */
+export async function reorderGroups(orderedIds: number[]): Promise<void> {
+  if (orderedIds.length < 2) return;
+  const sb = supabaseServer();
+  await Promise.all(
+    orderedIds.map((id, index) =>
+      sb.from("category_groups").update({ sort_order: index }).eq("id", id)
     )
   );
   revalidateManage();
