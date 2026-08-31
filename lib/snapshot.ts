@@ -160,14 +160,19 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
 
   const loanRows = loans.map((loan) => {
     const schedule = paymentsByLoan.get(loan.id) ?? [];
-    const expected = schedule.reduce(
-      (sum, p) => sum + (p.amount ?? loan.installment),
+    // Expected is every scheduled month at its full installment; `amount` is the running
+    // total collected, so a partial counts toward collected without shrinking the target.
+    const expected = schedule.length * loan.installment;
+    const collected = schedule.reduce(
+      (sum, p) => sum + (p.amount ?? (p.paid ? loan.installment : 0)),
       0
     );
-    const collected = schedule
-      .filter((p) => p.paid)
-      .reduce((sum, p) => sum + (p.amount ?? loan.installment), 0);
-    return { ...loan, expected, collected, outstanding: expected - collected };
+    return {
+      ...loan,
+      expected,
+      collected,
+      outstanding: Math.max(0, expected - collected),
+    };
   });
 
   // --- Installments -------------------------------------------------------

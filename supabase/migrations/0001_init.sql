@@ -217,9 +217,51 @@ create table if not exists loan_payments (
   period_month date not null,
   paid boolean not null default false,
   income_txn_id bigint references transactions(id) on delete set null,
-  amount bigint,                   -- actually collected (may be partial); null = full installment
+  amount bigint,                   -- running total collected so far; null = nothing yet
   unique (loan_id, period_month)
 );
+
+-- One row per collection actually received. A month can take several: a partial collection
+-- leaves the slot open, so `loan_payments.paid` flips only once the full installment is in,
+-- and `loan_payments.amount` carries the running total these rows sum to.
+create table if not exists loan_collections (
+  id bigint generated always as identity primary key,
+  payment_id bigint not null references loan_payments(id) on delete cascade,
+  amount bigint not null,
+  occurred_on date not null,
+  txn_id bigint references transactions(id) on delete set null
+);
+create index if not exists idx_loan_collections_payment on loan_collections (payment_id);
+
+-- Adoption: every month already marked collected becomes its single collection. The
+-- `not exists` guard is what makes a re-run add nothing.
+insert into loan_collections (payment_id, amount, occurred_on, txn_id)
+select p.id,
+       coalesce(p.amount, l.installment),
+       coalesce(t.occurred_on, p.period_month),
+       p.income_txn_id
+from loan_payments p
+join loans l on l.id = p.loan_id
+left join transactions t on t.id = p.income_txn_id
+where p.paid
+  and not exists (select 1 from loan_collections c where c.payment_id = p.id);
+
+-- `amount` used to read "null = the full installment"; it now carries the running total, so a
+-- month collected before this migration has to spell its number out.
+update loan_payments p
+   set amount = l.installment
+  from loans l
+ where l.id = p.loan_id and p.paid and p.amount is null;
+
+-- A partial used to close its month outright, which is what made a part-collected loan read
+-- as fully collected. Reopen every month whose collections never reached the installment —
+-- the money stays counted, the remainder becomes collectable again.
+update loan_payments p
+   set paid = false
+  from loans l
+ where l.id = p.loan_id
+   and p.paid
+   and coalesce(p.amount, l.installment) < l.installment;
 
 -- ---------------------------------------------------------------------------
 -- Stocks. Quantity is in lots; 1 lot = 100 shares (IDX market convention).

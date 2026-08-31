@@ -249,11 +249,16 @@ they are what the user reads in History, so they matter:
 | Installment payment | the installment item's own name |
 | Loan collection | the person's name |
 
-**Cost-basis method is average cost** for stocks, crypto and forex. For stocks it's per-lot:
-`avgPerLot = Σ buy_idr / Σ buy_lots`, `realizedCost = round(lots × avgPerLot)`,
-`realizedPl = proceeds − realizedCost`. Crypto is the same formula per coin, on fractional units.
-For forex it's a chronological walk (buys add units+cost, sells remove cost proportionally to
-units sold).
+**Cost-basis method is average cost** for stocks, crypto and forex, and all three compute it
+the same way: **a chronological walk** — a buy adds quantity and cost, a sell removes cost in
+proportion to the quantity it takes. `realizedCost = round(qty × avg)`,
+`realizedPl = proceeds − realizedCost`. Per lot for stocks (`stockPositions`), per coin on
+fractional units for crypto (`cryptoPositions`), per unit for forex (`forexAvgCost`).
+
+The proportionality is the whole method: it is what makes selling out empty the position, so
+the next buy averages from scratch. `Σ buy_idr / Σ buy_lots` is NOT equivalent — it keeps sold
+lots in the denominator, so a ticker bought at 1m, sold in full, then bought again at 2m reports
+1.5m against a position that cost 2m. Closed positions must leave no residue.
 
 Undoing any of these deletes the linked `txn_id` (and `pl_txn_id`) rows.
 
@@ -436,9 +441,51 @@ create table if not exists loan_payments (
   period_month date not null,
   paid boolean not null default false,
   income_txn_id bigint references transactions(id) on delete set null,
-  amount bigint,                   -- actually collected (may be partial); null = full installment
+  amount bigint,                   -- running total collected so far; null = nothing yet
   unique (loan_id, period_month)
 );
+
+-- One row per collection actually received. A month can take several: a partial collection
+-- leaves the slot open, so `loan_payments.paid` flips only once the full installment is in,
+-- and `loan_payments.amount` carries the running total these rows sum to.
+create table if not exists loan_collections (
+  id bigint generated always as identity primary key,
+  payment_id bigint not null references loan_payments(id) on delete cascade,
+  amount bigint not null,
+  occurred_on date not null,
+  txn_id bigint references transactions(id) on delete set null
+);
+create index if not exists idx_loan_collections_payment on loan_collections (payment_id);
+
+-- Adoption: every month already marked collected becomes its single collection. The
+-- `not exists` guard is what makes a re-run add nothing.
+insert into loan_collections (payment_id, amount, occurred_on, txn_id)
+select p.id,
+       coalesce(p.amount, l.installment),
+       coalesce(t.occurred_on, p.period_month),
+       p.income_txn_id
+from loan_payments p
+join loans l on l.id = p.loan_id
+left join transactions t on t.id = p.income_txn_id
+where p.paid
+  and not exists (select 1 from loan_collections c where c.payment_id = p.id);
+
+-- `amount` used to read "null = the full installment"; it now carries the running total, so a
+-- month collected before this migration has to spell its number out.
+update loan_payments p
+   set amount = l.installment
+  from loans l
+ where l.id = p.loan_id and p.paid and p.amount is null;
+
+-- A partial used to close its month outright, which is what made a part-collected loan read
+-- as fully collected. Reopen every month whose collections never reached the installment —
+-- the money stays counted, the remainder becomes collectable again.
+update loan_payments p
+   set paid = false
+  from loans l
+ where l.id = p.loan_id
+   and p.paid
+   and coalesce(p.amount, l.installment) < l.installment;
 
 -- Stock trades. Quantity is in lots; 1 lot = 100 shares (IDX market convention).
 create table if not exists stock_trades (
@@ -794,7 +841,7 @@ All start with `import "server-only"` **except** `format.ts`, `types.ts`, `txnFo
 Shared TS types + constants (no server imports — client components use it):
 `CategoryKind`, `TxnType`, `Wallet`, `Category`, `Transaction`, `WalletBalance`, `BudgetPeriod`,
 `BUDGET_PERIODS`, `EffectiveBudget`, `PaylaterProvider`, `PaylaterItem`, `PaylaterPayment`,
-`ForexAccount`, `ForexTransaction`, `Loan`, `LoanPayment`, plus:
+`ForexAccount`, `ForexTransaction`, `Loan`, `LoanPayment`, `LoanCollection`, plus:
 
 ```ts
 export const TYPE_TO_CATEGORY_KIND: Record<TxnType, CategoryKind | null> = {
@@ -965,9 +1012,13 @@ Fix that: write every submitted key, deleting the row when the value is blank.
   `EXCHANGE_SUFFIX` is an exported constant defaulting to `".JK"` (Jakarta / IDX, which is what
   an IDR portfolio implies); expose it as a constant rather than inlining it so another market
   is a one-line change.
-- `getStockPortfolio(asOf?, livePrices = true)` — aggregate buys/sells per ticker,
-  `lots = buyLots − sellLots`, keep only `lots > 0`, `avgPerLot = buyIdr / buyLots`,
-  `avgPerShare = avgPerLot / 100`, `value = lots × 100 × price`. Fetch prices in parallel.
+- `stockPositions(trades)` / `stockPosition(trades, ticker)` — **pure**; lots held, cost basis
+  and average per lot from the chronological walk (§3.5). Shared with the sell path in the
+  action so a disposal is priced off the same numbers the portfolio shows.
+- `getStockPortfolio(asOf?, livePrices = true)` — aggregate buys/sells per ticker for
+  `invested`/`proceeds`/`realizedPl`, but take `lots`, `costBasis` and `avgPerLot` from
+  `stockPositions` and keep only `lots > 0`. `avgPerShare = avgPerLot / 100`,
+  `value = lots × 100 × price`. Fetch prices in parallel.
   `livePrices=false` for past-year snapshots. Report `missing` tickers separately and exclude them
   from `pricedValue`/`pricedCost` so P/L is never computed against a partial set.
 
@@ -985,12 +1036,15 @@ fractional quantity — coins, not whole lots — and no dividends or targets. K
   where `BTC-USD` does not, so coins are priced in USD. **Return `null` on any failure.**
 - `getLiveCryptoPrice(symbol)` — that price × `getForexRate("USD")`, in IDR. A missing rate is
   `null`, never `0` — a coin priced at nothing would silently wipe out the portfolio's value.
-- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol,
-  `units = buyUnits − sellUnits`, `avgPerUnit = buyIdr / buyUnits`, `value = units × price`.
-  One rate lookup for the whole portfolio, prices in parallel. `missing` symbols are excluded
-  from `pricedValue`/`pricedCost`, as with stocks.
-- `cryptoPosition(trades, symbol)` — **pure**; units held and average cost, shared with the
-  sell path in the action.
+- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol for
+  `invested`/`proceeds`/`realizedPl`, but take `units`, `costBasis` and `avgPerUnit` from
+  `cryptoPositions` and keep only `units > DUST`. `value = units × price`. One rate lookup for
+  the whole portfolio, prices in parallel. `missing` symbols are excluded from
+  `pricedValue`/`pricedCost`, as with stocks.
+- `cryptoPositions(trades)` / `cryptoPosition(trades, symbol)` — **pure**; units held, cost
+  basis and average cost from the same chronological walk the stocks module does (§3.5),
+  shared with the sell path in the action. Units are reported raw so selling a dust remainder
+  still matches, but a dust position is priced at zero rather than cost ÷ dust.
 - `DUST = 1e-8` — fractional units never land exactly on zero, so "still held" and "can you
   sell this much" are tolerances rather than `> 0` comparisons.
 
@@ -1295,6 +1349,13 @@ monthly Rp, note, start month, # months → lays out the schedule, capped at 60)
 shows outstanding, % collected, a progress bar, and a `PaymentGrid` of scheduled months where you
 can collect (wallet + date + **partial amount**), un-collect, and schedule/unschedule months in an
 edit mode. A loan is *finished* only when every scheduled month is **fully** collected.
+
+A month can be collected **more than once**: each collection books its own income row on its own
+date into `loan_collections`, `loan_payments.amount` carries the running total, and `paid` flips
+only once that total reaches the installment. So a partial leaves the month amber ("Partly
+collected") with a **Collect the rest** form still on it, and the card's % is measured against
+every scheduled month at full installment — never against what has already come in. Each
+collection undoes on its own; a month with anything collected against it cannot be unscheduled.
 
 ### `/more/settings`
 Two sections of `<select>`s — automated transaction categories (from `CATEGORY_SETTINGS`, each

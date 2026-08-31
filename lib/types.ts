@@ -162,10 +162,27 @@ export interface LoanPayment {
   id: number;
   loan_id: number;
   period_month: string; // YYYY-MM-01
+  /** Fully collected. A partial collection leaves this false — the month stays open. */
   paid: boolean;
+  /** Legacy: the first collection's income row. New collections live in `LoanCollection`. */
   income_txn_id: number | null;
-  /** Actually collected (may be partial); null = the full installment. */
+  /** Running total collected against this month; null = nothing collected yet. */
   amount: number | null;
+}
+
+/**
+ * One collection actually received against a scheduled month.
+ *
+ * A month can hold several, because a partial collection leaves it open — each one books its
+ * own income row on its own date, which is the only way history stays true to when the money
+ * arrived.
+ */
+export interface LoanCollection {
+  id: number;
+  payment_id: number;
+  amount: number;
+  occurred_on: string; // YYYY-MM-DD
+  txn_id: number | null;
 }
 
 /**

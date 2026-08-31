@@ -14,6 +14,7 @@ import type {
   CategoryKind,
   EffectiveBudget,
   Loan,
+  LoanCollection,
   LoanPayment,
   PaylaterItem,
   PaylaterPayment,
@@ -735,6 +736,21 @@ export const getLoanPayments = cache(async (): Promise<LoanPayment[]> => {
     throw error;
   }
   return (data ?? []) as LoanPayment[];
+});
+
+/** Every collection received, oldest first — several may share one scheduled month. */
+export const getLoanCollections = cache(async (): Promise<LoanCollection[]> => {
+  const sb = supabaseServer();
+  const { data, error } = await sb
+    .from("loan_collections")
+    .select("*")
+    .order("occurred_on", { ascending: true })
+    .order("id", { ascending: true });
+  if (error) {
+    if (isMissingTable(error)) return [];
+    throw error;
+  }
+  return (data ?? []) as LoanCollection[];
 });
 
 // =============================================================================
