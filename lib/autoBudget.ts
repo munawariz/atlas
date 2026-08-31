@@ -47,9 +47,10 @@ export async function loanAutoBudget(
   let count = 0;
   for (const payment of payments) {
     if (payment.period_month !== monthKey) continue;
-    // A partial collection stores what was actually taken; otherwise the full installment
-    // is what is expected.
-    total += payment.amount ?? installmentOf.get(payment.loan_id) ?? 0;
+    // The whole installment is what the month expects. A partial collection does not lower
+    // that — the rest is still due — so the running total only counts once it overshoots.
+    const installment = installmentOf.get(payment.loan_id) ?? 0;
+    total += Math.max(installment, payment.amount ?? 0);
     count += 1;
   }
 

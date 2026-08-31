@@ -105,15 +105,23 @@ export async function addLoan(
 export async function deleteLoan(id: number): Promise<void> {
   const sb = supabaseServer();
 
-  // Remove the income rows this loan booked before its payments cascade away.
+  // Remove the income rows this loan booked before its payments cascade away. Collections are
+  // where they live now; `income_txn_id` is read too so a database that has not run the
+  // backfill yet still leaves nothing behind.
   const { data: payments } = await sb
     .from("loan_payments")
-    .select("income_txn_id")
+    .select("id, income_txn_id")
     .eq("loan_id", id);
 
-  const txnIds = ((payments ?? []) as { income_txn_id: number | null }[])
-    .map((p) => p.income_txn_id)
-    .filter((v): v is number => v != null);
+  const paymentIds = ((payments ?? []) as { id: number }[]).map((p) => Number(p.id));
+  const { data: collections } = paymentIds.length
+    ? await sb.from("loan_collections").select("txn_id").in("payment_id", paymentIds)
+    : { data: [] };
+
+  const txnIds = [
+    ...((payments ?? []) as { income_txn_id: number | null }[]).map((p) => p.income_txn_id),
+    ...((collections ?? []) as { txn_id: number | null }[]).map((c) => c.txn_id),
+  ].filter((v): v is number => v != null);
 
   if (txnIds.length > 0) {
     await sb.from("transactions").delete().in("id", txnIds);
@@ -124,7 +132,12 @@ export async function deleteLoan(id: number): Promise<void> {
 }
 
 /**
- * Collect one scheduled month, booking income under the mapped loan category.
+ * Collect against one scheduled month, booking income under the mapped loan category.
+ *
+ * A month can be collected more than once. Each call books its own income row on its own date
+ * and adds a `loan_collections` row; the schedule slot carries the running total, and `paid`
+ * flips only when that total reaches the installment. That is what keeps a partially
+ * collected month open — and collectable again.
  *
  * The mapping is checked BEFORE the first write (ATLAS.md §11): discovering it is unmapped
  * halfway through would leave a payment marked collected with no matching ledger row.
@@ -144,14 +157,27 @@ export async function collectLoanMonth(formData: FormData): Promise<LoanState> {
   const walletId = optInt(formData.get("wallet_id"));
   if (!walletId) return { error: "Choose which wallet received it." };
 
-  // A blank amount means the full installment; a partial collection stores what was taken.
+  const sb = supabaseServer();
+  const { data: slot } = await sb
+    .from("loan_payments")
+    .select("id, amount")
+    .eq("loan_id", loanId)
+    .eq("period_month", month)
+    .maybeSingle();
+
+  const already = Number(slot?.amount ?? 0);
+  const remaining = Math.max(0, loan.installment - already);
+
+  // Blank means whatever is still owed on this month: the full installment the first time,
+  // the remainder after a partial. Once the month is square there is no remainder to infer,
+  // so blank falls back to a fresh installment rather than booking nothing.
   const rawAmount = digits(formData.get("amount"));
-  const amount = rawAmount > 0 ? rawAmount : loan.installment;
+  const amount =
+    rawAmount > 0 ? rawAmount : remaining > 0 ? remaining : loan.installment;
   if (amount <= 0) return { error: "Enter an amount." };
 
   const occurredOn = text(formData.get("occurred_on")) || month;
 
-  const sb = supabaseServer();
   const { data: created } = await sb
     .from("transactions")
     .insert({
@@ -167,22 +193,102 @@ export async function collectLoanMonth(formData: FormData): Promise<LoanState> {
     .select("id")
     .maybeSingle();
 
-  await sb.from("loan_payments").upsert(
-    {
-      loan_id: loanId,
-      period_month: month,
-      paid: true,
-      income_txn_id: created ? Number(created.id) : null,
-      amount: rawAmount > 0 ? rawAmount : null,
-    },
-    { onConflict: "loan_id,period_month" }
-  );
+  const total = already + amount;
+  const { data: saved } = await sb
+    .from("loan_payments")
+    .upsert(
+      {
+        loan_id: loanId,
+        period_month: month,
+        paid: total >= loan.installment,
+        amount: total,
+      },
+      { onConflict: "loan_id,period_month" }
+    )
+    .select("id")
+    .maybeSingle();
+
+  const paymentId = Number(saved?.id ?? slot?.id ?? 0);
+  if (paymentId) {
+    await sb.from("loan_collections").insert({
+      payment_id: paymentId,
+      amount,
+      occurred_on: occurredOn,
+      txn_id: created ? Number(created.id) : null,
+    });
+  }
 
   revalidateLoans();
   return { ok: true, nonce: Date.now() };
 }
 
-/** Un-collect: delete the linked income row, then reset the schedule slot. */
+/**
+ * Undo one collection: delete the income row it booked, drop it, re-total its month.
+ *
+ * Undoing the only collection leaves the month uncollected; undoing one of several reopens
+ * the month for what is left.
+ */
+export async function undoLoanCollection(formData: FormData): Promise<void> {
+  const id = optInt(formData.get("collection_id"));
+  if (!id) return;
+
+  const sb = supabaseServer();
+  const { data: collection } = await sb
+    .from("loan_collections")
+    .select("id, payment_id, txn_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!collection) return;
+
+  if (collection.txn_id) {
+    await sb.from("transactions").delete().eq("id", collection.txn_id);
+  }
+  await sb.from("loan_collections").delete().eq("id", collection.id);
+
+  await retotalPayment(Number(collection.payment_id));
+  revalidateLoans();
+}
+
+/**
+ * Re-sum a schedule slot from the collections still standing against it.
+ *
+ * The stored total is derived, never adjusted in place: rebuilding it from the rows is what
+ * keeps `paid` honest whichever collection was undone.
+ */
+async function retotalPayment(paymentId: number): Promise<void> {
+  const sb = supabaseServer();
+  const { data: payment } = await sb
+    .from("loan_payments")
+    .select("id, loan_id")
+    .eq("id", paymentId)
+    .maybeSingle();
+  if (!payment) return;
+
+  const loans = await getLoans();
+  const installment =
+    loans.find((l) => l.id === Number(payment.loan_id))?.installment ?? 0;
+
+  const { data: rows } = await sb
+    .from("loan_collections")
+    .select("amount")
+    .eq("payment_id", paymentId);
+
+  const total = ((rows ?? []) as { amount: number }[]).reduce(
+    (sum, r) => sum + Number(r.amount),
+    0
+  );
+
+  await sb
+    .from("loan_payments")
+    .update({
+      paid: total > 0 && total >= installment,
+      amount: total > 0 ? total : null,
+      income_txn_id: null,
+    })
+    .eq("id", paymentId);
+}
+
+/** Un-collect a whole month: delete every income row it booked, then reset the slot. */
 export async function uncollectLoanMonth(formData: FormData): Promise<void> {
   const loanId = optInt(formData.get("loan_id"));
   const month = monthDate(formData.get("period_month"));
@@ -197,9 +303,20 @@ export async function uncollectLoanMonth(formData: FormData): Promise<void> {
     .maybeSingle();
   if (!payment) return;
 
-  if (payment.income_txn_id) {
-    await sb.from("transactions").delete().eq("id", payment.income_txn_id);
+  const { data: collections } = await sb
+    .from("loan_collections")
+    .select("txn_id")
+    .eq("payment_id", payment.id);
+
+  const txnIds = [
+    payment.income_txn_id as number | null,
+    ...((collections ?? []) as { txn_id: number | null }[]).map((c) => c.txn_id),
+  ].filter((v): v is number => v != null);
+
+  if (txnIds.length > 0) {
+    await sb.from("transactions").delete().in("id", txnIds);
   }
+  await sb.from("loan_collections").delete().eq("payment_id", payment.id);
   await sb
     .from("loan_payments")
     .update({ paid: false, income_txn_id: null, amount: null })
@@ -224,18 +341,33 @@ export async function scheduleLoanMonth(formData: FormData): Promise<void> {
   revalidateLoans();
 }
 
-/** Remove an uncollected month from the schedule. Collected months must be un-collected first. */
+/**
+ * Remove a month from the schedule. Anything collected against it must be undone first —
+ * including a partial, which leaves `paid` false but still has income rows behind it that
+ * deleting the slot would cascade away and orphan.
+ */
 export async function unscheduleLoanMonth(formData: FormData): Promise<void> {
   const loanId = optInt(formData.get("loan_id"));
   const month = monthDate(formData.get("period_month"));
   if (!loanId || !month) return;
 
-  await supabaseServer()
+  const sb = supabaseServer();
+  const { data: payment } = await sb
     .from("loan_payments")
-    .delete()
+    .select("id")
     .eq("loan_id", loanId)
     .eq("period_month", month)
-    .eq("paid", false);
+    .eq("paid", false)
+    .maybeSingle();
+  if (!payment) return;
+
+  const { count } = await sb
+    .from("loan_collections")
+    .select("id", { count: "exact", head: true })
+    .eq("payment_id", payment.id);
+  if (count) return;
+
+  await sb.from("loan_payments").delete().eq("id", payment.id);
 
   revalidateLoans();
 }

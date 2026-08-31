@@ -3,6 +3,7 @@ import ConfirmDeleteButton from "@/components/ConfirmDeleteButton";
 import { ChevronLeft } from "@/components/icons";
 import {
   currentMonthKey,
+  getLoanCollections,
   getLoanPayments,
   getLoans,
   getWallets,
@@ -43,9 +44,10 @@ export default async function LoansPage({
 
   // Deliberately no MonthSwitcher, unlike Installments: a loan shows its whole schedule at
   // once, and a month scope would hide most of it (atlas-ux-plan-manage-pages.md, Lending UX #7).
-  const [loans, payments, wallets] = await Promise.all([
+  const [loans, payments, collections, wallets] = await Promise.all([
     getLoans(),
     getLoanPayments(),
+    getLoanCollections(),
     getWallets(),
   ]);
 
@@ -56,21 +58,35 @@ export default async function LoansPage({
     byLoan.set(payment.loan_id, list);
   }
 
+  const byPayment = new Map<number, typeof collections>();
+  for (const collection of collections) {
+    const list = byPayment.get(collection.payment_id) ?? [];
+    list.push(collection);
+    byPayment.set(collection.payment_id, list);
+  }
+
   const today = todayISO();
 
   const rows = loans.map((loan) => {
     const schedule = byLoan.get(loan.id) ?? [];
-    const expected = schedule.reduce(
-      (sum, p) => sum + (p.amount ?? loan.installment),
+    const received = schedule.flatMap((p) => byPayment.get(p.id) ?? []);
+
+    /*
+     * Expected is what the schedule is FOR — every month at its full installment. Deriving it
+     * from what has been collected instead is how a Rp 300k collection against a Rp 1m loan
+     * used to read as 100% collected: the target shrank to meet the payment.
+     */
+    const expected = schedule.length * loan.installment;
+    const collected = schedule.reduce(
+      (sum, p) => sum + (p.amount ?? (p.paid ? loan.installment : 0)),
       0
     );
-    const collected = schedule
-      .filter((p) => p.paid)
-      .reduce((sum, p) => sum + (p.amount ?? loan.installment), 0);
 
     /**
      * Finished means every scheduled month is FULLY collected — a partial collection leaves
-     * the loan open, which is the whole point of tracking partials separately.
+     * the loan open, which is the whole point of tracking partials separately. `paid` already
+     * carries that meaning; the amount is re-checked so a month collected before partials
+     * were totalled up is still read the strict way.
      */
     const finished =
       schedule.length > 0 &&
@@ -92,9 +108,16 @@ export default async function LoansPage({
       schedule,
       expected,
       collected,
+      received,
       // How many ledger rows a delete would take with it — the confirm panel names the number.
-      collectedCount: schedule.filter((p) => p.paid).length,
-      outstanding: expected - collected,
+      // One per collection, not per month: a month collected in two goes booked two. A
+      // database still on the old shape has no collection rows, so months stand in for them.
+      collectedCount: Math.max(
+        received.length,
+        schedule.filter((p) => p.paid).length
+      ),
+      // Over-collecting a month is money in hand, not a negative debt.
+      outstanding: Math.max(0, expected - collected),
       pct: expected > 0 ? (collected / expected) * 100 : 0,
       finished,
       once,
@@ -246,6 +269,7 @@ export default async function LoansPage({
               <PaymentGrid
                 loan={row.loan}
                 payments={row.schedule}
+                collections={row.received}
                 wallets={wallets}
                 defaultWalletId={defaultWalletId}
               />
