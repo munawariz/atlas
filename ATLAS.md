@@ -249,11 +249,16 @@ they are what the user reads in History, so they matter:
 | Installment payment | the installment item's own name |
 | Loan collection | the person's name |
 
-**Cost-basis method is average cost** for stocks, crypto and forex. For stocks it's per-lot:
-`avgPerLot = Σ buy_idr / Σ buy_lots`, `realizedCost = round(lots × avgPerLot)`,
-`realizedPl = proceeds − realizedCost`. Crypto is the same formula per coin, on fractional units.
-For forex it's a chronological walk (buys add units+cost, sells remove cost proportionally to
-units sold).
+**Cost-basis method is average cost** for stocks, crypto and forex, and all three compute it
+the same way: **a chronological walk** — a buy adds quantity and cost, a sell removes cost in
+proportion to the quantity it takes. `realizedCost = round(qty × avg)`,
+`realizedPl = proceeds − realizedCost`. Per lot for stocks (`stockPositions`), per coin on
+fractional units for crypto (`cryptoPositions`), per unit for forex (`forexAvgCost`).
+
+The proportionality is the whole method: it is what makes selling out empty the position, so
+the next buy averages from scratch. `Σ buy_idr / Σ buy_lots` is NOT equivalent — it keeps sold
+lots in the denominator, so a ticker bought at 1m, sold in full, then bought again at 2m reports
+1.5m against a position that cost 2m. Closed positions must leave no residue.
 
 Undoing any of these deletes the linked `txn_id` (and `pl_txn_id`) rows.
 
@@ -1007,9 +1012,13 @@ Fix that: write every submitted key, deleting the row when the value is blank.
   `EXCHANGE_SUFFIX` is an exported constant defaulting to `".JK"` (Jakarta / IDX, which is what
   an IDR portfolio implies); expose it as a constant rather than inlining it so another market
   is a one-line change.
-- `getStockPortfolio(asOf?, livePrices = true)` — aggregate buys/sells per ticker,
-  `lots = buyLots − sellLots`, keep only `lots > 0`, `avgPerLot = buyIdr / buyLots`,
-  `avgPerShare = avgPerLot / 100`, `value = lots × 100 × price`. Fetch prices in parallel.
+- `stockPositions(trades)` / `stockPosition(trades, ticker)` — **pure**; lots held, cost basis
+  and average per lot from the chronological walk (§3.5). Shared with the sell path in the
+  action so a disposal is priced off the same numbers the portfolio shows.
+- `getStockPortfolio(asOf?, livePrices = true)` — aggregate buys/sells per ticker for
+  `invested`/`proceeds`/`realizedPl`, but take `lots`, `costBasis` and `avgPerLot` from
+  `stockPositions` and keep only `lots > 0`. `avgPerShare = avgPerLot / 100`,
+  `value = lots × 100 × price`. Fetch prices in parallel.
   `livePrices=false` for past-year snapshots. Report `missing` tickers separately and exclude them
   from `pricedValue`/`pricedCost` so P/L is never computed against a partial set.
 
@@ -1027,12 +1036,15 @@ fractional quantity — coins, not whole lots — and no dividends or targets. K
   where `BTC-USD` does not, so coins are priced in USD. **Return `null` on any failure.**
 - `getLiveCryptoPrice(symbol)` — that price × `getForexRate("USD")`, in IDR. A missing rate is
   `null`, never `0` — a coin priced at nothing would silently wipe out the portfolio's value.
-- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol,
-  `units = buyUnits − sellUnits`, `avgPerUnit = buyIdr / buyUnits`, `value = units × price`.
-  One rate lookup for the whole portfolio, prices in parallel. `missing` symbols are excluded
-  from `pricedValue`/`pricedCost`, as with stocks.
-- `cryptoPosition(trades, symbol)` — **pure**; units held and average cost, shared with the
-  sell path in the action.
+- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol for
+  `invested`/`proceeds`/`realizedPl`, but take `units`, `costBasis` and `avgPerUnit` from
+  `cryptoPositions` and keep only `units > DUST`. `value = units × price`. One rate lookup for
+  the whole portfolio, prices in parallel. `missing` symbols are excluded from
+  `pricedValue`/`pricedCost`, as with stocks.
+- `cryptoPositions(trades)` / `cryptoPosition(trades, symbol)` — **pure**; units held, cost
+  basis and average cost from the same chronological walk the stocks module does (§3.5),
+  shared with the sell path in the action. Units are reported raw so selling a dust remainder
+  still matches, but a dust position is priced at zero rather than cost ÷ dust.
 - `DUST = 1e-8` — fractional units never land exactly on zero, so "still held" and "can you
   sell this much" are tolerances rather than `> 0` comparisons.
 

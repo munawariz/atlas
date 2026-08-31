@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { supabaseServer } from "@/lib/supabaseServer";
 import { resolveCategoryId, unmappedError } from "@/lib/settings";
-import { getStockTrades } from "@/lib/stocks";
+import { getStockTrades, stockPosition } from "@/lib/stocks";
 import type { SaveScope } from "@/lib/types";
 
 const digits = (v: FormDataEntryValue | null) =>
@@ -122,25 +122,14 @@ export async function recordStockTrade(
   }
 
   // --- Sell ---------------------------------------------------------------
-  const trades = await getStockTrades();
-  const forTicker = trades.filter((t) => t.ticker === ticker);
-  const buyLots = forTicker
-    .filter((t) => t.side === "buy")
-    .reduce((sum, t) => sum + t.lots, 0);
-  const sellLots = forTicker
-    .filter((t) => t.side === "sell")
-    .reduce((sum, t) => sum + t.lots, 0);
-  const held = buyLots - sellLots;
+  // The position walk, not the all-time buy totals: a ticker sold out of and bought again
+  // must be priced against what the lots in hand cost, never against a closed position.
+  const { lots: held, avgPerLot } = stockPosition(await getStockTrades(), ticker);
 
   if (held < lots) {
     return { error: `You only hold ${held} lot${held === 1 ? "" : "s"} of ${ticker}.` };
   }
 
-  // Average cost, per lot.
-  const buyIdr = forTicker
-    .filter((t) => t.side === "buy")
-    .reduce((sum, t) => sum + t.idr, 0);
-  const avgPerLot = buyLots > 0 ? buyIdr / buyLots : 0;
   const realizedCost = Math.round(lots * avgPerLot);
   const realizedPl = idr - realizedCost;
 

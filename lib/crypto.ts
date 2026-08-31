@@ -9,7 +9,7 @@ import { getForexRate } from "./forex";
  * module from `lib/stocks.ts`, where quantity is whole lots. Everything else is the same
  * shape: average cost per unit, realized P/L booked on a sell, live value on top.
  *
- * Cost basis is average cost, per coin: avgPerUnit = Σ buy_idr / Σ buy_units.
+ * Cost basis is average cost, per coin, walked chronologically — see `cryptoPositions`.
  */
 
 /**
@@ -111,29 +111,79 @@ export async function getCryptoTrades(asOf?: string): Promise<CryptoTrade[]> {
   return asOf ? all.filter((t) => t.occurred_on <= asOf) : all;
 }
 
+export interface CryptoPosition {
+  /** Units still held. May be dust rather than a clean zero — compare against `DUST`. */
+  units: number;
+  /** What those units cost — the money still tied up in them. */
+  costBasis: number;
+  avgPerUnit: number;
+}
+
+const NO_POSITION: CryptoPosition = { units: 0, costBasis: 0, avgPerUnit: 0 };
+
 /**
- * Units of a coin held and the average cost of each, from a set of trades.
+ * Units held and what they cost, per coin. Pure, so the sell path in the trade action prices
+ * a disposal off the same numbers the portfolio shows without a second query.
  *
- * Pure, so the sell path in the trade action can price a disposal off the same numbers the
- * portfolio shows without a second query.
+ * A chronological walk: a buy adds units and cost, a sell removes cost in PROPORTION to the
+ * units it takes — average cost, not FIFO. Selling out therefore empties the position and the
+ * next buy averages from scratch, where dividing every rupiah ever spent by every unit ever
+ * bought would keep sold units in the denominator forever.
  */
+export function cryptoPositions(
+  trades: Pick<
+    CryptoTrade,
+    "id" | "symbol" | "side" | "units" | "idr" | "occurred_on"
+  >[]
+): Map<string, CryptoPosition> {
+  const ordered = [...trades].sort((a, b) =>
+    a.occurred_on === b.occurred_on
+      ? a.id - b.id
+      : a.occurred_on < b.occurred_on
+        ? -1
+        : 1
+  );
+
+  const running = new Map<string, { units: number; cost: number }>();
+  for (const trade of ordered) {
+    const entry = running.get(trade.symbol) ?? { units: 0, cost: 0 };
+    if (trade.side === "buy") {
+      entry.units += trade.units;
+      entry.cost += trade.idr;
+    } else if (entry.units > 0) {
+      const sold = Math.min(trade.units, entry.units);
+      entry.cost -= entry.cost * (sold / entry.units);
+      entry.units -= sold;
+    }
+    running.set(trade.symbol, entry);
+  }
+
+  const positions = new Map<string, CryptoPosition>();
+  for (const [symbol, { units, cost }] of running) {
+    // Units are reported raw so "sell everything" still matches on a dust remainder, but a
+    // dust position is priced at nothing: cost ÷ a millionth of a coin is not an average.
+    const real = units > DUST;
+    positions.set(symbol, {
+      units,
+      costBasis: real ? Math.round(cost) : 0,
+      avgPerUnit: real ? cost / units : 0,
+    });
+  }
+  return positions;
+}
+
+/** One coin's position. Zeroed for a coin never traded — or one sold out of entirely. */
 export function cryptoPosition(
-  trades: CryptoTrade[],
+  trades: Pick<
+    CryptoTrade,
+    "id" | "symbol" | "side" | "units" | "idr" | "occurred_on"
+  >[],
   symbol: string
-): { units: number; avgPerUnit: number } {
-  const mine = trades.filter((t) => t.symbol === symbol);
-  const buys = mine.filter((t) => t.side === "buy");
-
-  const buyUnits = buys.reduce((sum, t) => sum + t.units, 0);
-  const buyIdr = buys.reduce((sum, t) => sum + t.idr, 0);
-  const sellUnits = mine
-    .filter((t) => t.side === "sell")
-    .reduce((sum, t) => sum + t.units, 0);
-
-  return {
-    units: buyUnits - sellUnits,
-    avgPerUnit: buyUnits > 0 ? buyIdr / buyUnits : 0,
-  };
+): CryptoPosition {
+  return (
+    cryptoPositions(trades.filter((t) => t.symbol === symbol)).get(symbol) ??
+    NO_POSITION
+  );
 }
 
 // =============================================================================
@@ -241,13 +291,16 @@ export async function getCryptoPortfolio(
   );
 
   // Only coins still held show as holdings; the rest survive in the lifetime figures.
+  // Units and cost come from the walk, not from the buy/sell totals: those totals are what
+  // `invested` and `proceeds` mean, and they cannot price what is left over.
+  const positions = cryptoPositions(trades);
   const held = [...agg.entries()]
     .map(([symbol, entry]) => ({
       symbol,
       entry,
-      units: entry.buyUnits - entry.sellUnits,
+      position: positions.get(symbol) ?? NO_POSITION,
     }))
-    .filter((row) => row.units > DUST);
+    .filter((row) => row.position.units > DUST);
 
   // One rate for the whole portfolio: the quotes come back in USD, and looking the rate up
   // per coin would be the same request N times.
@@ -267,9 +320,8 @@ export async function getCryptoPortfolio(
     }
   }
 
-  const holdings: CryptoHolding[] = held.map(({ symbol, entry, units }) => {
-    const avgPerUnit = entry.buyUnits > 0 ? entry.buyIdr / entry.buyUnits : 0;
-    const costBasis = Math.round(units * avgPerUnit);
+  const holdings: CryptoHolding[] = held.map(({ symbol, entry, position }) => {
+    const { units, costBasis, avgPerUnit } = position;
     const price = prices.get(symbol) ?? null;
     const value = price === null ? null : Math.round(units * price);
 
