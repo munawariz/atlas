@@ -178,8 +178,7 @@ export default async function CryptoPage() {
                   <div className="border-t border-[var(--border-subtle)] p-4">
                     <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[13px]">
                       {[
-                        ["Invested", formatRupiah(holding.invested)],
-                        ["Cost basis now", formatRupiah(holding.costBasis)],
+                        ["Invested", formatRupiah(holding.costBasis)],
                         ["Proceeds", formatRupiah(holding.proceeds)],
                         ["Realized P/L", formatRupiah(holding.realizedPl)],
                       ].map(([label, value]) => (

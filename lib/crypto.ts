@@ -45,15 +45,20 @@ export interface CryptoTrade {
 export interface CryptoHolding {
   symbol: string;
   units: number;
-  /** Money still tied up in the units held now. */
+  /**
+   * Money still tied up in the units held now — the only "invested" figure there is.
+   *
+   * A sell takes its units out at average cost, so this is always exactly
+   * `avgPerUnit × units`. Every rupiah ever bought is deliberately NOT carried alongside it,
+   * for the reason `StockHolding.costBasis` spells out: the two diverge the moment anything
+   * is sold. Recoverable as `costBasis + proceeds − realizedPl`.
+   */
   costBasis: number;
   avgPerUnit: number;
   /** Live price per coin, in IDR. */
   price: number | null;
   value: number | null;
   unrealizedPl: number | null;
-  /** Every rupiah ever put in, including units since sold. */
-  invested: number;
   proceeds: number;
   realizedPl: number;
 }
@@ -255,10 +260,9 @@ export async function getCryptoPortfolio(
 ): Promise<CryptoPortfolio> {
   const trades = await getCryptoTrades(asOf);
 
+  // Only the disposal side is aggregated. What a coin cost is never a sum of buys — it is
+  // the walk in `cryptoPositions`, which takes cost back out as units leave.
   interface Agg {
-    buyUnits: number;
-    buyIdr: number;
-    sellUnits: number;
     proceeds: number;
     realizedPl: number;
   }
@@ -267,19 +271,16 @@ export async function getCryptoPortfolio(
   const of = (symbol: string): Agg => {
     let entry = agg.get(symbol);
     if (!entry) {
-      entry = { buyUnits: 0, buyIdr: 0, sellUnits: 0, proceeds: 0, realizedPl: 0 };
+      entry = { proceeds: 0, realizedPl: 0 };
       agg.set(symbol, entry);
     }
     return entry;
   };
 
   for (const trade of trades) {
+    // Every traded coin gets a row, buys included, so a never-sold holding still appears.
     const entry = of(trade.symbol);
-    if (trade.side === "buy") {
-      entry.buyUnits += trade.units;
-      entry.buyIdr += trade.idr;
-    } else {
-      entry.sellUnits += trade.units;
+    if (trade.side === "sell") {
       entry.proceeds += trade.idr;
       entry.realizedPl += trade.realized_pl ?? 0;
     }
@@ -291,8 +292,8 @@ export async function getCryptoPortfolio(
   );
 
   // Only coins still held show as holdings; the rest survive in the lifetime figures.
-  // Units and cost come from the walk, not from the buy/sell totals: those totals are what
-  // `invested` and `proceeds` mean, and they cannot price what is left over.
+  // Units and cost come from the walk: a sum of buys is what was *ever* put in, which cannot
+  // price what is left over once some of it has been sold.
   const positions = cryptoPositions(trades);
   const held = [...agg.entries()]
     .map(([symbol, entry]) => ({
@@ -333,7 +334,6 @@ export async function getCryptoPortfolio(
       price,
       value,
       unrealizedPl: value === null ? null : value - costBasis,
-      invested: entry.buyIdr,
       proceeds: entry.proceeds,
       realizedPl: entry.realizedPl,
     };

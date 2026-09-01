@@ -72,15 +72,20 @@ export interface StockDividend {
 export interface StockHolding {
   ticker: string;
   lots: number;
-  /** Money still tied up in the lots held now. */
+  /**
+   * Money still tied up in the lots held now — the only "invested" figure there is.
+   *
+   * A sell takes its lots out at average cost, so this is always exactly `avgPerLot × lots`.
+   * Every rupiah ever bought is deliberately NOT carried alongside it: the two diverge the
+   * moment anything is sold, and an "invested" the average beside it does not divide into
+   * reads as a bug. It stays recoverable as `costBasis + proceeds − realizedPl`.
+   */
   costBasis: number;
   avgPerLot: number;
   avgPerShare: number;
   price: number | null;
   value: number | null;
   unrealizedPl: number | null;
-  /** Every rupiah ever put in, including lots since sold. */
-  invested: number;
   proceeds: number;
   realizedPl: number;
   dividends: number;
@@ -350,10 +355,9 @@ export async function getStockPortfolio(
     getStockDividends(asOf),
   ]);
 
+  // Only the disposal side is aggregated. What a ticker cost is never a sum of buys — it is
+  // the walk in `stockPositions`, which takes cost back out as lots leave.
   interface Agg {
-    buyLots: number;
-    buyIdr: number;
-    sellLots: number;
     proceeds: number;
     realizedPl: number;
     dividends: number;
@@ -363,26 +367,16 @@ export async function getStockPortfolio(
   const of = (ticker: string): Agg => {
     let entry = agg.get(ticker);
     if (!entry) {
-      entry = {
-        buyLots: 0,
-        buyIdr: 0,
-        sellLots: 0,
-        proceeds: 0,
-        realizedPl: 0,
-        dividends: 0,
-      };
+      entry = { proceeds: 0, realizedPl: 0, dividends: 0 };
       agg.set(ticker, entry);
     }
     return entry;
   };
 
   for (const trade of trades) {
+    // Every traded ticker gets a row, buys included, so a never-sold holding still appears.
     const entry = of(trade.ticker);
-    if (trade.side === "buy") {
-      entry.buyLots += trade.lots;
-      entry.buyIdr += trade.idr;
-    } else {
-      entry.sellLots += trade.lots;
+    if (trade.side === "sell") {
       entry.proceeds += trade.idr;
       entry.realizedPl += trade.realized_pl ?? 0;
     }
@@ -402,8 +396,8 @@ export async function getStockPortfolio(
   );
 
   // Only tickers still held show as holdings; the rest survive in the lifetime figures.
-  // Lots and cost come from the walk, not from the buy/sell totals: those totals are what
-  // `invested` and `proceeds` mean, and they cannot price what is left over.
+  // Lots and cost come from the walk: a sum of buys is what was *ever* put in, which cannot
+  // price what is left over once some of it has been sold.
   const positions = stockPositions(trades);
   const held = [...agg.entries()]
     .map(([ticker, entry]) => ({
@@ -436,7 +430,6 @@ export async function getStockPortfolio(
       price,
       value,
       unrealizedPl: value == null ? null : value - costBasis,
-      invested: entry.buyIdr,
       proceeds: entry.proceeds,
       realizedPl: entry.realizedPl,
       dividends: entry.dividends,

@@ -249,16 +249,26 @@ they are what the user reads in History, so they matter:
 | Installment payment | the installment item's own name |
 | Loan collection | the person's name |
 
-**Cost-basis method is average cost** for stocks, crypto and forex, and all three compute it
-the same way: **a chronological walk** — a buy adds quantity and cost, a sell removes cost in
+**Cost-basis method is average cost** on every investment page, and they all compute it the
+same way: **a chronological walk** — a buy adds quantity and cost, a sell removes cost in
 proportion to the quantity it takes. `realizedCost = round(qty × avg)`,
 `realizedPl = proceeds − realizedCost`. Per lot for stocks (`stockPositions`), per coin on
-fractional units for crypto (`cryptoPositions`), per unit for forex (`forexAvgCost`).
+fractional units for crypto (`cryptoPositions`), per unit for forex (`forexAvgCost`), per unit
+for bonds (inline in `getBondPortfolio`, which books no realized P/L — see below).
 
 The proportionality is the whole method: it is what makes selling out empty the position, so
 the next buy averages from scratch. `Σ buy_idr / Σ buy_lots` is NOT equivalent — it keeps sold
 lots in the denominator, so a ticker bought at 1m, sold in full, then bought again at 2m reports
 1.5m against a position that cost 2m. Closed positions must leave no residue.
+
+It follows that **"Invested" in the UI always means the current cost basis**, never a lifetime
+sum of buys: the two diverge the moment anything is sold, and a card showing an "invested" that
+the average printed beside it does not divide into reads as a bug. No module carries both.
+Lifetime buys stays recoverable as `costBasis + proceeds − realizedPl` wherever it is wanted.
+
+Bonds are the one partial case: they walk cost the same way, but a sale books only the plain
+`withdrawal` above — there is no `realized_pl` column and no P/L row, so the difference between
+what a bond fetched and what it cost is not recorded anywhere. Adding it is a schema change.
 
 Undoing any of these deletes the linked `txn_id` (and `pl_txn_id`) rows.
 
@@ -1015,17 +1025,25 @@ Fix that: write every submitted key, deleting the row when the value is blank.
 - `stockPositions(trades)` / `stockPosition(trades, ticker)` — **pure**; lots held, cost basis
   and average per lot from the chronological walk (§3.5). Shared with the sell path in the
   action so a disposal is priced off the same numbers the portfolio shows.
-- `getStockPortfolio(asOf?, livePrices = true)` — aggregate buys/sells per ticker for
-  `invested`/`proceeds`/`realizedPl`, but take `lots`, `costBasis` and `avgPerLot` from
+- `getStockPortfolio(asOf?, livePrices = true)` — aggregate the SELL side per ticker for
+  `proceeds`/`realizedPl`, but take `lots`, `costBasis` and `avgPerLot` from
   `stockPositions` and keep only `lots > 0`. `avgPerShare = avgPerLot / 100`,
   `value = lots × 100 × price`. Fetch prices in parallel.
+  There is deliberately **no lifetime-buys `invested` field**: a sell takes cost out at average
+  (§3.5), so `costBasis` IS the money invested, and a second figure that stops matching
+  `avgPerLot × lots` the moment anything is sold only looks like a bug. Recover it as
+  `costBasis + proceeds − realizedPl` if it is ever wanted.
   `livePrices=false` for past-year snapshots. Report `missing` tickers separately and exclude them
   from `pricedValue`/`pricedCost` so P/L is never computed against a partial set.
 
 ### `lib/bonds.ts`
 `getBondTrades()` (coerce `units` to Number — numeric comes back as string) and
-`getBondPortfolio(asOf?)` → per-bond `units = buyU − sellU`, `invested = Σbuy − Σsell`,
-`coupons = Σcoupon`, plus totals.
+`getBondPortfolio(asOf?)` → per-bond `units`, `invested` (principal still in) and
+`coupons = Σcoupon`, plus totals. Sorts oldest-first before walking (the reader returns
+newest-first) and disposes at **average cost** like every other investment module (§3.5):
+a sale takes principal out in proportion to its units, never at the price it fetched, so an
+off-par sale can neither strand a remainder nor go negative and a redeemed bond keeps only
+its coupon history.
 
 ### `lib/crypto.ts`
 `CryptoTrade`, `CryptoHolding`, `CryptoPortfolio` types + queries. The stocks module with
@@ -1036,9 +1054,10 @@ fractional quantity — coins, not whole lots — and no dividends or targets. K
   where `BTC-USD` does not, so coins are priced in USD. **Return `null` on any failure.**
 - `getLiveCryptoPrice(symbol)` — that price × `getForexRate("USD")`, in IDR. A missing rate is
   `null`, never `0` — a coin priced at nothing would silently wipe out the portfolio's value.
-- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate per symbol for
-  `invested`/`proceeds`/`realizedPl`, but take `units`, `costBasis` and `avgPerUnit` from
-  `cryptoPositions` and keep only `units > DUST`. `value = units × price`. One rate lookup for
+- `getCryptoPortfolio(asOf?, livePrices = true)` — aggregate the SELL side per symbol for
+  `proceeds`/`realizedPl`, but take `units`, `costBasis` and `avgPerUnit` from
+  `cryptoPositions` and keep only `units > DUST`. No lifetime-buys `invested` field, for the
+  reason the stocks module gives. `value = units × price`. One rate lookup for
   the whole portfolio, prices in parallel. `missing` symbols are excluded from
   `pricedValue`/`pricedCost`, as with stocks.
 - `cryptoPositions(trades)` / `cryptoPosition(trades, symbol)` — **pure**; units held, cost
@@ -1275,7 +1294,7 @@ Live portfolio hero (market value, ▲/▼ P/L + %, cost, lifetime realized P/L,
 tickers with no live price). Trade form (buy/sell, ticker, lots, IDR, wallet, date). A link card to
 `/stocks/targets` showing estimated monthly buying. **Expandable holding cards** per ticker:
 lots, avg/share → live price, dividends received (+ % on cost), market value and P/L; expanded:
-invested / cost basis now / dividends / proceeds / realized P/L, and a merged buy·sell·dividend
+invested (= cost basis, net of anything sold) / dividends / proceeds / realized P/L, and a merged buy·sell·dividend
 timeline (newest first). Then a dividends section (total received, per-ticker breakdown, log form,
 deletable list) and a recent trades list (deletable).
 
@@ -1292,8 +1311,8 @@ units. Deleting a trade removes its ledger row.
 Live portfolio hero (market value, ▲/▼ P/L + %, cost basis, lifetime realized P/L, and a warning
 listing symbols with no live price). Trade form in a `FormSheet` (buy/sell, symbol, coins, IDR,
 wallet, date, plus the same **opening position** checkbox stocks has). Expandable holding cards
-per coin: units, avg/coin → live price, market value and P/L; expanded: invested / cost basis now
-/ proceeds / realized P/L, and a buy·sell timeline (newest first). Then a recent trades list
+per coin: units, avg/coin → live price, market value and P/L; expanded: invested (= cost basis,
+net of anything sold) / proceeds / realized P/L, and a buy·sell timeline (newest first). Then a recent trades list
 (deletable). A sell books the same two ledger rows a stock sale does — cost basis back out of the
 bucket, P/L as its own income or expense row.
 
