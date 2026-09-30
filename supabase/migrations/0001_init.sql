@@ -379,6 +379,30 @@ alter table etf_trades add column if not exists tax bigint;
 alter table etf_trades add column if not exists fee_txn_id bigint references transactions(id) on delete set null;
 alter table etf_trades add column if not exists tax_txn_id bigint references transactions(id) on delete set null;
 
+-- Credit cards. A card IS a wallet: its balance runs negative as you spend, so a purchase is an
+-- ordinary `expense` booked the day you swipe and net worth falls by what you owe. Paying the
+-- bill is a `transfer` from a cash wallet into the card; interest and fees are `expense`s
+-- charged to the card. This table holds only what a wallet does not — the card's terms — and
+-- every bill, minimum and status is derived from the card wallet's ledger rows.
+create table if not exists credit_cards (
+  id bigint generated always as identity primary key,
+  wallet_id bigint not null unique references wallets(id) on delete cascade,
+  credit_limit bigint not null default 0,
+  statement_day int not null default 1 check (statement_day between 1 and 31),
+  due_day int not null default 15 check (due_day between 1 and 31),
+  interest_rate numeric not null default 1.75,  -- percent per month
+  min_pct numeric not null default 5,           -- minimum payment, percent of the bill
+  min_floor bigint not null default 50000,      -- smallest minimum; a smaller bill is due in full
+  -- Installments billed on this card. Read-only here: they are still paid on My Installment.
+  provider_id bigint references paylater_providers(id) on delete set null
+);
+-- Issuer-specific terms (Honest, for one): a monthly admin fee as a percent of the principal on
+-- each statement, refunded when that bill is paid in full on time; a minimum that is at least
+-- the statement's interest and fees; and whether a missed minimum carries a late fee at all.
+alter table credit_cards add column if not exists admin_fee_pct numeric not null default 0;
+alter table credit_cards add column if not exists min_covers_charges boolean not null default false;
+alter table credit_cards add column if not exists late_fee boolean not null default true;
+
 -- ---------------------------------------------------------------------------
 -- Materialized monthly deltas + trigger (ATLAS.md §4.1) — performance-critical.
 -- balance at end of month M = opening + sum(delta) where month <= M

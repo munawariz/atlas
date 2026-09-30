@@ -145,6 +145,20 @@ export const CATEGORY_SETTINGS: CategorySetting[] = [
     kind: "expense",
     help: "Expense booked when a transfer includes an admin fee.",
   },
+  {
+    key: "cat_card_interest",
+    label: "Credit card interest",
+    kind: "expense",
+    help: "Expense charged to a card when you record the interest on its bill.",
+    optional: true,
+  },
+  {
+    key: "cat_card_fee",
+    label: "Credit card fee",
+    kind: "expense",
+    help: "Expense charged to a card when you record a late, annual or other fee on its bill.",
+    optional: true,
+  },
 ];
 
 export interface WalletSetting {
@@ -205,6 +219,8 @@ export const DETECT_HINTS: Record<string, string[]> = {
   cat_etf_fee: ["ETF Fee", "Conversion Fee", "Broker Fee"],
   cat_etf_tax: ["Tax", "Taxes", "Pajak"],
   cat_admin_fee: ["Admin Fee", "Bank Fee", "Biaya Admin", "Admin"],
+  cat_card_interest: ["Card Interest", "Credit Card Interest", "Interest", "Bunga Kartu Kredit", "Bunga"],
+  cat_card_fee: ["Card Fee", "Credit Card Fee", "Late Fee", "Annual Fee", "Denda", "Iuran Tahunan"],
 };
 
 // =============================================================================

@@ -174,6 +174,10 @@ their own **Move sheet** (`components/MoveSheet.tsx`), opened from the tab bar's
   *leaves* net worth. `Savings page balance = Σ contributions − Σ withdrawals`.
 - **Forex holdings are tracked separately** in a foreign currency and are **never counted in
   IDR net worth** — they're shown on their own line with a live reference rate.
+- **A credit card is a wallet that runs negative.** A purchase on it is an ordinary `expense`
+  from the card's wallet, so it counts as spending the day you swipe and net worth falls by
+  what you owe. Paying the bill is a `transfer` into the card — never an expense, or the
+  spending would count twice. `credit_cards` holds only the card's terms (see `lib/creditCards.ts`).
 
 ### 3.3 Wallet balance rule (memorize it — it appears in 3 places)
 
@@ -230,6 +234,8 @@ can be reversed cleanly:
 | ETF withdraw | `withdrawal` of the USD's **rupiah cost** into wallet from `cat_etf`, **plus** `income`/`cat_etf_profit` or `expense`/`cat_etf_loss` |
 | ETF conversion fee / tax (optional, either move) | `expense` from the wallet → `cat_etf_fee` / `cat_etf_tax`, **deducted from the rupiah side**: a top-up's `investment` is the rupiah paid minus both, and only that converts; a withdrawal's charges come off its proceeds (both `optional` settings: absent from the setup banner, refused only when an amount is entered unmapped) |
 | ETF buy / sell / dividend | **none** — USD only, inside the broker (see `lib/etf.ts`) |
+| Pay a credit card | `transfer` from a cash wallet → the card's wallet (the purchases were already booked as expenses when made) |
+| Card interest / fee (from the bill) | `expense` from the card's wallet → `cat_card_interest` / `cat_card_fee` (both `optional`) |
 | Buy forex | `investment` from wallet → `cat_forex` |
 | Sell forex | `withdrawal` of cost basis into wallet from `cat_forex`, **plus** `income`/`cat_forex_profit` or `expense`/`cat_forex_loss` |
 
@@ -252,6 +258,7 @@ they are what the user reads in History, so they matter:
 | ETF realized P/L | `Profit {BROKER} (ETF)` · `Loss {BROKER} (ETF)` |
 | Forex buy / sell | `Buy {CUR} (forex)` · `Sell {CUR} (forex)` |
 | Forex realized P/L | `Profit {CUR} (forex)` · `Loss {CUR} (forex)` |
+| Card payment / interest / fee | `Pay {CARD}` · `Interest {CARD}` · `Fee {CARD}` |
 | Installment payment | the installment item's own name |
 | Loan collection | the person's name |
 
@@ -1091,6 +1098,46 @@ a top-up (rupiah in at the rate the user enters) and a withdrawal (USD back to a
 - `getEtfPortfolio(asOf?, livePrices = true)` — Yahoo quotes under the bare ticker (no suffix),
   one `getForexRate("USD")` for the rupiah reference. Unpriced tickers go to `missing`.
 
+### `lib/creditCards.ts`
+A card's terms live in `credit_cards` (1:1 with a wallet: limit, statement day, due day,
+interest %/month, minimum % and floor, optional installment provider, plus the issuer terms
+`admin_fee_pct`, `min_covers_charges`, `late_fee`). **No bill is stored** — everything is
+derived from the card wallet's ledger rows, so editing a purchase in History reprices every
+bill it falls in. `CARD_PRESETS` (`lib/types.ts`) fills a new card from **Bank standard**
+(Bank Indonesia's rules: 1.75%/month, minimum 5% but at least Rp 50,000, late fee 1% capped at
+Rp 100,000) or **Honest** (honest.co.id FAQ: 1.75%, minimum = highest of 5% / interest + admin
+fee / Rp 20,000, a personalised 0–6.49% monthly admin fee refunded when the bill is paid in
+full on time, no late fee).
+- `cardMoves(walletId, txns)` — the balance rule (§3.3) from the card's side, sign flipped:
+  money leaving the wallet is owed, money arriving pays it down.
+- Statement dates clamp to short months; the due date is the first `due_day` after the
+  statement. Bills are derived oldest first, each from the one before. A bill covers (previous
+  statement, statement]; its `balance` is what was owed at the end of the statement date **plus
+  the interest and fees the bank adds that day** — the recorded figures (`cat_card_interest`,
+  `cat_card_fee` in the cycle) or, until one is recorded, the estimate. `principal` is the
+  balance less unpaid interest and fees (payments settle charges first); the admin fee is
+  `admin_fee_pct` of it. It is `full` / `minimum` / `due` / `missed` by what was paid through
+  the due date.
+- `minimumFor(card, statement, charges, extra)` — highest of `min_pct` of the statement + extra,
+  charges + extra (only with `min_covers_charges`), and `min_floor`; capped at the statement.
+  `extra` = a missed minimum carried forward + anything over the limit. Checked against Honest's
+  three examples.
+- `interestOnNextBill` — once a bill is not cleared, interest runs daily (`rate × 12 / 365`) on
+  each of its purchases from the posting date through the statement date, then on the balance
+  owed at the end of every day through the next statement date (both ends count; a payment
+  lowers that day's balance), rounded **down**. A bill whose predecessor already revolved skips
+  the backdated part — the bank charged it then. Before the due date it assumes exactly the
+  minimum is paid on the due date. Matches Honest's two worked examples to the rupiah
+  (Rp 23,013 and Rp 14,728).
+- A refundable admin fee is carried as an estimate and **recorded only if it sticks** (the bill
+  was not paid in full on time); paying a statement in full leaves the fee as card credit, which
+  is exactly what the refund does. "Owed now" counts estimated charges, less a refunded admin fee.
+- `minimumOnlyPayoff` — month-by-month approximation of paying only the minimum with no new
+  spending, interest and admin fee together; null when it never pays off (or takes 100+ years —
+  at Honest's terms, any admin fee above ~3.5%).
+- Interest and fees are **estimated, never booked**: the user records the bank's figures (an
+  `expense` charged to the card), and the page nudges while an estimate is standing in.
+
 ### `lib/forex.ts`
 - `FALLBACK_RATE = { JPY: 110 }`.
 - `getForexAccounts` / `getForexTransactions` / `getForexTxnByTxnId(txnId)` (lets the history
@@ -1394,6 +1441,21 @@ to skip the transaction), inline edit, and delete.
 
 Sort order for active items: **(1) single-month items first**, then (2) most months still owed,
 then (3) shorter total schedule — so a 6-month/1-left ranks above a 12-month/1-left.
+
+### `/more/cards` ("Credit cards")
+One section per card (cards whose wallet is archived are hidden): an **owed now** hero with the
+limit bar and available credit, "Last bill" / "Since the bill" cells; the **latest bill** —
+balance, minimum, paid, left to clear, due date, a status badge, the installments the bank adds
+on top (read-only, when a provider is linked), and advice worded for the bill's state with the
+interest the next bill would carry and a minimum-only payoff projection. Two sheets: **Pay the
+card** (Minimum / Full bill / Everything presets, cash wallets only) and **Interest or fee**
+(dated on the statement, pre-noting the app's estimate). Then past bills, recent activity
+(rows link to `/history/[id]`, where they are edited or deleted like any transaction), and the
+card's terms with "stop tracking as a card" (removes only the terms). Adding a card creates its
+wallet, or adopts an existing one. A collapsible explainer covers how the minimum works.
+
+Purchases are **not** entered here — they are ordinary expenses from the card's wallet in the
+Add sheet. Installments are untouched: still paid on My Installment.
 
 ### `/more/loans`
 Money **other people owe you**. Tabs Unfinished / Finished / All. Add form (person, via/lender,

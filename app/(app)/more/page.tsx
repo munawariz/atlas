@@ -49,6 +49,7 @@ const INVESTMENT: Item[] = [
 const MANAGE: Item[] = [
   { href: "/more/budgets", label: "Budgets", hint: "Limits and targets per category", Icon: SlidersHorizontal },
   { href: "/more/paylater", label: "Installments", hint: "What you owe each month", Icon: CreditCard },
+  { href: "/more/cards", label: "Credit cards", hint: "Bill, minimum payment, interest", Icon: CreditCard },
   { href: "/more/loans", label: "Lending", hint: "Money other people owe you", Icon: Coins },
   { href: "/more/wallets", label: "Wallets", hint: "Where your cash lives", Icon: WalletIcon },
   { href: "/more/categories", label: "Categories", hint: "What your transactions get labelled with", Icon: FileText },

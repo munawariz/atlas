@@ -45,6 +45,7 @@ function revalidateManage() {
   revalidatePath("/more/categories");
   revalidatePath("/more/providers");
   revalidatePath("/more/budgets");
+  revalidatePath("/more/cards");
   revalidatePath("/dashboard");
   revalidatePath("/history");
   // The app layout feeds the Add sheet its wallets and categories — refresh it too.
@@ -667,6 +668,7 @@ export async function saveAppSettings(
   revalidatePath("/bonds");
   revalidatePath("/crypto");
   revalidatePath("/etf");
+  revalidatePath("/more/cards");
   revalidatePath("/more/forex");
   revalidatePath("/more/loans");
   revalidatePath("/more/cashflow");

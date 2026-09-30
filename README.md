@@ -26,6 +26,11 @@ Money is **Indonesian Rupiah**, stored as **integer rupiah** — never floats, n
 - **Expected cashflow** — a forward-looking plan for any month, drawn from budgets, loan
   schedules, active installments, and stock buy targets.
 - **Installments** grouped by provider, with per-month paid tracking and a per-group "pay all".
+- **Credit cards** — a card is a wallet that runs negative: purchases count as spending the day
+  you swipe, paying the bill is a transfer. Each bill shows its minimum payment, due date and
+  status, the interest a partial payment will cost, and how long paying only the minimum would
+  take. Terms fill from Bank Indonesia's standard or from Honest's (refundable admin fee,
+  minimum that covers interest and fees, no late fee).
 - **Loans receivable** — money other people owe you, collected month by month, partials included.
 - **Investments** — stocks (lots, average cost, live IDX prices, dividends, realized P/L),
   bonds (principal and coupons), crypto (fractional coins, average cost, live prices quoted in
@@ -225,7 +230,7 @@ app/
     crypto/  etf/          inline — Stocks further splits into Portfolio/Activity tabs
     backup/                year list → snapshot download
     more/                  the hub: budgets, cashflow, categories, wallets,
-                          providers, paylater, loans, forex (FormSheet convert), settings
+                          providers, paylater, cards, loans, forex (FormSheet convert), settings
 components/               AddSheet, MoveSheet, EditSheet, FormSheet (generic entry-form
                           sheet), TxnFields, ConfirmDeleteButton (shared delete-confirm
                           pattern), BottomNav, MonthSwitcher, DaySwitcher, PrivacyToggle,
@@ -235,7 +240,7 @@ lib/
   settings.ts             the ONLY place a category is chosen for automation
   format.ts               LOCALE / CURRENCY and every formatter
   txnForm.ts              shared form validation and normalization
-  stocks.ts  bonds.ts  crypto.ts  etf.ts  forex.ts  snapshot.ts  autoBudget.ts  cacheTags.ts
+  stocks.ts  bonds.ts  crypto.ts  etf.ts  forex.ts  creditCards.ts  snapshot.ts  autoBudget.ts  cacheTags.ts
   auth.ts  supabaseServer.ts  types.ts
 proxy.ts                  Next 16's middleware — route protection
 supabase/

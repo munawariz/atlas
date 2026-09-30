@@ -473,6 +473,19 @@ export async function listTransactions(
   return (data ?? []) as Transaction[];
 }
 
+/** Every transaction touching one wallet, on either side, in entry order. */
+export async function getWalletTransactions(walletId: number): Promise<Transaction[]> {
+  const sb = supabaseServer();
+  return paginate<Transaction>(() =>
+    sb
+      .from("transactions")
+      .select("*")
+      .or(
+        `source_wallet_id.eq.${walletId},dest_wallet_id.eq.${walletId}`
+      ) as unknown as QueryBuilder<Transaction>
+  );
+}
+
 export async function getTransaction(id: number): Promise<Transaction | null> {
   const sb = supabaseServer();
   const { data, error } = await sb

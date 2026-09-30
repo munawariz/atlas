@@ -35,7 +35,12 @@ export default async function WalletsPage() {
 
       <p className="text-[14px] text-ink-500">
         Wallets hold real cash. Their total is your net worth — savings and
-        investment buckets sit outside it.
+        investment buckets sit outside it. A credit card is a wallet too, one
+        that runs negative by what you owe; add it on{" "}
+        <Link href="/more/cards" className="font-semibold text-forest-800">
+          Credit cards
+        </Link>{" "}
+        so it gets a bill and a due date.
       </p>
 
       <form action={addWallet} className="flex gap-2">

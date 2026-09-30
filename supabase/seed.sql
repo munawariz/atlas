@@ -38,7 +38,9 @@ insert into categories (kind, name, sort_order) values
   ('expense', 'Crypto Loss', 5),
   ('expense', 'ETF Loss', 6),
   ('expense', 'ETF Fee', 7),
-  ('expense', 'Tax', 8)
+  ('expense', 'Tax', 8),
+  ('expense', 'Card Interest', 9),
+  ('expense', 'Card Fee', 10)
 on conflict (kind, name) do nothing;
 
 insert into categories (kind, name, sort_order) values
@@ -88,7 +90,8 @@ from (values
   ('cat_crypto','investment','Crypto'),           ('cat_crypto_profit','income','Crypto Profit'),
   ('cat_crypto_loss','expense','Crypto Loss'),    ('cat_etf','investment','ETF'),
   ('cat_etf_profit','income','ETF Profit'),       ('cat_etf_loss','expense','ETF Loss'),
-  ('cat_etf_fee','expense','ETF Fee'),            ('cat_etf_tax','expense','Tax')
+  ('cat_etf_fee','expense','ETF Fee'),            ('cat_etf_tax','expense','Tax'),
+  ('cat_card_interest','expense','Card Interest'), ('cat_card_fee','expense','Card Fee')
 ) as v(key, kind, name)
 join categories c on c.kind = v.kind::category_kind and c.name = v.name
 on conflict (key) do nothing;
