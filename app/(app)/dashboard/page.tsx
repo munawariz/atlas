@@ -1,7 +1,8 @@
 import Link from "next/link";
 import DaySwitcher from "@/components/DaySwitcher";
 import RefreshOnFocus from "@/components/RefreshOnFocus";
-import { ChevronRight, LineChart } from "@/components/icons";
+import { ChevronRight, CreditCard, LineChart } from "@/components/icons";
+import { getCreditCards } from "@/lib/creditCards";
 import {
   bumpWallet,
   deriveWalletBalances,
@@ -65,6 +66,7 @@ export default async function DashboardPage({
     stockTrades,
     avgBuy,
     missing,
+    creditCards,
   ] = await Promise.all([
     getWallets(),
     getCategories(true),
@@ -80,9 +82,16 @@ export default async function DashboardPage({
     getStockTrades(endOfMonth(monthKey)),
     getAverageBuyPerLot(),
     missingSettings(),
+    getCreditCards(),
   ]);
 
   const catById = new Map(categories.map((c) => [c.id, c]));
+
+  // A credit card is a wallet that runs negative (lib/creditCards.ts). It still counts toward
+  // net worth — the debt is real — but it is shown apart from the wallets that hold cash.
+  const cardWalletIds = new Set(creditCards.map((c) => c.wallet_id));
+  const cashWallets = wallets.filter((w) => !cardWalletIds.has(w.id));
+  const cardWallets = wallets.filter((w) => cardWalletIds.has(w.id));
 
   // =========================================================================
   // Net worth at the end of the selected day
@@ -309,7 +318,7 @@ export default async function DashboardPage({
                 </Link>
               ) : (
                 <div className="mt-5 grid grid-cols-2 gap-2">
-                  {wallets.map((wallet) => (
+                  {cashWallets.map((wallet) => (
                     <div
                       key={wallet.id}
                       className="rounded-[14px] p-3"
@@ -326,6 +335,48 @@ export default async function DashboardPage({
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {cardWallets.length > 0 && (
+                <div className="mt-4">
+                  <Link
+                    href="/more/cards"
+                    className="mb-2 flex items-center justify-between gap-2 no-underline"
+                  >
+                    <span className="label" style={{ color: "var(--color-forest-300)" }}>
+                      Credit cards · owed
+                    </span>
+                    <ChevronRight size={16} className="text-forest-300" />
+                  </Link>
+                  <div className="grid grid-cols-2 gap-2">
+                    {cardWallets.map((wallet) => {
+                      // Owed is the negative of the balance; a positive balance is credit.
+                      const balance = balances.get(wallet.id) ?? 0;
+                      return (
+                        <Link
+                          key={wallet.id}
+                          href="/more/cards"
+                          className="rounded-[14px] border border-dashed p-3 no-underline"
+                          style={{ borderColor: "rgb(255 255 255 / 0.18)" }}
+                        >
+                          <div
+                            className="flex items-center gap-1.5 truncate text-[12px] font-semibold"
+                            style={{ color: "var(--color-forest-200)" }}
+                          >
+                            <CreditCard size={13} className="shrink-0" />
+                            <span className="truncate">{wallet.name}</span>
+                          </div>
+                          <div className="font-display text-[16px] font-bold text-white tabular-nums">
+                            {formatRupiah(Math.abs(balance))}
+                          </div>
+                          <div className="text-[11px]" style={{ color: "var(--color-forest-300)" }}>
+                            {balance > 0 ? "in credit" : balance < 0 ? "owed" : "nothing owed"}
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 
