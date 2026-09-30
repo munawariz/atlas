@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Collapse, { COLLAPSE_MS } from "@/components/Collapse";
 import MoneyInput from "@/components/MoneyInput";
 import SubmitButton from "@/components/SubmitButton";
 import { Check, CircleHalf } from "@/components/icons";
@@ -43,21 +44,29 @@ export default function PaymentGrid({
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // The month the panel shows. It outlives `openMonth` by the close animation, so the panel
+  // slides shut with its content instead of blanking first.
+  const [panelMonth, setPanelMonth] = useState<string | null>(openMonth);
+  if (openMonth && openMonth !== panelMonth) setPanelMonth(openMonth);
 
   // The panel opens below the whole strip, so on a 24-month loan it lands four wrapped rows
   // further down — frequently off-screen, with nothing to say it opened at all
-  // (atlas-ux-plan-manage-pages.md C4e).
+  // (atlas-ux-plan-manage-pages.md C4e). Once it has finished opening, not while it is still
+  // a sliver.
   useEffect(() => {
     if (!openMonth) return;
-    const node = panelRef.current;
-    if (!node) return;
-    node.scrollIntoView({ block: "nearest" });
-    // The collect form first: on a partly collected month the panel now leads with the list
-    // of what has come in, and landing focus on an "Undo" is the opposite of the intent.
-    const focusable =
-      node.querySelector<HTMLElement>("[data-collect] select, [data-collect] input") ??
-      node.querySelector<HTMLElement>("select, input, button, [tabindex]");
-    focusable?.focus();
+    const timer = setTimeout(() => {
+      const node = panelRef.current;
+      if (!node) return;
+      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      // The collect form first: on a partly collected month the panel now leads with the list
+      // of what has come in, and landing focus on an "Undo" is the opposite of the intent.
+      const focusable =
+        node.querySelector<HTMLElement>("[data-collect] select, [data-collect] input") ??
+        node.querySelector<HTMLElement>("select, input, button, [tabindex]");
+      focusable?.focus({ preventScroll: true });
+    }, COLLAPSE_MS);
+    return () => clearTimeout(timer);
   }, [openMonth]);
 
   const sorted = [...payments].sort((a, b) =>
@@ -182,9 +191,10 @@ export default function PaymentGrid({
         </p>
       )}
 
-      {openMonth &&
+      <Collapse open={openMonth != null}>
+        {panelMonth &&
         (() => {
-          const payment = sorted.find((p) => p.period_month === openMonth);
+          const payment = sorted.find((p) => p.period_month === panelMonth);
           if (!payment) return null;
 
           const received = collectionsOf(payment.id);
@@ -199,14 +209,14 @@ export default function PaymentGrid({
            */
           return (
             <div
-              key={openMonth}
+              key={panelMonth}
               ref={panelRef}
               className="mt-3 space-y-3 rounded-[var(--radius-input)] bg-cream-100 p-3"
             >
               {collected > 0 && (
                 <div>
                   <p className="text-[13px] text-ink-700">
-                    {once ? "Collected" : `${formatMonthShort(openMonth)} collected`} —{" "}
+                    {once ? "Collected" : `${formatMonthShort(panelMonth)} collected`} —{" "}
                     <strong className="tabular-nums">{formatRupiah(collected)}</strong>{" "}
                     of{" "}
                     <span className="tabular-nums">
@@ -257,7 +267,7 @@ export default function PaymentGrid({
                   {received.length === 0 && (
                     <form action={uncollectLoanMonth} className="mt-2">
                       <input type="hidden" name="loan_id" value={loan.id} />
-                      <input type="hidden" name="period_month" value={openMonth} />
+                      <input type="hidden" name="period_month" value={panelMonth} />
                       <SubmitButton className="btn btn-sm btn-ghost">
                         Undo collection
                       </SubmitButton>
@@ -277,14 +287,14 @@ export default function PaymentGrid({
                   data-collect
                 >
                   <input type="hidden" name="loan_id" value={loan.id} />
-                  <input type="hidden" name="period_month" value={openMonth} />
+                  <input type="hidden" name="period_month" value={panelMonth} />
 
                   <div className="label">
                     {collected > 0
                       ? "Collect the rest"
                       : once
                         ? "Collect payment"
-                        : `Collect ${formatMonthShort(openMonth)}`}
+                        : `Collect ${formatMonthShort(panelMonth)}`}
                   </div>
 
                   <select
@@ -330,7 +340,7 @@ export default function PaymentGrid({
               {editing && collected === 0 && (
                 <form action={unscheduleLoanMonth}>
                   <input type="hidden" name="loan_id" value={loan.id} />
-                  <input type="hidden" name="period_month" value={openMonth} />
+                  <input type="hidden" name="period_month" value={panelMonth} />
                   <SubmitButton className="btn btn-sm btn-ghost w-full text-negative-600">
                     Remove this month from the schedule
                   </SubmitButton>
@@ -339,6 +349,7 @@ export default function PaymentGrid({
             </div>
           );
         })()}
+      </Collapse>
     </div>
   );
 }

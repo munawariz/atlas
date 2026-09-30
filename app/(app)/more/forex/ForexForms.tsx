@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Collapse from "@/components/Collapse";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -102,86 +103,88 @@ export function ForexConvert({
 export function ForexAddCurrency() {
   const [open, setOpen] = useState(false);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="btn btn-outline w-full"
-      >
-        Add a currency
-      </button>
-    );
-  }
-
   return (
-    <form
-      action={async (formData: FormData) => {
-        await addForexAccount(formData);
-        setOpen(false);
-      }}
-      className="space-y-2 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
-    >
-      <div className="label">Add a currency</div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          name="currency"
-          placeholder="ISO code (JPY)"
-          aria-label="Currency code"
-          required
-          maxLength={3}
-          autoCapitalize="characters"
-          className="field uppercase"
-        />
-        <input
-          name="name"
-          placeholder="Name (optional)"
-          aria-label="Display name"
-          className="field"
-        />
-      </div>
-
-      <p className="text-[13px] text-ink-500">
-        Already holding some? Enter the balance <em>and</em> what it cost, so the
-        holding starts with a real cost basis.
-      </p>
-
-      <div className="grid grid-cols-2 gap-2">
-        <input
-          name="opening_units"
-          inputMode="decimal"
-          placeholder="Opening balance"
-          aria-label="Opening balance"
-          className="field"
-        />
-        <MoneyInput
-          name="opening_idr"
-          placeholder="What it cost"
-          ariaLabel="Opening cost in rupiah"
-        />
-      </div>
-
-      <input
-        type="date"
-        name="opening_date"
-        defaultValue={todayISO()}
-        aria-label="Opening date"
-        className="field"
-      />
-
-      <div className="flex gap-2">
-        <SubmitButton className="btn btn-primary btn-sm flex-1">
-          Add currency
-        </SubmitButton>
+    <>
+      {!open && (
         <button
           type="button"
-          onClick={() => setOpen(false)}
-          className="btn btn-sm btn-ghost"
+          onClick={() => setOpen(true)}
+          className="btn btn-outline w-full"
         >
-          Cancel
+          Add a currency
         </button>
-      </div>
-    </form>
+      )}
+
+      <Collapse open={open}>
+        <form
+          action={async (formData: FormData) => {
+            await addForexAccount(formData);
+            setOpen(false);
+          }}
+          className="space-y-2 rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)]"
+        >
+          <div className="label">Add a currency</div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              name="currency"
+              placeholder="ISO code (JPY)"
+              aria-label="Currency code"
+              required
+              maxLength={3}
+              autoCapitalize="characters"
+              className="field uppercase"
+            />
+            <input
+              name="name"
+              placeholder="Name (optional)"
+              aria-label="Display name"
+              className="field"
+            />
+          </div>
+
+          <p className="text-[13px] text-ink-500">
+            Already holding some? Enter the balance <em>and</em> what it cost, so the
+            holding starts with a real cost basis.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              name="opening_units"
+              inputMode="decimal"
+              placeholder="Opening balance"
+              aria-label="Opening balance"
+              className="field"
+            />
+            <MoneyInput
+              name="opening_idr"
+              placeholder="What it cost"
+              ariaLabel="Opening cost in rupiah"
+            />
+          </div>
+
+          <input
+            type="date"
+            name="opening_date"
+            defaultValue={todayISO()}
+            aria-label="Opening date"
+            className="field"
+          />
+
+          <div className="flex gap-2">
+            <SubmitButton className="btn btn-primary btn-sm flex-1">
+              Add currency
+            </SubmitButton>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="btn btn-sm btn-ghost"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Collapse>
+    </>
   );
 }

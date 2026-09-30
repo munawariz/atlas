@@ -196,11 +196,32 @@ summary {
 summary::-webkit-details-marker {
   display: none;
 }
-details[open] > summary .chevron {
+/* `.is-closing` is set by DetailsMotion while a close animates: `open` stays set until the
+   height reaches the summary, but the chevron should turn back with the tap. */
+details[open]:not(.is-closing) > summary .chevron {
   transform: rotate(90deg);
 }
 .chevron {
   transition: transform var(--duration-base) var(--ease-standard);
+}
+
+/* Slide panel (components/Collapse.tsx): height via grid rows, so no measuring is needed and
+   Safari animates it too. The inner box clips, and holds any margin inside the moving part. */
+.slide-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 260ms var(--ease-standard),
+    opacity 200ms var(--ease-standard);
+}
+.slide-panel[data-open="true"] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.slide-panel-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ===========================================================================

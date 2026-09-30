@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import Collapse, { COLLAPSE_MS } from "@/components/Collapse";
 import MoneyInput from "@/components/MoneyInput";
 import SubmitButton from "@/components/SubmitButton";
 import { Check, Pencil, Trash, X } from "@/components/icons";
@@ -70,6 +71,10 @@ export default function PaylaterItemCard({
    */
   const [openMonth, setOpenMonth] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // The month the panel shows. It outlives `openMonth` by the close animation, so the panel
+  // slides shut with its content instead of blanking first.
+  const [panelMonth, setPanelMonth] = useState<string | null>(openMonth);
+  if (openMonth && openMonth !== panelMonth) setPanelMonth(openMonth);
 
   const months = scheduleMonths(item);
   const paidCount = months.filter((m) => paidMonths.has(m)).length;
@@ -80,15 +85,19 @@ export default function PaylaterItemCard({
   const pct = months.length > 0 ? (paidCount / months.length) * 100 : 0;
 
   // The panel opens BELOW a strip that can wrap to four rows, so on a long schedule it lands
-  // off-screen with nothing to say it appeared (C4e).
+  // off-screen with nothing to say it appeared (C4e). Once it has finished opening, not while
+  // it is still a sliver.
   useEffect(() => {
     if (!openMonth) return;
-    const node = panelRef.current;
-    if (!node) return;
-    node.scrollIntoView({ block: "nearest" });
-    node.querySelector<HTMLElement>(
-      "select, input, button, [tabindex]"
-    )?.focus();
+    const timer = setTimeout(() => {
+      const node = panelRef.current;
+      if (!node) return;
+      node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      node
+        .querySelector<HTMLElement>("select, input, button, [tabindex]")
+        ?.focus({ preventScroll: true });
+    }, COLLAPSE_MS);
+    return () => clearTimeout(timer);
   }, [openMonth]);
 
   if (editing) {
@@ -166,132 +175,136 @@ export default function PaylaterItemCard({
         )}
       </div>
 
-      {(showSchedule || months.length <= ALWAYS_SHOW_UP_TO) && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {months.map((month) => {
-            const paid = paidMonths.has(month);
-            return (
-              <button
-                key={month}
-                type="button"
-                onClick={() =>
-                  setOpenMonth((prev) => (prev === month ? null : month))
-                }
-                aria-pressed={openMonth === month}
-                aria-label={`${formatMonthShort(month)}, ${paid ? "paid" : "unpaid"}`}
-                className={`inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
-                  paid
-                    ? "bg-lime-200 text-forest-800"
-                    : month === monthKey
-                      ? "bg-warning-100 text-warning-600"
-                      : "bg-cream-200 text-ink-500"
-                } ${openMonth === month ? "ring-2 ring-forest-800" : ""}`}
-              >
-                {/* Colour alone carried paid-vs-unpaid, with a `title` as the only textual
-                    fallback — and `title` does not exist on touch (C4a). */}
-                {paid && <Check size={12} />}
-                {formatMonthShort(month)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {activeThisMonth && openMonth == null && (
-        <div className="mt-3 border-t border-[var(--border-subtle)] pt-3">
-          {isPaidThisMonth ? (
-            <form action={unpayPaylaterMonth}>
-              <input type="hidden" name="item_id" value={item.id} />
-              <input type="hidden" name="month" value={monthKey} />
-              <SubmitButton className="btn btn-sm btn-ghost w-full">
-                Undo this month&rsquo;s payment
-              </SubmitButton>
-            </form>
-          ) : (
+      <Collapse
+        open={showSchedule || months.length <= ALWAYS_SHOW_UP_TO}
+        className="mt-2 flex flex-wrap gap-1"
+      >
+        {months.map((month) => {
+          const paid = paidMonths.has(month);
+          return (
             <button
+              key={month}
               type="button"
-              onClick={() => setOpenMonth(monthKey)}
-              className="btn btn-accent btn-sm w-full"
+              onClick={() =>
+                setOpenMonth((prev) => (prev === month ? null : month))
+              }
+              aria-pressed={openMonth === month}
+              aria-label={`${formatMonthShort(month)}, ${paid ? "paid" : "unpaid"}`}
+              className={`inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold transition-colors ${
+                paid
+                  ? "bg-lime-200 text-forest-800"
+                  : month === monthKey
+                    ? "bg-warning-100 text-warning-600"
+                    : "bg-cream-200 text-ink-500"
+              } ${openMonth === month ? "ring-2 ring-forest-800" : ""}`}
             >
-              Pay this month
+              {/* Colour alone carried paid-vs-unpaid, with a `title` as the only textual
+                  fallback — and `title` does not exist on touch (C4a). */}
+              {paid && <Check size={12} />}
+              {formatMonthShort(month)}
             </button>
-          )}
-        </div>
-      )}
+          );
+        })}
+      </Collapse>
 
-      {openMonth && (
-        <div
-          ref={panelRef}
-          className="mt-3 space-y-2 rounded-[var(--radius-input)] bg-cream-100 p-3"
-        >
-          {paidMonths.has(openMonth) ? (
-            <>
-              <p className="text-[13px] text-ink-700">
-                {formatMonthShort(openMonth)} paid —{" "}
-                <strong className="tabular-nums">
-                  {formatRupiah(item.monthly_amount)}
-                </strong>
-              </p>
-              <form action={unpayPaylaterMonth}>
-                <input type="hidden" name="item_id" value={item.id} />
-                <input type="hidden" name="month" value={openMonth} />
-                <SubmitButton className="btn btn-sm btn-ghost">
-                  Undo this payment
-                </SubmitButton>
-              </form>
-            </>
-          ) : (
-            <form action={payPaylaterMonth} className="space-y-2">
-              <input type="hidden" name="item_id" value={item.id} />
-              <input type="hidden" name="month" value={openMonth} />
-
-              <div className="label">Pay {formatMonthShort(openMonth)}</div>
-
-              <select
-                name="wallet_id"
-                defaultValue={defaultWalletId ?? ""}
-                aria-label="Pay from wallet"
-                className="field"
-              >
-                <option value="">Choose a wallet</option>
-                {wallets.map((w) => (
-                  <option key={w.id} value={String(w.id)}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-
-              <input
-                type="date"
-                name="occurred_on"
-                defaultValue={todayISO()}
-                aria-label="Payment date"
-                className="field"
-              />
-
-              <SubmitButton className="btn btn-primary btn-sm w-full">
-                Pay {formatRupiah(item.monthly_amount)}
-              </SubmitButton>
-
-              <SubmitButton
-                name="skip_transaction"
-                value="1"
-                className="btn btn-sm btn-ghost w-full"
-              >
-                Mark paid — don&rsquo;t record an expense
-              </SubmitButton>
-            </form>
-          )}
-
+      <Collapse
+        open={activeThisMonth && openMonth == null}
+        className="mt-3 border-t border-[var(--border-subtle)] pt-3"
+      >
+        {isPaidThisMonth ? (
+          <form action={unpayPaylaterMonth}>
+            <input type="hidden" name="item_id" value={item.id} />
+            <input type="hidden" name="month" value={monthKey} />
+            <SubmitButton className="btn btn-sm btn-ghost w-full">
+              Undo this month&rsquo;s payment
+            </SubmitButton>
+          </form>
+        ) : (
           <button
             type="button"
-            onClick={() => setOpenMonth(null)}
-            className="btn btn-sm btn-ghost w-full text-ink-500"
+            onClick={() => setOpenMonth(monthKey)}
+            className="btn btn-accent btn-sm w-full"
           >
-            Close
+            Pay this month
           </button>
-        </div>
-      )}
+        )}
+      </Collapse>
+
+      <Collapse open={openMonth != null}>
+          {panelMonth && (
+          <div
+            ref={panelRef}
+            className="mt-3 space-y-2 rounded-[var(--radius-input)] bg-cream-100 p-3"
+          >
+            {paidMonths.has(panelMonth) ? (
+              <>
+                <p className="text-[13px] text-ink-700">
+                  {formatMonthShort(panelMonth)} paid —{" "}
+                  <strong className="tabular-nums">
+                    {formatRupiah(item.monthly_amount)}
+                  </strong>
+                </p>
+                <form action={unpayPaylaterMonth}>
+                  <input type="hidden" name="item_id" value={item.id} />
+                  <input type="hidden" name="month" value={panelMonth} />
+                  <SubmitButton className="btn btn-sm btn-ghost">
+                    Undo this payment
+                  </SubmitButton>
+                </form>
+              </>
+            ) : (
+              <form action={payPaylaterMonth} className="space-y-2">
+                <input type="hidden" name="item_id" value={item.id} />
+                <input type="hidden" name="month" value={panelMonth} />
+
+                <div className="label">Pay {formatMonthShort(panelMonth)}</div>
+
+                <select
+                  name="wallet_id"
+                  defaultValue={defaultWalletId ?? ""}
+                  aria-label="Pay from wallet"
+                  className="field"
+                >
+                  <option value="">Choose a wallet</option>
+                  {wallets.map((w) => (
+                    <option key={w.id} value={String(w.id)}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+
+                <input
+                  type="date"
+                  name="occurred_on"
+                  defaultValue={todayISO()}
+                  aria-label="Payment date"
+                  className="field"
+                />
+
+                <SubmitButton className="btn btn-primary btn-sm w-full">
+                  Pay {formatRupiah(item.monthly_amount)}
+                </SubmitButton>
+
+                <SubmitButton
+                  name="skip_transaction"
+                  value="1"
+                  className="btn btn-sm btn-ghost w-full"
+                >
+                  Mark paid — don&rsquo;t record an expense
+                </SubmitButton>
+              </form>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setOpenMonth(null)}
+              className="btn btn-sm btn-ghost w-full text-ink-500"
+            >
+              Close
+            </button>
+          </div>
+        )}
+      </Collapse>
 
       {confirmingDelete && (
         <div className="mt-3 rounded-[var(--radius-input)] bg-negative-100 p-3">

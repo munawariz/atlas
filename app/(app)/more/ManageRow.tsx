@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Collapse from "@/components/Collapse";
 import {
   Check,
   ChevronDown,
@@ -144,8 +145,8 @@ export default function ManageRow({
         </div>
       )}
 
-      {menuOpen && hasMenu && !editing && (
-        <div className="mt-2 divide-y divide-[var(--border-subtle)] overflow-hidden rounded-[var(--radius-input)] bg-cream-100">
+      <Collapse open={menuOpen && hasMenu && !editing} className="pt-2">
+        <div className="divide-y divide-[var(--border-subtle)] overflow-hidden rounded-[var(--radius-input)] bg-cream-100">
           {onMoveUp && (
             <MenuAction label="Move up" onClick={onMoveUp}>
               <ChevronUp size={18} />
@@ -170,7 +171,7 @@ export default function ManageRow({
             </button>
           )}
         </div>
-      )}
+      </Collapse>
 
       {children && <div className="mt-3">{children}</div>}
 

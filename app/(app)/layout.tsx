@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense, type ReactNode } from "react";
 import BottomNav from "@/components/BottomNav";
+import DetailsMotion from "@/components/DetailsMotion";
 import PrivacyToggle from "@/components/PrivacyToggle";
 import RouteProgress from "@/components/RouteProgress";
 import {
@@ -41,6 +42,7 @@ export default function AppLayout({
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col">
       <RouteProgress />
+      <DetailsMotion />
       {/*
         Solid white header, no backdrop-filter. A sticky element that also has a backdrop
         filter silently stops sticking in Chromium (ATLAS.md §14.1) — and the design system

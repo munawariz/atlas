@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Collapse from "@/components/Collapse";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -122,76 +123,74 @@ export default function BudgetRow({
         </span>
       </button>
 
-      {open && (
-        <div className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
-          <form action={saveBudget} className="space-y-3">
+      <Collapse open={open} className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
+        <form action={saveBudget} className="space-y-3">
+          <input type="hidden" name="category_id" value={categoryId} />
+          <input type="hidden" name="month" value={monthKey} />
+          <input type="hidden" name="scope" value={scope} />
+
+          <div>
+            <label htmlFor={`amount-${categoryId}`} className="label mb-1 block">
+              {AMOUNT_LABEL[period]}
+            </label>
+            <MoneyInput
+              id={`amount-${categoryId}`}
+              name="amount"
+              defaultValue={amount}
+            />
+          </div>
+
+          <div>
+            <span className="label mb-1 block">Apply to</span>
+            <PillSwitcher<SaveScope>
+              options={SCOPES.map((option) => ({
+                key: option.value,
+                label: option.label,
+              }))}
+              value={scope}
+              onChange={setScope}
+              ariaLabel="Apply to"
+              wrap
+            />
+            <p className="mt-1.5 text-[13px] text-ink-500">
+              {SCOPES.find((s) => s.value === scope)?.hint}
+            </p>
+          </div>
+
+          <SubmitButton className="btn btn-primary btn-sm w-full" pendingChildren="Saving…">
+            Save budget
+          </SubmitButton>
+        </form>
+
+        <form action={setCategoryPeriod.bind(null, categoryId)}>
+          <label className="flex items-center justify-between gap-2">
+            <span className="label">Cadence</span>
+            <select
+              name="period"
+              defaultValue={period}
+              onChange={(e) => e.currentTarget.form?.requestSubmit()}
+              aria-label="Budget cadence"
+              className="field h-10 w-auto py-0 text-[14px]"
+            >
+              {BUDGET_PERIODS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </form>
+
+        {source === "month" && (
+          <form action={clearBudgetOverride}>
             <input type="hidden" name="category_id" value={categoryId} />
             <input type="hidden" name="month" value={monthKey} />
-            <input type="hidden" name="scope" value={scope} />
-
-            <div>
-              <label htmlFor={`amount-${categoryId}`} className="label mb-1 block">
-                {AMOUNT_LABEL[period]}
-              </label>
-              <MoneyInput
-                id={`amount-${categoryId}`}
-                name="amount"
-                defaultValue={amount}
-              />
-            </div>
-
-            <div>
-              <span className="label mb-1 block">Apply to</span>
-              <PillSwitcher<SaveScope>
-                options={SCOPES.map((option) => ({
-                  key: option.value,
-                  label: option.label,
-                }))}
-                value={scope}
-                onChange={setScope}
-                ariaLabel="Apply to"
-                wrap
-              />
-              <p className="mt-1.5 text-[13px] text-ink-500">
-                {SCOPES.find((s) => s.value === scope)?.hint}
-              </p>
-            </div>
-
-            <SubmitButton className="btn btn-primary btn-sm w-full" pendingChildren="Saving…">
-              Save budget
-            </SubmitButton>
+            <button type="submit" className="btn btn-sm btn-ghost w-full">
+              Remove this month&rsquo;s override
+            </button>
           </form>
-
-          <form action={setCategoryPeriod.bind(null, categoryId)}>
-            <label className="flex items-center justify-between gap-2">
-              <span className="label">Cadence</span>
-              <select
-                name="period"
-                defaultValue={period}
-                onChange={(e) => e.currentTarget.form?.requestSubmit()}
-                aria-label="Budget cadence"
-                className="field h-10 w-auto py-0 text-[14px]"
-              >
-                {BUDGET_PERIODS.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </form>
-
-          {source === "month" && (
-            <form action={clearBudgetOverride}>
-              <input type="hidden" name="category_id" value={categoryId} />
-              <input type="hidden" name="month" value={monthKey} />
-              <button type="submit" className="btn btn-sm btn-ghost w-full">
-                Remove this month&rsquo;s override
-              </button>
-            </form>
-          )}
-        </div>
-      )}
+        )}
+      </Collapse>
     </div>
   );
 }

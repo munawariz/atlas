@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Collapse from "@/components/Collapse";
 import MoneyInput from "@/components/MoneyInput";
 import PillSwitcher from "@/components/PillSwitcher";
 import SubmitButton from "@/components/SubmitButton";
@@ -92,69 +93,67 @@ export default function StockTargetRow({
         </div>
       </button>
 
-      {open && (
-        <div className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
-          <form action={saveStockTarget} className="space-y-2">
+      <Collapse open={open} className="mt-4 space-y-3 border-t border-[var(--border-subtle)] pt-4">
+        <form action={saveStockTarget} className="space-y-2">
+          <input type="hidden" name="ticker" value={ticker} />
+          <input type="hidden" name="month" value={monthKey} />
+          <input type="hidden" name="scope" value={scope} />
+
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="label mb-1 block">Lots / month</span>
+              <input
+                type="number"
+                name="lots"
+                min={1}
+                defaultValue={lots}
+                className="field"
+              />
+            </label>
+            <label className="block">
+              <span className="label mb-1 block">Price / share</span>
+              <MoneyInput
+                name="price"
+                defaultValue={price}
+                placeholder="optional"
+                ariaLabel="Speculative price per share"
+              />
+            </label>
+          </div>
+
+          <PillSwitcher<SaveScope>
+            options={SCOPES.map((option) => ({
+              key: option.value,
+              label: option.label,
+            }))}
+            value={scope}
+            onChange={setScope}
+            ariaLabel="Apply to"
+            wrap
+          />
+
+          <SubmitButton className="btn btn-primary btn-sm w-full">
+            Save target
+          </SubmitButton>
+        </form>
+
+        {source === "month" && hasBase && (
+          <form action={revertStockTarget}>
             <input type="hidden" name="ticker" value={ticker} />
             <input type="hidden" name="month" value={monthKey} />
-            <input type="hidden" name="scope" value={scope} />
-
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="label mb-1 block">Lots / month</span>
-                <input
-                  type="number"
-                  name="lots"
-                  min={1}
-                  defaultValue={lots}
-                  className="field"
-                />
-              </label>
-              <label className="block">
-                <span className="label mb-1 block">Price / share</span>
-                <MoneyInput
-                  name="price"
-                  defaultValue={price}
-                  placeholder="optional"
-                  ariaLabel="Speculative price per share"
-                />
-              </label>
-            </div>
-
-            <PillSwitcher<SaveScope>
-              options={SCOPES.map((option) => ({
-                key: option.value,
-                label: option.label,
-              }))}
-              value={scope}
-              onChange={setScope}
-              ariaLabel="Apply to"
-              wrap
-            />
-
-            <SubmitButton className="btn btn-primary btn-sm w-full">
-              Save target
+            <SubmitButton className="btn btn-sm btn-ghost w-full">
+              Revert to base target
             </SubmitButton>
           </form>
+        )}
 
-          {source === "month" && hasBase && (
-            <form action={revertStockTarget}>
-              <input type="hidden" name="ticker" value={ticker} />
-              <input type="hidden" name="month" value={monthKey} />
-              <SubmitButton className="btn btn-sm btn-ghost w-full">
-                Revert to base target
-              </SubmitButton>
-            </form>
-          )}
-
-          <form action={deleteStockTarget}>
-            <input type="hidden" name="ticker" value={ticker} />
-            <SubmitButton className="btn btn-sm btn-ghost w-full text-negative-600">
-              Remove {ticker} target
-            </SubmitButton>
-          </form>
-        </div>
-      )}
+        <form action={deleteStockTarget}>
+          <input type="hidden" name="ticker" value={ticker} />
+          <SubmitButton className="btn btn-sm btn-ghost w-full text-negative-600">
+            Remove {ticker} target
+          </SubmitButton>
+        </form>
+      </Collapse>
     </div>
   );
 }

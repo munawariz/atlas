@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Collapse from "@/components/Collapse";
 import PillSwitcher from "@/components/PillSwitcher";
 import {
   formatMonthShort,
@@ -347,35 +348,33 @@ export default function ChartsClient({
           )}
         </div>
 
-        {custom && (
-          <div className="mt-2 flex items-center gap-2">
-            <select
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              aria-label="From month"
-              className="field h-9 flex-1 py-0 text-[13px]"
-            >
-              {months.map((month) => (
-                <option key={month} value={month}>
-                  {formatMonthShort(month)}
-                </option>
-              ))}
-            </select>
-            <span className="text-ink-300">→</span>
-            <select
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              aria-label="To month"
-              className="field h-9 flex-1 py-0 text-[13px]"
-            >
-              {months.map((month) => (
-                <option key={month} value={month}>
-                  {formatMonthShort(month)}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <Collapse open={custom} className="flex items-center gap-2 pt-2">
+          <select
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            aria-label="From month"
+            className="field h-9 flex-1 py-0 text-[13px]"
+          >
+            {months.map((month) => (
+              <option key={month} value={month}>
+                {formatMonthShort(month)}
+              </option>
+            ))}
+          </select>
+          <span className="text-ink-300">→</span>
+          <select
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            aria-label="To month"
+            className="field h-9 flex-1 py-0 text-[13px]"
+          >
+            {months.map((month) => (
+              <option key={month} value={month}>
+                {formatMonthShort(month)}
+              </option>
+            ))}
+          </select>
+        </Collapse>
       </div>
 
       {/* --- Net worth ------------------------------------------------------ */}

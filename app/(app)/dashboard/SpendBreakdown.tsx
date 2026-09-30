@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Collapse from "@/components/Collapse";
 import { formatDateShort, formatRupiah } from "@/lib/format";
 
 export interface BreakdownSlice {
@@ -177,8 +178,10 @@ export default function SpendBreakdown({
                 </span>
               </button>
 
-              {isActive && slice.transactions.length > 0 && (
-                <ul className="mb-2 ml-5 space-y-1 border-l-2 pl-3" style={{ borderColor: activeColor ?? undefined }}>
+              {/* Its own colour rather than activeColor: that clears the moment the row is
+                  tapped shut, and the list still has a close to animate. */}
+              <Collapse open={isActive && slice.transactions.length > 0}>
+                <ul className="mb-2 ml-5 space-y-1 border-l-2 pl-3" style={{ borderColor: SERIES[i % SERIES.length] }}>
                   {slice.transactions.map((txn) => (
                     <li
                       key={txn.id}
@@ -196,7 +199,7 @@ export default function SpendBreakdown({
                     </li>
                   ))}
                 </ul>
-              )}
+              </Collapse>
             </div>
           );
         })}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
+import Collapse from "@/components/Collapse";
 import SubmitButton from "@/components/SubmitButton";
 import { Plus, X } from "@/components/icons";
 import { addCategory, addGroup, type ManageState } from "../actions";
@@ -61,71 +62,72 @@ function AddForm({
     }
   }, [state, anchorPrefix]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          setOpen(true);
-          // Focus after the field exists; the state flush and the paint share a frame.
-          requestAnimationFrame(() => inputRef.current?.focus());
-        }}
-        className="mb-2 flex h-11 w-full items-center gap-2 rounded-[var(--radius-card)] border border-dashed border-[var(--border-default)] px-3 text-left text-[14px] font-semibold text-forest-800"
-      >
-        <Plus size={16} />
-        {label}
-      </button>
-    );
-  }
-
   return (
-    <form
-      action={formAction}
-      className="mb-2 space-y-2 rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
-      style={{ animation: "pop 0.22s var(--ease-standard) both" }}
-    >
-      {Object.entries(hidden ?? {}).map(([name, value]) => (
-        <input key={name} type="hidden" name={name} value={value} />
-      ))}
-
-      <div className="flex items-center justify-between">
-        <label htmlFor={fieldId} className="label">
-          {fieldLabel}
-        </label>
+    <>
+      {!open && (
         <button
           type="button"
-          onClick={() => setOpen(false)}
-          aria-label={`Cancel — ${title}`}
-          className="-m-2 p-2 text-ink-500"
+          onClick={() => {
+            setOpen(true);
+            // Focus after the field exists; the state flush and the paint share a frame.
+            requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+          }}
+          className="mb-2 flex h-11 w-full items-center gap-2 rounded-[var(--radius-card)] border border-dashed border-[var(--border-default)] px-3 text-left text-[14px] font-semibold text-forest-800"
         >
-          <X size={16} />
+          <Plus size={16} />
+          {label}
         </button>
-      </div>
-
-      <div className="flex gap-2">
-        <input
-          id={fieldId}
-          ref={inputRef}
-          name="name"
-          placeholder={placeholder}
-          required
-          autoComplete="off"
-          className="field flex-1"
-        />
-        <SubmitButton className="btn btn-primary shrink-0" pendingChildren="Adding…">
-          {submitLabel}
-        </SubmitButton>
-      </div>
-
-      {state.error && (
-        <p
-          role="alert"
-          className="rounded-[var(--radius-input)] bg-negative-100 px-3 py-2 text-[13px] font-medium text-negative-600"
-        >
-          {state.error}
-        </p>
       )}
-    </form>
+
+      <Collapse open={open}>
+        <form
+          action={formAction}
+          className="mb-2 space-y-2 rounded-[var(--radius-card)] bg-white p-3 shadow-[var(--shadow-xs)]"
+        >
+          {Object.entries(hidden ?? {}).map(([name, value]) => (
+            <input key={name} type="hidden" name={name} value={value} />
+          ))}
+
+          <div className="flex items-center justify-between">
+            <label htmlFor={fieldId} className="label">
+              {fieldLabel}
+            </label>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label={`Cancel — ${title}`}
+              className="-m-2 p-2 text-ink-500"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              id={fieldId}
+              ref={inputRef}
+              name="name"
+              placeholder={placeholder}
+              required
+              autoComplete="off"
+              className="field flex-1"
+            />
+            <SubmitButton className="btn btn-primary shrink-0" pendingChildren="Adding…">
+              {submitLabel}
+            </SubmitButton>
+          </div>
+
+          {state.error && (
+            <p
+              role="alert"
+              className="rounded-[var(--radius-input)] bg-negative-100 px-3 py-2 text-[13px] font-medium text-negative-600"
+            >
+              {state.error}
+            </p>
+          )}
+        </form>
+      </Collapse>
+    </>
   );
 }
 

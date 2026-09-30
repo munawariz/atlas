@@ -34,8 +34,14 @@ interface Item {
 const PRIMARY: Item[] = [
   { href: "/charts", label: "Charts", hint: "Net worth, cash flow, categories", Icon: LineChart },
   { href: "/more/cashflow", label: "Expected cashflow", hint: "What a month is planned to do", Icon: ArrowUpRight },
-  { href: "/balances", label: "Starting balances", hint: "What each wallet opened with", Icon: WalletIcon },
   { href: "/savings", label: "Savings", hint: "Money set aside, per bucket", Icon: Coins },
+];
+
+/** Where money is held or owed: cash wallets, and the cards that are wallets run negative. */
+const ACCOUNTS: Item[] = [
+  { href: "/more/wallets", label: "Wallets", hint: "Where your cash lives", Icon: WalletIcon },
+  { href: "/more/cards", label: "Credit cards", hint: "Bill, minimum payment, interest", Icon: CreditCard },
+  { href: "/balances", label: "Starting balances", hint: "What each wallet opened with", Icon: WalletIcon },
 ];
 
 const INVESTMENT: Item[] = [
@@ -49,9 +55,7 @@ const INVESTMENT: Item[] = [
 const MANAGE: Item[] = [
   { href: "/more/budgets", label: "Budgets", hint: "Limits and targets per category", Icon: SlidersHorizontal },
   { href: "/more/paylater", label: "Installments", hint: "What you owe each month", Icon: CreditCard },
-  { href: "/more/cards", label: "Credit cards", hint: "Bill, minimum payment, interest", Icon: CreditCard },
   { href: "/more/loans", label: "Lending", hint: "Money other people owe you", Icon: Coins },
-  { href: "/more/wallets", label: "Wallets", hint: "Where your cash lives", Icon: WalletIcon },
   { href: "/more/categories", label: "Categories", hint: "What your transactions get labelled with", Icon: FileText },
   { href: "/more/providers", label: "Installment providers", hint: "Card, paylater, store credit", Icon: CreditCard },
   { href: "/more/settings", label: "Settings", hint: "Categories automated actions book to", Icon: Star },
@@ -86,24 +90,9 @@ export default async function MorePage() {
 
       <ItemList items={PRIMARY} />
 
-      <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
-        <summary className="flex items-center gap-3 px-4 py-3.5">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-cream-100 text-forest-800">
-            <LineChart size={20} />
-          </span>
-          <span className="flex-1 text-[15px] font-semibold text-ink-900">
-            Investment
-          </span>
-          <span className="chevron text-ink-300">
-            <ChevronDown size={18} />
-          </span>
-        </summary>
-        <div className="border-t border-[var(--border-subtle)]">
-          {INVESTMENT.map((item, i) => (
-            <Row key={item.href} item={item} first={i === 0} />
-          ))}
-        </div>
-      </details>
+      <ItemGroup label="Accounts" Icon={WalletIcon} items={ACCOUNTS} />
+
+      <ItemGroup label="Investment" Icon={LineChart} items={INVESTMENT} />
 
       <ItemList items={MANAGE} />
 
@@ -131,6 +120,41 @@ export default async function MorePage() {
         </button>
       </form>
     </div>
+  );
+}
+
+/** A collapsible group of entries, closed at rest so the menu stays one screen. */
+function ItemGroup({
+  label,
+  Icon,
+  items,
+}: {
+  label: string;
+  Icon: ComponentType<IconProps>;
+  items: Item[];
+}) {
+  return (
+    <details className="overflow-hidden rounded-[var(--radius-card)] bg-white shadow-[var(--shadow-xs)]">
+      <summary className="flex items-center gap-3 px-4 py-3.5">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-cream-100 text-forest-800">
+          <Icon size={20} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[15px] font-semibold text-ink-900">{label}</span>
+          <span className="block truncate text-[13px] text-ink-500">
+            {items.map((item) => item.label).join(" · ")}
+          </span>
+        </span>
+        <span className="chevron text-ink-300">
+          <ChevronDown size={18} />
+        </span>
+      </summary>
+      <div className="border-t border-[var(--border-subtle)]">
+        {items.map((item, i) => (
+          <Row key={item.href} item={item} first={i === 0} />
+        ))}
+      </div>
+    </details>
   );
 }
 

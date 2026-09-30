@@ -1208,6 +1208,14 @@ number carries `tabular-nums` plus optionally `priv-left` / `priv-center`.
 - `icons.tsx` — shared stroke-`currentColor` SVGs: Pencil, Trash, Check, Chart, ChevronUp/Down,
   Grip, Eye, EyeOff.
 - `RegisterSW.tsx` — registers `/sw.js`.
+- **Every expand/collapse animates.** `DetailsMotion.tsx`, mounted once in the app layout,
+  takes over summary clicks on every `<details>` and animates its height with the Web
+  Animations API (the CSS `::details-content` route is Chromium-only, and this is a phone
+  app); a tap mid-animation reverses it, `.is-closing` turns the chevron back with the tap,
+  and `data-no-motion` opts a `<details>` out. `Collapse.tsx` is the same for React-state
+  panels: use `<Collapse open={…}>` instead of `{open && …}` — it slides via
+  `grid-template-rows` and unmounts only after closing. Both stand aside under
+  `prefers-reduced-motion`.
 
 ---
 
@@ -1405,9 +1413,11 @@ name, and an optional opening balance **with its IDR cost** (seeded as a wallet-
 `buy` so the holding starts with a cost basis). Finally a month-grouped history log.
 
 ### `/more` (index)
-A settings list: Charts · Expected cashflow · Starting balances · Savings, then a collapsible
-**Investment** group (Stocks · Bonds · Crypto · Forex), then Budgets · My Installment · Loans ·
-Wallets · Categories · Settings, then a Backup snapshot card and a Log out form.
+A settings list: Charts · Expected cashflow · Savings, then two collapsible groups —
+**Accounts** (Wallets · Credit cards · Starting balances) and **Investment** (Stocks · Bonds ·
+Crypto · ETF · Forex), each summary listing what it holds — then Budgets · My Installment ·
+Lending · Categories · Installment providers · Settings, then a Backup snapshot card and a Log
+out form.
 
 ### `/more/budgets`
 Month-scoped, tabbed by kind (Expense / Income / Saving). Header card shows **Expected cashflow /mo**
