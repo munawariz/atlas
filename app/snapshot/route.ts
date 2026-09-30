@@ -8,12 +8,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MONEY = "#,##0";
+const USD = "#,##0.00";
 
 interface Column {
   header: string;
   width: number;
   /** Format money columns and bold them in TOTAL rows. */
   money?: boolean;
+  /** Dollars, to the cent. */
+  usd?: boolean;
 }
 
 function addSheet(
@@ -41,6 +44,7 @@ function addSheet(
 
   columns.forEach((column, i) => {
     if (column.money) sheet.getColumn(i + 1).numFmt = MONEY;
+    if (column.usd) sheet.getColumn(i + 1).numFmt = USD;
   });
 }
 
@@ -253,6 +257,76 @@ export async function GET(request: NextRequest) {
       snap.crypto.pricedValue,
       snap.crypto.unrealizedPl,
       snap.crypto.lifetimeRealizedPl,
+    ]
+  );
+
+  // --- ETF (USD) -----------------------------------------------------------
+  // Each broker's cash is its own row, so the value column sums to the broker's total.
+  addSheet(
+    workbook,
+    "ETF",
+    [
+      { header: "Broker", width: 18 },
+      { header: "Ticker", width: 12 },
+      { header: "Units", width: 14 },
+      { header: "Cost (USD)", width: 14, usd: true },
+      { header: "Price (USD)", width: 14, usd: true },
+      { header: "Value (USD)", width: 14, usd: true },
+      { header: "Unrealized (USD)", width: 16, usd: true },
+      { header: "Realized (USD)", width: 16, usd: true },
+      { header: "Dividends (USD)", width: 16, usd: true },
+      { header: "Rupiah cost", width: 16, money: true },
+    ],
+    snap.etf.brokers.flatMap((broker) => [
+      [
+        broker.account.name,
+        "Cash",
+        "",
+        broker.cashUsd,
+        "",
+        broker.cashUsd,
+        "",
+        "",
+        "",
+        broker.cashIdr,
+      ],
+      ...broker.holdings.map((h) => [
+        broker.account.name,
+        h.ticker,
+        h.units,
+        h.costUsd,
+        h.priceUsd ?? "",
+        h.valueUsd ?? "",
+        h.unrealizedUsd ?? "",
+        h.realizedUsd,
+        h.dividendsUsd,
+        Math.round(h.costIdr),
+      ]),
+      // Sold out: nothing held, but the P/L and dividends it earned still belong to the year.
+      ...broker.closed.map((p) => [
+        broker.account.name,
+        p.ticker,
+        0,
+        "",
+        "",
+        "",
+        "",
+        p.realizedUsd,
+        p.dividendsUsd,
+        "",
+      ]),
+    ]),
+    [
+      "TOTAL",
+      "",
+      "",
+      "",
+      "",
+      snap.etf.totalValueUsd,
+      snap.etf.unrealizedUsd,
+      snap.etf.realizedUsd,
+      snap.etf.dividendsUsd,
+      snap.etf.costIdr,
     ]
   );
 

@@ -24,6 +24,8 @@ export interface CategorySetting {
   label: string;
   kind: CategoryKind;
   help: string;
+  /** Needed only when the user enters the amount it books, so it never raises the setup banner. */
+  optional?: boolean;
 }
 
 export const CATEGORY_SETTINGS: CategorySetting[] = [
@@ -106,6 +108,38 @@ export const CATEGORY_SETTINGS: CategorySetting[] = [
     help: "Expense booked when you sell a coin below its average cost.",
   },
   {
+    key: "cat_etf",
+    label: "ETF holding",
+    kind: "investment",
+    help: "The bucket a broker top-up moves rupiah into. Buys, sells and dividends stay in USD.",
+  },
+  {
+    key: "cat_etf_profit",
+    label: "ETF realized profit",
+    kind: "income",
+    help: "Income booked when USD withdrawn from a broker is worth more rupiah than it cost.",
+  },
+  {
+    key: "cat_etf_loss",
+    label: "ETF realized loss",
+    kind: "expense",
+    help: "Expense booked when USD withdrawn from a broker is worth less rupiah than it cost.",
+  },
+  {
+    key: "cat_etf_fee",
+    label: "ETF conversion fee",
+    kind: "expense",
+    help: "Expense booked when a broker top-up or withdrawal carries a conversion fee.",
+    optional: true,
+  },
+  {
+    key: "cat_etf_tax",
+    label: "ETF tax",
+    kind: "expense",
+    help: "Expense booked when a broker top-up or withdrawal carries tax.",
+    optional: true,
+  },
+  {
     key: "cat_admin_fee",
     label: "Transfer admin fee",
     kind: "expense",
@@ -135,6 +169,11 @@ export const WALLET_SETTINGS: WalletSetting[] = [
     label: "Default crypto wallet",
     help: "Pre-selected on the crypto trade form.",
   },
+  {
+    key: "wallet_etf",
+    label: "Default ETF top-up wallet",
+    help: "Pre-selected when topping up or withdrawing from a broker.",
+  },
 ];
 
 /**
@@ -160,6 +199,11 @@ export const DETECT_HINTS: Record<string, string[]> = {
   cat_crypto: ["Crypto", "Cryptocurrency", "Kripto"],
   cat_crypto_profit: ["Crypto Profit", "Crypto Gain"],
   cat_crypto_loss: ["Crypto Loss"],
+  cat_etf: ["ETF", "ETFs", "US ETF"],
+  cat_etf_profit: ["ETF Profit", "ETF Gain"],
+  cat_etf_loss: ["ETF Loss"],
+  cat_etf_fee: ["ETF Fee", "Conversion Fee", "Broker Fee"],
+  cat_etf_tax: ["Tax", "Taxes", "Pajak"],
   cat_admin_fee: ["Admin Fee", "Bank Fee", "Biaya Admin", "Admin"],
 };
 
@@ -268,7 +312,9 @@ export async function missingSettings(): Promise<
     getCategories(true),
   ]);
   return CATEGORY_SETTINGS.filter(
-    (setting) => mappedCategoryId(settings, categories, setting.key) === null
+    (setting) =>
+      !setting.optional &&
+      mappedCategoryId(settings, categories, setting.key) === null
   ).map(({ key, label, kind }) => ({ key, label, kind }));
 }
 

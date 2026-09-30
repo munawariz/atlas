@@ -11,6 +11,8 @@ interface Row {
   help: string;
   /** Category rows carry a kind; wallet rows do not. */
   kind?: string;
+  /** Unset is fine until the feature that books it is used. */
+  optional?: boolean;
 }
 
 const INITIAL: SettingsState = {};
@@ -90,7 +92,7 @@ export default function SettingsForm({
             <div
               key={row.key}
               className={`rounded-[var(--radius-card)] bg-white p-4 shadow-[var(--shadow-xs)] ${
-                value ? "" : "border-l-4 border-warning-500"
+                value || row.optional ? "" : "border-l-4 border-warning-500"
               }`}
             >
               <label
@@ -100,11 +102,14 @@ export default function SettingsForm({
                 <span className="text-[15px] font-semibold text-ink-900">
                   {row.label}
                 </span>
-                {!value && (
-                  <span className="badge bg-warning-100 text-warning-600">
-                    Not set
-                  </span>
-                )}
+                {!value &&
+                  (row.optional ? (
+                    <span className="badge bg-cream-200 text-ink-700">Optional</span>
+                  ) : (
+                    <span className="badge bg-warning-100 text-warning-600">
+                      Not set
+                    </span>
+                  ))}
               </label>
               <p className="mb-2 text-[13px] text-ink-500">{row.help}</p>
               <select

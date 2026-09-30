@@ -666,6 +666,7 @@ export async function saveAppSettings(
   revalidatePath("/stocks");
   revalidatePath("/bonds");
   revalidatePath("/crypto");
+  revalidatePath("/etf");
   revalidatePath("/more/forex");
   revalidatePath("/more/loans");
   revalidatePath("/more/cashflow");

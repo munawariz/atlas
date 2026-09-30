@@ -88,6 +88,21 @@ export function formatUnits(n: number): string {
   return unitFormatter.format(Number.isFinite(n) ? n : 0);
 }
 
+const usdFormatter = new Intl.NumberFormat(LOCALE, {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * "$1,234.56" — the ETF module's own currency. Unlike rupiah, dollars carry cents: a broker
+ * reports them, and a fractional-share buy routinely spends $12.37.
+ */
+export function formatUsd(n: number): string {
+  return usdFormatter.format(Number.isFinite(n) ? n : 0);
+}
+
 /**
  * Compact money: "Rp 7.8M" | "Rp 950K" | "Rp 1M" | "Rp 1.2B".
  *

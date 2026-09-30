@@ -17,6 +17,7 @@ import {
 } from "./data";
 import { getBondPortfolio, type BondPortfolio } from "./bonds";
 import { getCryptoPortfolio, type CryptoPortfolio } from "./crypto";
+import { getEtfPortfolio, type EtfPortfolio } from "./etf";
 import { getStockPortfolio, type StockPortfolio } from "./stocks";
 import { forexAvgCost, getForexAccounts, getForexRate, getForexTransactions } from "./forex";
 import type { Category, Loan, LoanPayment, PaylaterItem, Transaction, Wallet } from "./types";
@@ -46,6 +47,8 @@ export interface Snapshot {
   stocks: StockPortfolio;
   bonds: BondPortfolio;
   crypto: CryptoPortfolio;
+  /** In USD. Its rupiah cost is already inside `savingsTotal`, as the ETF bucket. */
+  etf: EtfPortfolio;
   forex: ForexSnapshot[];
   forexTotal: number;
   loans: (Loan & { expected: number; collected: number; outstanding: number })[];
@@ -86,6 +89,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     stocks,
     bonds,
     crypto,
+    etf,
     forexAccounts,
     loans,
     loanPayments,
@@ -101,6 +105,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     getStockPortfolio(cutoff, isCurrentYear),
     getBondPortfolio(cutoff),
     getCryptoPortfolio(cutoff, isCurrentYear),
+    getEtfPortfolio(cutoff, isCurrentYear),
     getForexAccounts(),
     getLoans(),
     getLoanPayments(),
@@ -213,6 +218,7 @@ export async function gatherSnapshot(year: number): Promise<Snapshot> {
     stocks,
     bonds,
     crypto,
+    etf,
     forex,
     forexTotal,
     loans: loanRows,

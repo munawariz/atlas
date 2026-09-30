@@ -346,6 +346,39 @@ create table if not exists crypto_trades (
 );
 create index if not exists idx_crypto_trades_symbol on crypto_trades (symbol);
 
+-- ETFs, held at a broker that keeps its own USD cash. Everything inside a broker is in USD;
+-- the IDR ledger only sees money crossing the border — a top-up (`investment` into the ETF
+-- bucket) and a withdrawal back to a wallet (cost basis out, plus a P/L row). Buys, sells and
+-- dividends move USD cash and holdings only, so they book no ledger rows.
+create table if not exists etf_accounts (
+  id bigint generated always as identity primary key,
+  name text not null unique,       -- the broker
+  sort_order int not null default 0
+);
+
+create table if not exists etf_trades (
+  id bigint generated always as identity primary key,
+  account_id bigint not null references etf_accounts(id) on delete cascade,
+  side text not null check (side in ('topup', 'withdraw', 'buy', 'sell', 'dividend')),
+  ticker text,                     -- buy / sell / dividend only
+  units numeric,                   -- buy / sell only; fractional shares allowed
+  usd numeric not null check (usd > 0),  -- USD credited, spent, received or paid out
+  idr bigint,                      -- topup / withdraw only: rupiah paid / received
+  rate numeric,                    -- topup / withdraw only: IDR per USD as entered
+  occurred_on date not null,
+  wallet_id bigint references wallets(id) on delete set null,
+  txn_id bigint references transactions(id) on delete set null,     -- topup = investment / withdraw = cost-basis withdrawal
+  pl_txn_id bigint references transactions(id) on delete set null,  -- withdraw: realized IDR P/L
+  realized_pl bigint               -- withdraw only, in IDR
+);
+create index if not exists idx_etf_trades_account on etf_trades (account_id);
+-- Optional conversion fee and tax on a top-up or withdrawal, in rupiah. Each is its own
+-- `expense` from the wallet, so neither touches the ETF bucket or the USD side.
+alter table etf_trades add column if not exists fee bigint;
+alter table etf_trades add column if not exists tax bigint;
+alter table etf_trades add column if not exists fee_txn_id bigint references transactions(id) on delete set null;
+alter table etf_trades add column if not exists tax_txn_id bigint references transactions(id) on delete set null;
+
 -- ---------------------------------------------------------------------------
 -- Materialized monthly deltas + trigger (ATLAS.md §4.1) — performance-critical.
 -- balance at end of month M = opening + sum(delta) where month <= M

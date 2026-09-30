@@ -226,6 +226,10 @@ can be reversed cleanly:
 | Bond coupon | `income` into wallet, category `cat_bond_coupon` |
 | Buy crypto | `investment` from wallet → `cat_crypto` |
 | Sell crypto | `withdrawal` of the **cost basis** into wallet from `cat_crypto`, **plus** a P/L row: `income`/`cat_crypto_profit` if profit, `expense`/`cat_crypto_loss` if loss |
+| ETF top-up | `investment` from wallet → `cat_etf` (the rupiah paid; the broker's USD cash grows by rupiah ÷ rate) |
+| ETF withdraw | `withdrawal` of the USD's **rupiah cost** into wallet from `cat_etf`, **plus** `income`/`cat_etf_profit` or `expense`/`cat_etf_loss` |
+| ETF conversion fee / tax (optional, either move) | `expense` from the wallet → `cat_etf_fee` / `cat_etf_tax`, **deducted from the rupiah side**: a top-up's `investment` is the rupiah paid minus both, and only that converts; a withdrawal's charges come off its proceeds (both `optional` settings: absent from the setup banner, refused only when an amount is entered unmapped) |
+| ETF buy / sell / dividend | **none** — USD only, inside the broker (see `lib/etf.ts`) |
 | Buy forex | `investment` from wallet → `cat_forex` |
 | Sell forex | `withdrawal` of cost basis into wallet from `cat_forex`, **plus** `income`/`cat_forex_profit` or `expense`/`cat_forex_loss` |
 
@@ -244,6 +248,8 @@ they are what the user reads in History, so they matter:
 | Bond buy / sell / coupon | `Buy {NAME}` · `Sell {NAME}` · `Coupon {NAME}` |
 | Crypto buy / sell | `Buy {n} {SYMBOL}` · `Sell {n} {SYMBOL}` |
 | Crypto realized P/L | `Profit {SYMBOL}` · `Loss {SYMBOL}` |
+| ETF top-up / withdraw | `Top up {BROKER} · ${USD}` · `Withdraw {BROKER} · ${USD}` |
+| ETF realized P/L | `Profit {BROKER} (ETF)` · `Loss {BROKER} (ETF)` |
 | Forex buy / sell | `Buy {CUR} (forex)` · `Sell {CUR} (forex)` |
 | Forex realized P/L | `Profit {CUR} (forex)` · `Loss {CUR} (forex)` |
 | Installment payment | the installment item's own name |
@@ -1067,6 +1073,24 @@ fractional quantity — coins, not whole lots — and no dividends or targets. K
 - `DUST = 1e-8` — fractional units never land exactly on zero, so "still held" and "can you
   sell this much" are tolerances rather than `> 0` comparisons.
 
+### `lib/etf.ts`
+US-listed ETFs held at one or more **brokers** (`etf_accounts`), each keeping its own **USD
+cash**. There is deliberately no USD wallet: `wallets` and the whole ledger stay integer rupiah.
+Everything inside a broker is in USD, and the ledger only sees money crossing the border —
+a top-up (rupiah in at the rate the user enters) and a withdrawal (USD back to a wallet).
+- `etfBook(trades)` — **pure** chronological walk of one broker. Tracks USD cost per holding
+  (for USD P/L) **and** the rupiah cost of every dollar, cash and holdings alike: a buy moves
+  the average rupiah cost of the cash it spends into the holding, a sell moves the holding's
+  rupiah cost back into cash in proportion, and a dividend enters cash at **zero** rupiah cost.
+  Rupiah cost is therefore conserved inside the broker and leaves only through a withdrawal,
+  so it always equals the broker's share of the `cat_etf` bucket.
+- `withdrawalCost(book, usd)` — the rupiah cost a withdrawal takes out; the action books that
+  as the `withdrawal` and the rest as P/L — gains, dividends and the rate move together.
+- **Dividends are USD income, not ledger income.** They are totalled per ticker in USD; booking
+  IDR income as well would count them twice, since the withdrawal already recognises them.
+- `getEtfPortfolio(asOf?, livePrices = true)` — Yahoo quotes under the bare ticker (no suffix),
+  one `getForexRate("USD")` for the rupiah reference. Unpriced tickers go to `missing`.
+
 ### `lib/forex.ts`
 - `FALLBACK_RATE = { JPY: 110 }`.
 - `getForexAccounts` / `getForexTransactions` / `getForexTxnByTxnId(txnId)` (lets the history
@@ -1315,6 +1339,15 @@ per coin: units, avg/coin → live price, market value and P/L; expanded: invest
 net of anything sold) / proceeds / realized P/L, and a buy·sell timeline (newest first). Then a recent trades list
 (deletable). A sell books the same two ledger rows a stock sale does — cost basis back out of the
 bucket, P/L as its own income or expense row.
+
+### `/etf`
+Hero in USD (cash + priced holdings), the rupiah equivalent at the live rate, unrealized USD
+P/L, and cells for USD cash, dividends, rupiah still invested, and rupiah P/L (hidden while any
+ticker is unpriced). Two sheets: **Top up / withdraw** (broker, rupiah or USD, rate, wallet,
+date — the other side previewed as you type) and **Record a trade** (Buy / Sell / Dividend in
+USD). Holding cards across brokers, a "Sold out" list keeping realized P/L and dividends,
+per-broker cards (deletable, taking every entry and ledger row with them), recent activity.
+A buy is refused beyond the broker's cash; a sell beyond units held.
 
 ### `/more/forex`
 One card per currency: balance in foreign units (labeled **"not in networth"**), Invested (average
