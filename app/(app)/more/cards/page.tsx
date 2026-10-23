@@ -592,7 +592,7 @@ function HowItWorks() {
           Rp 100,000, at most banks — and the unpaid minimum is added to the next one.
         </p>
         <p>
-          <strong>Honest works differently in three ways.</strong> Every statement carries an
+          <strong>Some cards work differently in three ways.</strong> Every statement carries an
           admin fee (0–6.49% a month of what you spent, set per customer), refunded the day
           after you pay that bill in full on time. The minimum is whichever is highest of 5%
           of the bill, the bill&apos;s interest plus admin fee, or Rp 20,000. And there is no

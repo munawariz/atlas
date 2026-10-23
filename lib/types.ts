@@ -224,7 +224,7 @@ export type CardTerms = Omit<CreditCard, "id" | "wallet_id" | "credit_limit" | "
  *
  * - Bank Indonesia's current rules: interest capped at 1.75% a month, a minimum of 5% of the
  *   bill but at least Rp50,000, and a late fee.
- * - Honest (honest.co.id FAQ): the same 1.75%, but the minimum is the highest of 5% of the bill,
+ * - Admin-fee cards: the same 1.75%, but the minimum is the highest of 5% of the bill,
  *   the statement's interest plus admin fee, or Rp20,000; a personalised admin fee of 0–6.49%
  *   a month that is refunded when the bill is paid in full on time; and no late fee. The admin
  *   rate is left for the user to copy from their statement.
@@ -252,8 +252,8 @@ export const CARD_PRESETS: CardPreset[] = [
     },
   },
   {
-    key: "honest",
-    label: "Honest",
+    key: "admin-fee",
+    label: "Admin-fee card",
     terms: {
       interest_rate: 1.75,
       min_pct: 5,

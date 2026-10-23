@@ -88,7 +88,7 @@ function TermsFields({
   const apply = (p: CardPreset) => {
     setValues((prev) => ({
       ...p.terms,
-      // A personalised rate (Honest's admin fee) keeps whatever is already typed.
+      // A personalised rate (a per-customer admin fee) keeps whatever is already typed.
       admin_fee_pct: p.terms.admin_fee_pct ?? prev.admin_fee_pct,
     }));
     setPreset(p.key);
@@ -198,8 +198,8 @@ function TermsFields({
           />
           <span className="mt-1 block text-[13px] text-ink-500">
             Charged on each statement&apos;s spending and refunded when you pay that bill in full
-            on time. Honest sets it per customer (0–6.49%) — copy yours from a statement. 0 for
-            most banks.
+            on time. Some issuers set it per customer (0–6.49%) — copy yours from a statement. 0
+            for most banks.
           </span>
         </label>
 
@@ -213,8 +213,8 @@ function TermsFields({
           <span className="text-[14px] text-ink-700">
             The minimum is at least the bill&apos;s interest and fees
             <span className="block text-[13px] text-ink-500">
-              Honest works this way: the minimum is whichever is highest of the percent above,
-              the interest plus admin fee, or the floor.
+              On cards that work this way, the minimum is whichever is highest of the percent
+              above, the interest plus admin fee, or the floor.
             </span>
           </span>
         </label>
@@ -229,7 +229,7 @@ function TermsFields({
           <span className="text-[14px] text-ink-700">
             Missing the minimum costs a late fee
             <span className="block text-[13px] text-ink-500">
-              1% of the bill, at most Rp 100,000. Honest charges none.
+              1% of the bill, at most Rp 100,000. Some cards charge none.
             </span>
           </span>
         </label>
