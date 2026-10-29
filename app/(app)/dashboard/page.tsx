@@ -17,7 +17,6 @@ import {
   monthKeyOf,
   monthlyEquivalent,
   prevMonthKey,
-  sumBalances,
 } from "@/lib/data";
 import { itemActiveIn, loanAutoBudget } from "@/lib/autoBudget";
 import { getForexAccounts, getForexRate, getForexTransactions } from "@/lib/forex";
@@ -87,8 +86,8 @@ export default async function DashboardPage({
 
   const catById = new Map(categories.map((c) => [c.id, c]));
 
-  // A credit card is a wallet that runs negative (lib/creditCards.ts). It still counts toward
-  // net worth — the debt is real — but it is shown apart from the wallets that hold cash.
+  // A credit card is a wallet that runs negative (lib/creditCards.ts). The home net worth
+  // leaves cards out — it is the cash you hold — and what is owed is shown on its own below.
   const cardWalletIds = new Set(creditCards.map((c) => c.wallet_id));
   const cashWallets = wallets.filter((w) => !cardWalletIds.has(w.id));
   const cardWallets = wallets.filter((w) => cardWalletIds.has(w.id));
@@ -103,14 +102,21 @@ export default async function DashboardPage({
   const balances = new Map(startBalances);
   let dayDelta = 0;
 
+  // Card wallets are skipped, so a swipe does not move net worth and paying the bill does.
+  const sumCash = (map: Map<number, number>) => {
+    let total = 0;
+    for (const [walletId, value] of map) if (!cardWalletIds.has(walletId)) total += value;
+    return total;
+  };
+
   for (const txn of monthTxns) {
     if (txn.occurred_on > day) continue;
-    const before = sumBalances(balances);
+    const before = sumCash(balances);
     bumpWallet(balances, txn);
-    if (txn.occurred_on === day) dayDelta += sumBalances(balances) - before;
+    if (txn.occurred_on === day) dayDelta += sumCash(balances) - before;
   }
 
-  const netWorth = sumBalances(balances);
+  const netWorth = sumCash(balances);
 
   // =========================================================================
   // Overview data
